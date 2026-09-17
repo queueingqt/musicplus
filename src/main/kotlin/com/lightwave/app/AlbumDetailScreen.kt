@@ -1,6 +1,7 @@
 package com.lightwave.app
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -147,6 +148,16 @@ class AlbumDetailScreen(
         LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(title))
+
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                AlbumArt(
+                    lightContext = lightContext,
+                    url = album?.coverArtUrl,
+                    size = 9f.gridUnitsAsDp(),
+                    placeholderIconSize = 4f,
+                    modifier = Modifier.padding(vertical = 1f.gridUnitsAsDp()),
+                )
+            }
 
             // Favorite + album-level download, inline with the album title — icon-only,
             // no text labels (self-explanatory iconography).

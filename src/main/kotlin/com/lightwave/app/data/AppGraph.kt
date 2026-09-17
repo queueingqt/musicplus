@@ -12,10 +12,12 @@ import com.thelightphone.sdk.SealedLightContext
 object AppGraph {
     class Graph(
         val serverConfigRepository: ServerConfigRepository,
+        val appSettingsRepository: AppSettingsRepository,
         val apiHolder: SubsonicApiHolder,
         val database: LightwaveDatabase,
         val libraryRepository: LibraryRepository,
         val downloadRepository: DownloadRepository,
+        val albumArtRepository: AlbumArtRepository,
         val connectivity: LightConnectivity,
     )
 
@@ -33,6 +35,7 @@ object AppGraph {
 
     private fun build(lightContext: SealedLightContext): Graph {
         val serverConfigRepository = ServerConfigRepository(lightContext.dataStore)
+        val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         val database = LightwaveDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible
@@ -50,12 +53,18 @@ object AppGraph {
             downloadDao = database.downloadDao(),
             trackDao = database.trackDao(),
         )
+        val albumArtRepository = AlbumArtRepository(
+            apiHolder = apiHolder,
+            filesDir = lightContext.filesDir,
+        )
         return Graph(
             serverConfigRepository = serverConfigRepository,
+            appSettingsRepository = appSettingsRepository,
             apiHolder = apiHolder,
             database = database,
             libraryRepository = libraryRepository,
             downloadRepository = downloadRepository,
+            albumArtRepository = albumArtRepository,
             connectivity = connectivity,
         )
     }
