@@ -359,12 +359,15 @@ private fun TrackRow(
 /**
  * Three real visual states, not two: QUEUED/DOWNLOADING now render distinctly from
  * both "not downloaded" and "downloaded" instead of only toggling between
- * DOWNLOAD_ARROW/DOWNLOADED_ARROW — LOOP stands in for "in progress" since there's
- * no confirmed spinner/progress-specific icon in LightIcons.
+ * DOWNLOAD_ARROW/DOWNLOADED_ARROW. Uses REFRESH for "in progress" — LOOP was tried
+ * first but is the exact same icon the Now Playing screen uses for Repeat, which
+ * on-device looked like a stray repeat toggle appearing on tracks whenever an
+ * album download was running. There's no dedicated spinner/progress icon in
+ * LightIcons; REFRESH isn't used anywhere else in this app, so it doesn't collide.
  */
 private fun downloadIcon(status: DownloadEntity?) = when (status?.status) {
     DownloadStatus.COMPLETE -> LightIcons.DOWNLOADED_ARROW
-    DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.LOOP
+    DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.REFRESH
     DownloadStatus.FAILED, null -> LightIcons.DOWNLOAD_ARROW
 }
 
