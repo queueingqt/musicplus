@@ -73,6 +73,7 @@ class ArtistDetailScreen(
         val albums by viewModel.albums.collectAsState()
         val artist by viewModel.artist.collectAsState()
 
+        LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(artist?.name ?: "Artist"))
 
@@ -97,6 +98,7 @@ class ArtistDetailScreen(
                     }
                 }
             }
+        }
         }
     }
 }

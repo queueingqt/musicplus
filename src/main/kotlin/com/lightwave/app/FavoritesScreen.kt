@@ -66,6 +66,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
         val albums by viewModel.albums.collectAsState()
         val tracks by viewModel.tracks.collectAsState()
 
+        LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Favorites"))
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
@@ -92,6 +93,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                     }
                 }
             }
+        }
         }
     }
 }

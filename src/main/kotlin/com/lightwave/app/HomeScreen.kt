@@ -63,20 +63,22 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
         val isConfigured by viewModel.isConfigured.collectAsState()
         val nowPlaying by viewModel.nowPlayingTitle.collectAsState()
 
-        Column {
-            LightTopBar(center = LightTopBarCenter.Text("Lightwave"))
-            if (!isConfigured) {
-                SetUpServerSplash { navigateTo(::SettingsScreen) }
-            } else {
-                LightScrollView(modifier = Modifier.fillMaxWidth()) {
-                    if (nowPlaying != null) {
-                        MenuRow("Now playing: $nowPlaying") { navigateTo(::PlayerScreen) }
+        LightwaveTheme {
+            Column {
+                LightTopBar(center = LightTopBarCenter.Text("Lightwave"))
+                if (!isConfigured) {
+                    SetUpServerSplash { navigateTo(::SettingsScreen) }
+                } else {
+                    LightScrollView(modifier = Modifier.fillMaxWidth()) {
+                        if (nowPlaying != null) {
+                            MenuRow("Now playing: $nowPlaying") { navigateTo(::PlayerScreen) }
+                        }
+                        MenuRow("Albums") { navigateTo(::AlbumListScreen) }
+                        MenuRow("Artists") { navigateTo(::ArtistListScreen) }
+                        MenuRow("Search") { navigateTo(::SearchScreen) }
+                        MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
+                        MenuRow("Settings") { navigateTo(::SettingsScreen) }
                     }
-                    MenuRow("Albums") { navigateTo(::AlbumListScreen) }
-                    MenuRow("Artists") { navigateTo(::ArtistListScreen) }
-                    MenuRow("Search") { navigateTo(::SearchScreen) }
-                    MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
-                    MenuRow("Settings") { navigateTo(::SettingsScreen) }
                 }
             }
         }

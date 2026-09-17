@@ -114,6 +114,7 @@ class AlbumDetailScreen(
         val album by viewModel.album.collectAsState()
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
 
+        LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(title))
 
@@ -149,6 +150,7 @@ class AlbumDetailScreen(
                     )
                 }
             }
+        }
         }
     }
 }

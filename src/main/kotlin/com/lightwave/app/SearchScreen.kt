@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -23,6 +22,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
@@ -31,9 +31,6 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class SearchScreenViewModel(
@@ -52,35 +49,29 @@ class SearchScreenViewModel(
     private val _trackResults = MutableStateFlow<List<Track>>(emptyList())
     val trackResults: StateFlow<List<Track>> = _trackResults.asStateFlow()
 
-    init {
-        // debounce + distinctUntilChanged + collectLatest: waits for typing to pause
-        // before hitting the network, and drops a stale in-flight search if the query
-        // changes again before it returns.
+    // Search-on-submit, not search-as-you-type: the real LightOS text entry flow
+    // (LightTextInputEditor, a dedicated full-screen editor reached via
+    // TextEditScreen) only hands back a value when the user submits, not on every
+    // keystroke — which also matches the platform's generally deliberate,
+    // one-thing-at-a-time interaction style rather than being a compromise.
+    fun runSearch(newQuery: String) {
+        _query.value = newQuery
         viewModelScope.launch {
-            _query
-                .debounce(300)
-                .distinctUntilChanged()
-                .collectLatest { q ->
-                    if (q.isBlank()) {
-                        _artistResults.value = emptyList()
-                        _albumResults.value = emptyList()
-                        _trackResults.value = emptyList()
-                    } else {
-                        val (artists, albums, tracks) = libraryRepository.search(q)
-                        _artistResults.value = artists
-                        _albumResults.value = albums
-                        _trackResults.value = tracks
-                    }
-                }
+            if (newQuery.isBlank()) {
+                _artistResults.value = emptyList()
+                _albumResults.value = emptyList()
+                _trackResults.value = emptyList()
+            } else {
+                val (artists, albums, tracks) = libraryRepository.search(newQuery)
+                _artistResults.value = artists
+                _albumResults.value = albums
+                _trackResults.value = tracks
+            }
         }
     }
 
-    fun onQueryChange(newQuery: String) {
-        _query.value = newQuery
-    }
-
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        // No-op — results are driven by query changes (see init), not screen-show.
+        // No-op — results are driven by runSearch(), not screen-show.
     }
 }
 
@@ -99,31 +90,22 @@ class SearchScreen(private val activity: SealedLightActivity) :
         val albums by viewModel.albumResults.collectAsState()
         val tracks by viewModel.trackResults.collectAsState()
 
+        LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Search"))
 
-            LightText(
-                text = "Search",
-                variant = LightTextVariant.Fine,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-            )
-            // TODO: swap for the SDK's real tap-to-edit `LightTextField` +
-            // `LightTextInputEditor` pattern once that component's exact API is
-            // confirmed (see sdk/ui/.../LightTextInputEditor.kt and
-            // LightEmbeddedLp3Keyboard.kt) — BasicTextField is a plain-Compose
-            // fallback, not an SDK component. textStyle/cursorBrush are set
-            // explicitly because BasicTextField defaults to black text — invisible
-            // against LightOS's dark theme (found on-device testing).
-            BasicTextField(
+            LightTextField(
+                label = "Search",
                 value = query,
-                onValueChange = viewModel::onQueryChange,
-                textStyle = androidx.compose.ui.text.TextStyle(color = com.thelightphone.sdk.ui.LightThemeTokens.colors.content),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(com.thelightphone.sdk.ui.LightThemeTokens.colors.content),
+                placeholder = "Artists, albums, tracks",
+                onClick = {
+                    navigateTo({ a -> TextEditScreen(a, "Search", query) }) { result ->
+                        viewModel.runSearch(result)
+                    }
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+                    .padding(horizontal = 1f.gridUnitsAsDp()),
             )
 
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
@@ -150,6 +132,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                     }
                 }
             }
+        }
         }
     }
 }

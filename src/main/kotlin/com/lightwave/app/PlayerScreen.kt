@@ -91,6 +91,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val state by viewModel.state.collectAsState()
         val track = state.currentTrack
 
+        LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Now Playing"))
 
@@ -151,6 +152,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     LightBarButton.LightIcon(LightIcons.FAST_FORWARD, viewModel::skipToNext, contentDescription = "Next track"),
                 ),
             )
+        }
         }
     }
 }

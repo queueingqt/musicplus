@@ -52,6 +52,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
     override fun Content() {
         val artists by viewModel.artists.collectAsState()
 
+        LightwaveTheme {
         Column {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Artists"))
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
@@ -61,6 +62,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
                     }
                 }
             }
+        }
         }
     }
 }

@@ -4,12 +4,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.ServerConfig
@@ -22,8 +20,8 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
-import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
@@ -112,43 +110,52 @@ class SettingsScreen(activity: SealedLightActivity) :
         val testResult by viewModel.testResult.collectAsState()
         val saveMessage by viewModel.saveMessage.collectAsState()
 
+        LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Settings"))
 
             Column(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
-                LightText(text = "Server URL", variant = LightTextVariant.Fine)
-                // TODO: swap for the SDK's real tap-to-edit `LightTextField` +
-                // `LightTextInputEditor` pattern once that component's exact API is
-                // confirmed (see sdk/ui/.../LightTextInputEditor.kt and
-                // LightEmbeddedLp3Keyboard.kt) — BasicTextField is a plain-Compose
-                // fallback for all three fields below, not an SDK component, and it
-                // doesn't mask the password field either. textStyle/cursorBrush are
-                // set explicitly below because BasicTextField defaults to black text
-                // — invisible against LightOS's dark theme (found on-device testing).
-                BasicTextField(
+                // Real LightOS pattern: a read-only LightTextField that opens the SDK's
+                // own full-screen LightTextInputEditor (with its embedded LP3 keyboard)
+                // on tap, instead of a raw system-IME text field. See TextEditScreen.kt.
+                LightTextField(
+                    label = "Server URL",
                     value = baseUrl,
-                    onValueChange = viewModel::onBaseUrlChange,
-                    textStyle = TextStyle(color = LightThemeTokens.colors.content),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(LightThemeTokens.colors.content),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 0.5f.gridUnitsAsDp()),
+                    placeholder = "https://music.example.com",
+                    onClick = {
+                        navigateTo({ a -> TextEditScreen(a, "Server URL", baseUrl) }) { result ->
+                            viewModel.onBaseUrlChange(result)
+                        }
+                    },
                 )
 
-                LightText(text = "Username", variant = LightTextVariant.Fine)
-                BasicTextField(
+                LightTextField(
+                    label = "Username",
                     value = username,
-                    onValueChange = viewModel::onUsernameChange,
-                    textStyle = TextStyle(color = LightThemeTokens.colors.content),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(LightThemeTokens.colors.content),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 0.5f.gridUnitsAsDp()),
+                    placeholder = "Username",
+                    onClick = {
+                        navigateTo({ a -> TextEditScreen(a, "Username", username) }) { result ->
+                            viewModel.onUsernameChange(result)
+                        }
+                    },
                 )
 
-                LightText(text = "Password", variant = LightTextVariant.Fine)
-                BasicTextField(
-                    value = password,
-                    onValueChange = viewModel::onPasswordChange,
-                    textStyle = TextStyle(color = LightThemeTokens.colors.content),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(LightThemeTokens.colors.content),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 0.5f.gridUnitsAsDp()),
+                // Uses the same SDK editor as the fields above, per explicit instruction
+                // that every text field must use the SDK keyboard, no exceptions.
+                // TODO: this means the password is NOT masked while typing —
+                // LightTextInputEditor renders state.text directly (BasicText, no
+                // visualTransformation hook) and KeyboardOptions comes from the
+                // external light-keyboard artifact (not source-available to patch).
+                // Tracked as a follow-up: tracked issue #2
+                LightTextField(
+                    label = "Password",
+                    value = if (password.isBlank()) "" else "•".repeat(password.length),
+                    placeholder = "Password",
+                    onClick = {
+                        navigateTo({ a -> TextEditScreen(a, "Password", password) }) { result ->
+                            viewModel.onPasswordChange(result)
+                        }
+                    },
                 )
 
                 LightText(
@@ -169,6 +176,7 @@ class SettingsScreen(activity: SealedLightActivity) :
                         .padding(vertical = 1f.gridUnitsAsDp()),
                 )
             }
+        }
         }
     }
 }

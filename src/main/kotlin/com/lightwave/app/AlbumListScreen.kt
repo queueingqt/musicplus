@@ -52,6 +52,7 @@ class AlbumListScreen(activity: SealedLightActivity) :
     override fun Content() {
         val albums by viewModel.albums.collectAsState()
 
+        LightwaveTheme {
         Column {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Albums"))
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
@@ -61,6 +62,7 @@ class AlbumListScreen(activity: SealedLightActivity) :
                     }
                 }
             }
+        }
         }
     }
 }
