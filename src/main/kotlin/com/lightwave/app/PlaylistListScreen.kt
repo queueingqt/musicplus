@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -21,6 +20,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
@@ -80,8 +80,8 @@ class PlaylistListScreen(activity: SealedLightActivity) :
         val query by viewModel.query.collectAsState()
         val playlists by viewModel.playlists.collectAsState()
 
-        LightwaveTheme {
-            Column {
+        LightwaveScaffold(
+            topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(
                         icon = LightIcons.BACK,
@@ -103,25 +103,25 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                         },
                     ),
                 )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
+            LightTextField(
+                label = "Search",
+                value = query,
+                placeholder = "Filter playlists",
+                onClick = {
+                    navigateTo({ a -> TextEditScreen(a, "Search playlists", query) }) { result ->
+                        viewModel.onQueryChange(result)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
+            )
 
-                // Same BasicTextField fallback (and same reasoning) as SearchScreen.kt's
-                // TODO — the SDK's LightTextField is tap-to-open-a-full-screen-editor,
-                // not live-editable inline, so it can't drive a live-filter-while-
-                // scrolling box the way this needs; swap this once a real inline-typing
-                // SDK primitive is confirmed.
-                BasicTextField(
-                    value = query,
-                    onValueChange = viewModel::onQueryChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-                )
-
-                LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
-                    items(playlists, key = { it.id }) { playlist ->
-                        PlaylistRow(playlist) {
-                            navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) })
-                        }
+            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+                items(playlists, key = { it.id }) { playlist ->
+                    PlaylistRow(playlist) {
+                        navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) })
                     }
                 }
             }

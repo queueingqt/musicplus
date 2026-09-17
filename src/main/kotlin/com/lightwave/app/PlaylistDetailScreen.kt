@@ -3,7 +3,6 @@ package com.lightwave.app
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -140,8 +139,8 @@ class PlaylistDetailScreen(
             }
         }
 
-        LightwaveTheme {
-            Column(modifier = Modifier.fillMaxSize()) {
+        LightwaveScaffold(
+            topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(
                         icon = LightIcons.BACK,
@@ -158,53 +157,54 @@ class PlaylistDetailScreen(
                         },
                     ),
                 )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
+            // Icon-only per this session's UI convention (no visible label next to
+            // a self-explanatory icon) — the armed/confirm state is conveyed by
+            // swapping the icon itself (TRASH -> ACCEPT) plus contentDescription,
+            // not by adding a text label. No confirm/cancel dialog primitive is
+            // confirmed available in the SDK (see the comment on `confirmDelete`
+            // above), hence this two-tap pattern instead.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+            ) {
+                LightIcon(
+                    icon = if (confirmDelete) LightIcons.ACCEPT else LightIcons.TRASH,
+                    size = 1.5f,
+                    contentDescription = if (confirmDelete) "Tap to confirm delete" else "Delete playlist",
+                    modifier = Modifier.lightClickable {
+                        if (confirmDelete) {
+                            viewModel.delete { goBack() }
+                        } else {
+                            confirmDelete = true
+                        }
+                    },
+                )
+            }
 
-                // Icon-only per this session's UI convention (no visible label next to
-                // a self-explanatory icon) — the armed/confirm state is conveyed by
-                // swapping the icon itself (TRASH -> ACCEPT) plus contentDescription,
-                // not by adding a text label. No confirm/cancel dialog primitive is
-                // confirmed available in the SDK (see the comment on `confirmDelete`
-                // above), hence this two-tap pattern instead.
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-                ) {
-                    LightIcon(
-                        icon = if (confirmDelete) LightIcons.ACCEPT else LightIcons.TRASH,
-                        size = 1.5f,
-                        contentDescription = if (confirmDelete) "Tap to confirm delete" else "Delete playlist",
-                        modifier = Modifier.lightClickable {
-                            if (confirmDelete) {
-                                viewModel.delete { goBack() }
-                            } else {
-                                confirmDelete = true
+            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 4.5f) {
+                itemsIndexed(tracks, key = { index, track -> "$index-${track.id}" }) { index, track ->
+                    val statusFlow = remember(track.id) { viewModel.downloadStatus(track.id) }
+                    val status by statusFlow.collectAsState(initial = null)
+                    PlaylistTrackRow(
+                        track = track,
+                        status = status,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < tracks.lastIndex,
+                        onPlay = {
+                            scope.launch {
+                                val graph = AppGraph.from(lightContext)
+                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(tracks, index)
+                                navigateTo(::PlayerScreen)
                             }
                         },
+                        onToggleFavorite = { viewModel.toggleFavorite(track) },
+                        onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
+                        onRemove = { viewModel.removeTrack(index) },
+                        onMoveUp = { viewModel.moveUp(index) },
+                        onMoveDown = { viewModel.moveDown(index) },
                     )
-                }
-
-                LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 4.5f) {
-                    itemsIndexed(tracks, key = { index, track -> "$index-${track.id}" }) { index, track ->
-                        val statusFlow = remember(track.id) { viewModel.downloadStatus(track.id) }
-                        val status by statusFlow.collectAsState(initial = null)
-                        PlaylistTrackRow(
-                            track = track,
-                            status = status,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < tracks.lastIndex,
-                            onPlay = {
-                                scope.launch {
-                                    val graph = AppGraph.from(lightContext)
-                                    PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(tracks, index)
-                                    navigateTo(::PlayerScreen)
-                                }
-                            },
-                            onToggleFavorite = { viewModel.toggleFavorite(track) },
-                            onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
-                            onRemove = { viewModel.removeTrack(index) },
-                            onMoveUp = { viewModel.moveUp(index) },
-                            onMoveDown = { viewModel.moveDown(index) },
-                        )
-                    }
                 }
             }
         }

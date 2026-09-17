@@ -1,7 +1,5 @@
 package com.lightwave.app
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
@@ -81,8 +79,8 @@ class PlaylistPickerScreen(
         val scope = rememberCoroutineScope()
         val playlists by viewModel.playlists.collectAsState()
 
-        LightwaveTheme {
-            Column(modifier = Modifier.fillMaxSize()) {
+        LightwaveScaffold(
+            topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(
                         icon = LightIcons.BACK,
@@ -90,41 +88,42 @@ class PlaylistPickerScreen(
                     ),
                     center = LightTopBarCenter.Text("Add to playlist"),
                 )
-
-                LightText(
-                    text = "New playlist",
-                    variant = LightTextVariant.Copy,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .lightClickable {
-                            navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
-                                if (!name.isNullOrBlank()) {
-                                    scope.launch {
-                                        viewModel.createAndAdd(name, songId)
-                                        goBack()
-                                    }
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
+            LightText(
+                text = "New playlist",
+                variant = LightTextVariant.Copy,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .lightClickable {
+                        navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
+                            if (!name.isNullOrBlank()) {
+                                scope.launch {
+                                    viewModel.createAndAdd(name, songId)
+                                    goBack()
                                 }
                             }
                         }
-                        .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
-                )
-
-                LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
-                    items(playlists, key = { it.id }) { playlist ->
-                        LightText(
-                            text = playlist.name,
-                            variant = LightTextVariant.Copy,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .lightClickable {
-                                    scope.launch {
-                                        viewModel.addToExisting(playlist.id, songId)
-                                        goBack()
-                                    }
-                                }
-                                .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
-                        )
                     }
+                    .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            )
+
+            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+                items(playlists, key = { it.id }) { playlist ->
+                    LightText(
+                        text = playlist.name,
+                        variant = LightTextVariant.Copy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .lightClickable {
+                                scope.launch {
+                                    viewModel.addToExisting(playlist.id, songId)
+                                    goBack()
+                                }
+                            }
+                            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+                    )
                 }
             }
         }
