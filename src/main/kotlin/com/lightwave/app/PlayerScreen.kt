@@ -10,6 +10,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.PlaybackRepository
@@ -103,8 +105,22 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     .padding(2f.gridUnitsAsDp()),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                LightText(text = track?.title ?: "Nothing playing", variant = LightTextVariant.Heading)
-                LightText(text = track?.artistName.orEmpty(), variant = LightTextVariant.Detail)
+                LightText(
+                    text = track?.title ?: "Nothing playing",
+                    variant = LightTextVariant.Heading,
+                    modifier = Modifier.fillMaxWidth(),
+                    align = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                LightText(
+                    text = track?.artistName.orEmpty(),
+                    variant = LightTextVariant.Detail,
+                    modifier = Modifier.fillMaxWidth(),
+                    align = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
 
                 if (state.errorMessage != null) {
                     LightText(
