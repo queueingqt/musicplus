@@ -1,0 +1,21 @@
+# Light Phone III tool manifest. Schema per lightphone/light-sdk docs/tool_metadata/README.md.
+
+[tool]
+id            = "com.lightwave.app"
+label         = "Lightwave"
+versionCode   = 1
+versionName   = "0.1.0"
+
+# INTERNET is for the Navidrome/Subsonic API. Do NOT list FOREGROUND_SERVICE or
+# FOREGROUND_SERVICE_MEDIA_PLAYBACK here — the "detached-audio" capability below
+# generates those automatically; declaring them manually fails the build.
+permissions   = ["android.permission.INTERNET"]
+
+# Required for background/locked-screen playback via LightAudioPlayback.Detached.
+capabilities  = ["detached-audio"]
+
+orientation   = "portrait"
+
+# com.thelightphone.sdk.emulator for local dev against the SDK emulator;
+# switch to "com.lightos" when building for a real device.
+serverPackage = "com.thelightphone.sdk.emulator"

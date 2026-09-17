@@ -1,0 +1,112 @@
+package com.lightwave.app.data
+
+import com.lightwave.app.Album
+import com.lightwave.app.Artist
+import com.lightwave.app.Track
+import com.thelightphone.sdk.LightConnectivity
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+/**
+ * Cache-then-network access to the server's ID3 library. Room is the source of
+ * truth for what the UI observes; `refresh*` functions pull from Subsonic and
+ * upsert, so screens stay responsive (and usable offline) between refreshes.
+ *
+ * Track.isDownloaded/localFilePath are always false/null here — this repository only
+ * knows the server's library, not the download queue. Screens that need both
+ * (AlbumDetailScreen, PlayerScreen) combine this Flow with DownloadRepository's.
+ */
+class LibraryRepository(
+    private val apiHolder: SubsonicApiHolder,
+    private val artistDao: ArtistDao,
+    private val albumDao: AlbumDao,
+    private val trackDao: TrackDao,
+    private val connectivity: LightConnectivity,
+) {
+    fun observeArtists(): Flow<List<Artist>> =
+        artistDao.observeAll().map { it.map { entity -> entity.toDomain() } }
+
+    fun observeAlbums(): Flow<List<Album>> =
+        albumDao.observeAll().map { it.map { entity -> entity.toDomain() } }
+
+    fun observeAlbumsByArtist(artistId: String): Flow<List<Album>> =
+        albumDao.observeByArtist(artistId).map { it.map { entity -> entity.toDomain() } }
+
+    fun observeTracksByAlbum(albumId: String): Flow<List<Track>> =
+        trackDao.observeByAlbum(albumId).map { entities ->
+            entities.map { it.toDomain(downloaded = false, localFilePath = null) }
+        }
+
+    fun observeFavoriteArtists(): Flow<List<Artist>> =
+        artistDao.observeFavorites().map { it.map { entity -> entity.toDomain() } }
+
+    fun observeFavoriteAlbums(): Flow<List<Album>> =
+        albumDao.observeFavorites().map { it.map { entity -> entity.toDomain() } }
+
+    fun observeFavoriteTracks(): Flow<List<Track>> =
+        trackDao.observeFavorites().map { entities ->
+            entities.map { it.toDomain(downloaded = false, localFilePath = null) }
+        }
+
+    /** No-ops (leaves the cache as-is) when offline or not yet configured — callers just keep showing cached data. */
+    suspend fun refreshArtists() {
+        if (!connectivity.currentStatus.isConnected) return
+        val api = apiHolder.get() ?: return
+        artistDao.upsertAll(api.getArtists().map { it.toEntity() })
+    }
+
+    suspend fun refreshAlbumList(type: String = "alphabeticalByName") {
+        if (!connectivity.currentStatus.isConnected) return
+        val api = apiHolder.get() ?: return
+        albumDao.upsertAll(api.getAlbumList(type).map { it.toEntity() })
+    }
+
+    suspend fun refreshArtistDetail(artistId: String) {
+        if (!connectivity.currentStatus.isConnected) return
+        val api = apiHolder.get() ?: return
+        val detail = api.getArtist(artistId) ?: return
+        albumDao.upsertAll(detail.album.map { it.toEntity() })
+    }
+
+    suspend fun refreshAlbumDetail(albumId: String) {
+        if (!connectivity.currentStatus.isConnected) return
+        val api = apiHolder.get() ?: return
+        val detail = api.getAlbum(albumId) ?: return
+        trackDao.upsertAll(detail.song.map { it.toEntity() })
+    }
+
+    suspend fun search(query: String): Triple<List<Artist>, List<Album>, List<Track>> {
+        val api = apiHolder.get()
+        if (!connectivity.currentStatus.isConnected || query.isBlank() || api == null) {
+            return Triple(emptyList(), emptyList(), emptyList())
+        }
+        val result = api.search(query)
+        return Triple(
+            result.artist.map { it.toEntity().toDomain() },
+            result.album.map { it.toEntity().toDomain() },
+            result.song.map { it.toEntity().toDomain(downloaded = false, localFilePath = null) },
+        )
+    }
+
+    suspend fun setArtistFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { artistDao.setStarred(id, favorite) }
+    suspend fun setAlbumFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { albumDao.setStarred(id, favorite) }
+    suspend fun setTrackFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { trackDao.setStarred(id, favorite) }
+
+    private suspend inline fun setFavorite(id: String, favorite: Boolean, updateLocal: () -> Unit) {
+        updateLocal() // optimistic — reflect it immediately, reconcile on next refresh if this fails
+        val api = apiHolder.get() ?: return
+        if (favorite) api.star(id) else api.unstar(id)
+    }
+
+    private fun SubsonicArtist.toEntity() = ArtistEntity(id, name, coverArt, albumCount, starred != null)
+    private fun SubsonicAlbum.toEntity() = AlbumEntity(id, name, artistId, artist, coverArt, songCount, duration, year, genre, starred != null)
+    private fun SubsonicSong.toEntity() = TrackEntity(id, title, albumId, album, artistId, artist, track, duration, coverArt, suffix, starred != null)
+
+    // `apiHolder.peek()` — best-effort: returns null (no cover art URL yet) until a
+    // suspend refresh has run at least once and resolved the client. Acceptable for
+    // a stub; screens should trigger a refresh on first show (see HomeScreen).
+    private fun ArtistEntity.toDomain() = Artist(id, name, coverArtId?.let { apiHolder.peek()?.coverArtUrl(it) }, albumCount, starred)
+    private fun AlbumEntity.toDomain() = Album(id, name, artistId, artistName, coverArtId?.let { apiHolder.peek()?.coverArtUrl(it) }, songCount, durationSec, year, starred)
+    private fun TrackEntity.toDomain(downloaded: Boolean, localFilePath: String?) =
+        Track(id, title, albumId, albumName, artistId, artistName, trackNumber, durationSec, coverArtId?.let { apiHolder.peek()?.coverArtUrl(it) }, starred, downloaded, localFilePath)
+}

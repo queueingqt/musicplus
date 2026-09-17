@@ -1,0 +1,77 @@
+package com.lightwave.app
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.items
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewModelScope
+import com.lightwave.app.data.AppGraph
+import com.lightwave.app.data.LibraryRepository
+import com.thelightphone.sdk.LightScreen
+import com.thelightphone.sdk.LightViewModel
+import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightTopBar
+import com.thelightphone.sdk.ui.LightTopBarCenter
+import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class ArtistListScreenViewModel(
+    private val libraryRepository: LibraryRepository,
+) : LightViewModel<Unit>() {
+
+    val artists: StateFlow<List<Artist>> = libraryRepository.observeArtists()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        viewModelScope.launch { libraryRepository.refreshArtists() }
+    }
+}
+
+class ArtistListScreen(activity: SealedLightActivity) :
+    LightScreen<Unit, ArtistListScreenViewModel>(activity) {
+
+    override val viewModelClass = ArtistListScreenViewModel::class.java
+
+    override fun createViewModel() = ArtistListScreenViewModel(AppGraph.from(lightContext).libraryRepository)
+
+    @Composable
+    override fun Content() {
+        val artists by viewModel.artists.collectAsState()
+
+        Column {
+            LightTopBar(center = LightTopBarCenter.Text("Artists"))
+            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+                items(artists, key = { it.id }) { artist ->
+                    ArtistRow(artist) {
+                        navigateTo({ a -> ArtistDetailScreen(a, artist.id) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArtistRow(artist: Artist, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onClick)
+            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+    ) {
+        LightText(text = artist.name, variant = LightTextVariant.Copy)
+        LightText(text = "${artist.albumCount} albums", variant = LightTextVariant.Fine)
+    }
+}
