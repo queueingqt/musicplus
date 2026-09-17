@@ -166,19 +166,17 @@ class SettingsScreen(activity: SealedLightActivity) :
                     },
                 )
 
-                // Uses the same SDK editor as the fields above, per explicit instruction
-                // that every text field must use the SDK keyboard, no exceptions.
-                // TODO: this means the password is NOT masked while typing —
-                // LightTextInputEditor renders state.text directly (BasicText, no
-                // visualTransformation hook) and KeyboardOptions comes from the
-                // external light-keyboard artifact (not source-available to patch).
-                // Tracked as a follow-up: tracked issue #2
+                // Same tap-to-edit pattern as the fields above, but opens
+                // MaskedTextEditScreen (not TextEditScreen) so the password is masked
+                // while actively being typed, not just in this read-only summary.
+                // See MaskedTextInputEditor.kt's file header for why a separate,
+                // duplicated editor was needed — tracked issue #2
                 LightTextField(
                     label = "Password",
                     value = if (password.isBlank()) "" else "•".repeat(password.length),
                     placeholder = "Password",
                     onClick = {
-                        navigateTo({ a -> TextEditScreen(a, "Password", password) }) { result ->
+                        navigateTo({ a -> MaskedTextEditScreen(a, "Password", password) }) { result ->
                             viewModel.onPasswordChange(result)
                         }
                     },

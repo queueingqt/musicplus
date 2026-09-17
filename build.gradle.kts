@@ -78,6 +78,15 @@ dependencies {
     testImplementation(libs.kotlin.test)
     ksp(libs.androidx.room.compiler)
 
+    // Needed by MaskedTextInputEditor.kt's `viewModel<EnQwertyLp3KeyboardViewModel<*>>(...)`
+    // call (see that file for why it exists — Forgejo issue #2). `:sdk:client` and
+    // `:sdk:ui` both declare lifecycle-viewmodel-compose as `implementation`, not `api`,
+    // so it isn't on this module's classpath transitively even though the SDK's own
+    // LightTextInputEditor uses the same function internally. `androidx.lifecycle` is
+    // allowlisted as a whole group by LightSdkPlugin.ALLOWED_DEPENDENCIES, so adding it
+    // directly here is within the tool module's allowed dependencies.
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
     // Everything below is genuinely extra beyond what :sdk:client already exposes —
     // there's no Light-provided HTTP client, and Navidrome speaks the open Subsonic
     // REST API, not anything SDK-specific.
