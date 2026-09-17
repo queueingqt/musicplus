@@ -1,6 +1,7 @@
 package com.lightwave.app
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -153,6 +154,16 @@ class AlbumDetailScreen(
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
         ) {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                AlbumArt(
+                    lightContext = lightContext,
+                    url = album?.coverArtUrl,
+                    size = 9f.gridUnitsAsDp(),
+                    placeholderIconSize = 4f,
+                    modifier = Modifier.padding(vertical = 1f.gridUnitsAsDp()),
+                )
+            }
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

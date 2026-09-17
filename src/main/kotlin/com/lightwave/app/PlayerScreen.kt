@@ -134,6 +134,13 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     .padding(2f.gridUnitsAsDp()),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                AlbumArt(
+                    lightContext = lightContext,
+                    url = track?.coverArtUrl,
+                    size = 13f.gridUnitsAsDp(),
+                    placeholderIconSize = 6f,
+                    modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
+                )
                 LightText(
                     text = track?.title ?: "Nothing playing",
                     variant = LightTextVariant.Heading,

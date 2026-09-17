@@ -77,4 +77,8 @@ class SubsonicApi(private val client: SubsonicClient) {
     /** [id] is any item's `coverArt` field (not the item's own id). */
     fun coverArtUrl(coverArtId: String, size: Int = 300): String =
         client.endpointUrl("getCoverArt.view", listOf("id" to coverArtId, "size" to size.toString()))
+
+    /** Same content as [coverArtUrl], fetched through Ktor/CIO — same shape as [downloadBytes]/[streamBytes], and for the same reason (cleartext http:// servers). */
+    suspend fun coverArtBytes(coverArtId: String, size: Int = 300): ByteArray =
+        client.getBytes("getCoverArt.view", listOf("id" to coverArtId, "size" to size.toString()))
 }

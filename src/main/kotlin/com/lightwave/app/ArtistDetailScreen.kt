@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
@@ -14,6 +15,7 @@ import com.lightwave.app.data.LibraryRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
@@ -116,7 +118,7 @@ class ArtistDetailScreen(
 
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(albums, key = { it.id }) { album ->
-                    AlbumRow(album) {
+                    AlbumRow(lightContext, album) {
                         navigateTo({ a -> AlbumDetailScreen(a, album.id) })
                     }
                 }
@@ -126,14 +128,23 @@ class ArtistDetailScreen(
 }
 
 @Composable
-private fun AlbumRow(album: Album, onClick: () -> Unit) {
-    Column(
+private fun AlbumRow(lightContext: SealedLightContext, album: Album, onClick: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onClick)
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        LightText(text = album.name, variant = LightTextVariant.Copy)
-        LightText(text = "${album.songCount} tracks", variant = LightTextVariant.Fine)
+        AlbumArt(
+            lightContext = lightContext,
+            url = album.coverArtUrl,
+            size = 2.5f.gridUnitsAsDp(),
+            modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
+        )
+        Column {
+            LightText(text = album.name, variant = LightTextVariant.Copy)
+            LightText(text = "${album.songCount} tracks", variant = LightTextVariant.Fine)
+        }
     }
 }

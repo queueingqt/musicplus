@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
@@ -17,6 +18,7 @@ import com.lightwave.app.data.PlaybackRepositoryHolder
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
@@ -123,13 +125,14 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 }
                 item { SectionHeader("Albums") }
                 items(albums, key = { "album-${it.id}" }) { album ->
-                    ResultRow(album.name) {
+                    ResultRowWithArt(lightContext, album.name, album.coverArtUrl) {
                         navigateTo({ a -> AlbumDetailScreen(a, album.id) })
                     }
                 }
                 item { SectionHeader("Tracks") }
                 items(tracks, key = { "track-${it.id}" }) { track ->
                     TrackResultRow(
+                        lightContext = lightContext,
                         track = track,
                         onPlay = {
                             scope.launch {
@@ -174,14 +177,41 @@ private fun ResultRow(label: String, onClick: () -> Unit) {
     )
 }
 
+/** Album/track results — the ones with cover art (see issue #9 scope; artist results stay [ResultRow]). */
 @Composable
-private fun TrackResultRow(track: Track, onPlay: () -> Unit, onAddToQueue: () -> Unit) {
+private fun ResultRowWithArt(lightContext: SealedLightContext, label: String, coverArtUrl: String?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onClick)
+            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AlbumArt(
+            lightContext = lightContext,
+            url = coverArtUrl,
+            size = 2.5f.gridUnitsAsDp(),
+            modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
+        )
+        LightText(text = label, variant = LightTextVariant.Copy)
+    }
+}
+
+@Composable
+private fun TrackResultRow(lightContext: SealedLightContext, track: Track, onPlay: () -> Unit, onAddToQueue: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
+        AlbumArt(
+            lightContext = lightContext,
+            url = track.coverArtUrl,
+            size = 2.5f.gridUnitsAsDp(),
+            modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
+        )
         LightText(
             text = track.title,
             variant = LightTextVariant.Copy,

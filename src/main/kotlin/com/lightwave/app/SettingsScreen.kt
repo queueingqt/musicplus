@@ -1,13 +1,17 @@
 package com.lightwave.app
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
+import com.lightwave.app.data.AppSettingsRepository
 import com.lightwave.app.data.ServerConfig
 import com.lightwave.app.data.ServerConfigRepository
 import com.lightwave.app.data.SubsonicClient
@@ -16,6 +20,7 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
@@ -26,13 +31,16 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SettingsScreenViewModel(
     private val serverConfigRepository: ServerConfigRepository,
+    private val appSettingsRepository: AppSettingsRepository,
 ) : LightViewModel<Unit>() {
 
     private val _baseUrl = MutableStateFlow("")
@@ -49,6 +57,13 @@ class SettingsScreenViewModel(
 
     private val _saveMessage = MutableStateFlow<String?>(null)
     val saveMessage: StateFlow<String?> = _saveMessage.asStateFlow()
+
+    val showAlbumArtwork: StateFlow<Boolean> = appSettingsRepository.showAlbumArtwork
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun toggleShowAlbumArtwork() {
+        viewModelScope.launch { appSettingsRepository.setShowAlbumArtwork(!showAlbumArtwork.value) }
+    }
 
     private var loadedInitial = false
 
@@ -102,7 +117,10 @@ class SettingsScreen(activity: SealedLightActivity) :
 
     override val viewModelClass = SettingsScreenViewModel::class.java
 
-    override fun createViewModel() = SettingsScreenViewModel(AppGraph.from(lightContext).serverConfigRepository)
+    override fun createViewModel(): SettingsScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        return SettingsScreenViewModel(graph.serverConfigRepository, graph.appSettingsRepository)
+    }
 
     @Composable
     override fun Content() {
@@ -111,6 +129,7 @@ class SettingsScreen(activity: SealedLightActivity) :
         val password by viewModel.password.collectAsState()
         val testResult by viewModel.testResult.collectAsState()
         val saveMessage by viewModel.saveMessage.collectAsState()
+        val showAlbumArtwork by viewModel.showAlbumArtwork.collectAsState()
 
         LightwaveScaffold(
             topBar = {
@@ -164,6 +183,22 @@ class SettingsScreen(activity: SealedLightActivity) :
                         }
                     },
                 )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable { viewModel.toggleShowAlbumArtwork() }
+                        .padding(vertical = 1f.gridUnitsAsDp()),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LightText(text = "Show album artwork", variant = LightTextVariant.Copy)
+                    LightIcon(
+                        icon = if (showAlbumArtwork) LightIcons.TOGGLE_STATE_ON else LightIcons.TOGGLE_STATE_OFF,
+                        size = 1.5f,
+                        contentDescription = if (showAlbumArtwork) "On" else "Off",
+                    )
+                }
 
                 LightText(
                     text = "Test connection" + (testResult?.let { " — $it" } ?: ""),
