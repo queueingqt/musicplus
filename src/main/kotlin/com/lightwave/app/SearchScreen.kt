@@ -1,6 +1,8 @@
 package com.lightwave.app
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,6 +21,7 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
@@ -123,13 +126,17 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 }
                 item { SectionHeader("Tracks") }
                 items(tracks, key = { "track-${it.id}" }) { track ->
-                    ResultRow(track.title) {
-                        scope.launch {
-                            val graph = AppGraph.from(lightContext)
-                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
-                            navigateTo(::PlayerScreen)
-                        }
-                    }
+                    TrackResultRow(
+                        label = track.title,
+                        onClick = {
+                            scope.launch {
+                                val graph = AppGraph.from(lightContext)
+                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
+                                navigateTo(::PlayerScreen)
+                            }
+                        },
+                        onAddToPlaylist = { navigateTo({ a -> PlaylistPickerScreen(a, track.id) }) },
+                    )
                 }
             }
         }
@@ -158,4 +165,30 @@ private fun ResultRow(label: String, onClick: () -> Unit) {
             .lightClickable(onClick = onClick)
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
     )
+}
+
+@Composable
+private fun TrackResultRow(label: String, onClick: () -> Unit, onAddToPlaylist: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        LightText(
+            text = label,
+            variant = LightTextVariant.Copy,
+            modifier = Modifier
+                .weight(1f)
+                .lightClickable(onClick = onClick),
+        )
+        LightIcon(
+            icon = LightIcons.ADD,
+            size = 1.5f,
+            contentDescription = "Add to playlist",
+            modifier = Modifier
+                .lightClickable(onClick = onAddToPlaylist)
+                .padding(start = 0.5f.gridUnitsAsDp()),
+        )
+    }
 }

@@ -25,6 +25,8 @@ data class SubsonicResponse(
     val album: SubsonicAlbumDetail? = null,
     val searchResult3: SubsonicSearchResult? = null,
     val starred2: SubsonicStarred? = null,
+    val playlists: SubsonicPlaylists? = null,
+    val playlist: SubsonicPlaylistDetail? = null,
 ) {
     val isOk: Boolean get() = status == "ok"
 }
@@ -127,4 +129,37 @@ data class SubsonicStarred(
     val artist: List<SubsonicArtist> = emptyList(),
     val album: List<SubsonicAlbum> = emptyList(),
     val song: List<SubsonicSong> = emptyList(),
+)
+
+@Serializable
+data class SubsonicPlaylists(
+    val playlist: List<SubsonicPlaylist> = emptyList(),
+)
+
+@Serializable
+data class SubsonicPlaylist(
+    val id: String,
+    val name: String,
+    val comment: String? = null,
+    val owner: String? = null,
+    val public: Boolean? = null,
+    val songCount: Int = 0,
+    val duration: Int = 0,
+    val coverArt: String? = null,
+)
+
+/** Same shape as [SubsonicPlaylist] plus its track list — `getPlaylist`'s response.
+ * Confirmed against the 1.16.1 XSD (`PlaylistWithSongs`): the track-list element is
+ * named "entry" (type `Child`, same shape as `getAlbum`'s "song" list), not "song". */
+@Serializable
+data class SubsonicPlaylistDetail(
+    val id: String,
+    val name: String,
+    val comment: String? = null,
+    val owner: String? = null,
+    val public: Boolean? = null,
+    val songCount: Int = 0,
+    val duration: Int = 0,
+    val coverArt: String? = null,
+    val entry: List<SubsonicSong> = emptyList(),
 )

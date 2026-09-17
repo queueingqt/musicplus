@@ -201,6 +201,7 @@ class AlbumDetailScreen(
                             scope.launch { AppGraph.from(lightContext).libraryRepository.setTrackFavorite(track.id, !track.isFavorite) }
                         },
                         onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
+                        onAddToPlaylist = { navigateTo({ a -> PlaylistPickerScreen(a, track.id) }) },
                     )
                 }
             }
@@ -210,7 +211,14 @@ class AlbumDetailScreen(
 }
 
 @Composable
-private fun TrackRow(track: Track, status: DownloadEntity?, onPlay: () -> Unit, onToggleFavorite: () -> Unit, onDownload: () -> Unit) {
+private fun TrackRow(
+    track: Track,
+    status: DownloadEntity?,
+    onPlay: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onDownload: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -231,6 +239,14 @@ private fun TrackRow(track: Track, status: DownloadEntity?, onPlay: () -> Unit, 
             contentDescription = if (track.isFavorite) "Favorited" else "Favorite",
             modifier = Modifier
                 .lightClickable(onClick = onToggleFavorite)
+                .padding(horizontal = 0.5f.gridUnitsAsDp()),
+        )
+        LightIcon(
+            icon = LightIcons.ADD,
+            size = 1.5f,
+            contentDescription = "Add to playlist",
+            modifier = Modifier
+                .lightClickable(onClick = onAddToPlaylist)
                 .padding(horizontal = 0.5f.gridUnitsAsDp()),
         )
         LightIcon(
