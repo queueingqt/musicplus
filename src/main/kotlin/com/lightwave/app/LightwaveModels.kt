@@ -48,6 +48,8 @@ data class PlaybackState(
     val durationMs: Long = 0,
     val shuffle: Boolean = false,
     val repeatMode: RepeatMode = RepeatMode.OFF,
+    /** Surfaced from LightAudioPlayer.error — was previously dropped entirely, making a real playback failure indistinguishable from "still loading" in the UI. */
+    val errorMessage: String? = null,
 ) {
     val currentTrack: Track? get() = queue.getOrNull(currentIndex)
 }

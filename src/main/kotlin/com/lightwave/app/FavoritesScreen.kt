@@ -22,13 +22,16 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -36,14 +39,33 @@ class FavoritesScreenViewModel(
     private val libraryRepository: LibraryRepository,
 ) : LightViewModel<Unit>() {
 
-    val artists: StateFlow<List<Artist>> = libraryRepository.observeFavoriteArtists()
+    private val allArtists: StateFlow<List<Artist>> = libraryRepository.observeFavoriteArtists()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val albums: StateFlow<List<Album>> = libraryRepository.observeFavoriteAlbums()
+    private val allAlbums: StateFlow<List<Album>> = libraryRepository.observeFavoriteAlbums()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val tracks: StateFlow<List<Track>> = libraryRepository.observeFavoriteTracks()
+    private val allTracks: StateFlow<List<Track>> = libraryRepository.observeFavoriteTracks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _filter = MutableStateFlow("")
+    val filter: StateFlow<String> = _filter
+
+    val artists: StateFlow<List<Artist>> = combine(allArtists, _filter) { list, q ->
+        if (q.isBlank()) list else list.filter { it.name.contains(q, ignoreCase = true) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val albums: StateFlow<List<Album>> = combine(allAlbums, _filter) { list, q ->
+        if (q.isBlank()) list else list.filter { it.name.contains(q, ignoreCase = true) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val tracks: StateFlow<List<Track>> = combine(allTracks, _filter) { list, q ->
+        if (q.isBlank()) list else list.filter { it.title.contains(q, ignoreCase = true) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setFilter(query: String) {
+        _filter.value = query
+    }
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         // No-op — favorites are derived from the local `starred` cache column, kept
@@ -65,10 +87,22 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
         val artists by viewModel.artists.collectAsState()
         val albums by viewModel.albums.collectAsState()
         val tracks by viewModel.tracks.collectAsState()
+        val filter by viewModel.filter.collectAsState()
 
         LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Favorites"))
+            LightTextField(
+                label = "Search",
+                value = filter,
+                placeholder = "Filter favorites",
+                onClick = {
+                    navigateTo({ a -> TextEditScreen(a, "Search favorites", filter) }) { result ->
+                        viewModel.setFilter(result)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
+            )
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->
@@ -87,7 +121,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                     FavoriteRow(track.title) {
                         scope.launch {
                             val graph = AppGraph.from(lightContext)
-                            PlaybackRepositoryHolder.get(activity, graph.apiHolder).play(listOf(track), 0)
+                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
                             navigateTo(::PlayerScreen)
                         }
                     }

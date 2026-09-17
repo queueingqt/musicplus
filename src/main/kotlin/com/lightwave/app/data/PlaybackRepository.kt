@@ -22,6 +22,7 @@ import java.io.File
 class PlaybackRepository(
     audio: LightAudio,
     private val apiHolder: SubsonicApiHolder,
+    private val filesDir: File,
 ) {
     private val player = audio.newPlayer(playback = LightAudioPlayback.Detached)
 
@@ -29,7 +30,7 @@ class PlaybackRepository(
     private val shuffle = MutableStateFlow(false)
     private val repeatMode = MutableStateFlow(RepeatMode.OFF)
 
-    // Nested 4-way combines rather than one 7-way call — kotlinx.coroutines only has
+    // Nested 4-way combines rather than one 8-way call — kotlinx.coroutines only has
     // typed `combine` overloads up to 5 flows; this keeps every step on solid ground
     // instead of reaching for the untyped Array<T> vararg overload.
     private data class PlayerCoreState(val index: Int, val isPlaying: Boolean, val positionMs: Long, val durationMs: Long)
@@ -38,15 +39,27 @@ class PlaybackRepository(
         player.currentMediaItemIndex, player.isPlaying, player.positionMs, player.durationMs,
     ) { index, isPlaying, positionMs, durationMs -> PlayerCoreState(index, isPlaying, positionMs, durationMs) }
 
-    val state = combine(queue, playerCore, shuffle, repeatMode) { q, core, isShuffle, mode ->
+    private data class MiscState(val shuffle: Boolean, val repeatMode: RepeatMode, val errorMessage: String?)
+
+    // error was previously dropped entirely — a real playback failure (bad stream
+    // URL, auth, unsupported format) looked identical in the UI to "still loading",
+    // which is exactly what happened testing against a real server: track metadata
+    // showed correctly (queue is set before the player even touches the network)
+    // but position/duration silently stayed 0:00 with no visible cause.
+    private val misc = combine(shuffle, repeatMode, player.error) { isShuffle, mode, error ->
+        MiscState(isShuffle, mode, error?.let { "${it.kind}: ${it.diagnostic}" })
+    }
+
+    val state = combine(queue, playerCore, misc) { q, core, misc ->
         PlaybackState(
             queue = q,
             currentIndex = core.index,
             isPlaying = core.isPlaying,
             positionMs = core.positionMs,
             durationMs = core.durationMs,
-            shuffle = isShuffle,
-            repeatMode = mode,
+            shuffle = misc.shuffle,
+            repeatMode = misc.repeatMode,
+            errorMessage = misc.errorMessage,
         )
     }
 
@@ -54,6 +67,12 @@ class PlaybackRepository(
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return // not configured — nothing playable
         queue.value = tracks
+        // setMediaQueue takes every item's source resolved up front — there's no
+        // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
+        // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
+        // playback starts, not just the starting track. Correct but not great UX for
+        // a multi-track queue on a cleartext server; tracked as a follow-up rather
+        // than solved here.
         player.setMediaQueue(tracks.map { it.toAudioItem(api) }, startIndex)
         player.play()
     }
@@ -88,11 +107,23 @@ class PlaybackRepository(
 
     fun release() = player.release()
 
-    private fun Track.toAudioItem(api: SubsonicApi): LightAudioItem {
-        val source = if (localFilePath != null) {
-            LightAudioSource.FileSource(File(localFilePath))
-        } else {
-            LightAudioSource.UrlSource(api.streamUrl(id))
+    /**
+     * media3/ExoPlayer inside the SDK's own `LightAudioPlayer` enforces Android's
+     * cleartext-traffic block independently of SubsonicClient's engine choice —
+     * confirmed on-device via `LightAudioError.diagnostic` =
+     * "ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED" when handing it a `UrlSource` for an
+     * http:// stream (2026-09-17). There's no exposed way to give LightAudioPlayer
+     * a custom data source, so for a plain-http server this downloads the track
+     * (via the same Ktor/CIO client SubsonicApi already uses) into a cache file and
+     * plays that instead of streaming — for an https:// server it streams directly
+     * as before. See project_lightwave memory / tracked Forgejo issues for the
+     * follow-up (progressive streaming, not pre-download, for cleartext servers).
+     */
+    private suspend fun Track.toAudioItem(api: SubsonicApi): LightAudioItem {
+        val source = when {
+            localFilePath != null -> LightAudioSource.FileSource(File(localFilePath))
+            api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id))
+            else -> LightAudioSource.FileSource(cachedStreamFile(api))
         }
         return LightAudioItem(
             source = source,
@@ -103,6 +134,15 @@ class PlaybackRepository(
                 durationMs = durationSec * 1000L,
             ),
         )
+    }
+
+    private suspend fun Track.cachedStreamFile(api: SubsonicApi): File {
+        val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
+        val cached = File(cacheDir, "$id.mp3")
+        if (!cached.exists()) {
+            cached.writeBytes(api.streamBytes(id))
+        }
+        return cached
     }
 }
 
@@ -119,11 +159,13 @@ object PlaybackRepositoryHolder {
     fun get(
         sealedActivity: com.thelightphone.sdk.SealedLightActivity,
         apiHolder: SubsonicApiHolder,
+        filesDir: File,
     ): PlaybackRepository =
         instance ?: synchronized(this) {
             instance ?: PlaybackRepository(
                 audio = com.thelightphone.sdk.audio.DefaultLightAudio(sealedActivity),
                 apiHolder = apiHolder,
+                filesDir = filesDir,
             ).also { instance = it }
         }
 

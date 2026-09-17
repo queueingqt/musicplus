@@ -7,6 +7,8 @@ package com.lightwave.app.data
  */
 class SubsonicApi(private val client: SubsonicClient) {
 
+    val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
+
     suspend fun getArtists(): List<SubsonicArtist> =
         client.call("getArtists.view").artists?.index?.flatMap { it.artist } ?: emptyList()
 
@@ -46,7 +48,7 @@ class SubsonicApi(private val client: SubsonicClient) {
         client.call("unstar.view", listOf("id" to id))
     }
 
-    /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. */
+    /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. Only safe to use when [baseUrlIsHttps] — see PlaybackRepository.toAudioItem. */
     fun streamUrl(songId: String, maxBitRateKbps: Int? = null): String {
         val params = buildList {
             add("id" to songId)
@@ -55,9 +57,22 @@ class SubsonicApi(private val client: SubsonicClient) {
         return client.endpointUrl("stream.view", params)
     }
 
-    /** Original-file URL, for downloads (see DownloadRepository). */
+    /** Same content as [streamUrl], fetched through Ktor/CIO — for the http:// download-then-play fallback. */
+    suspend fun streamBytes(songId: String, maxBitRateKbps: Int? = null): ByteArray {
+        val params = buildList {
+            add("id" to songId)
+            if (maxBitRateKbps != null) add("maxBitRate" to maxBitRateKbps.toString())
+        }
+        return client.getBytes("stream.view", params)
+    }
+
+    /** Original-file URL — kept for reference/debugging, but DownloadRepository must use [downloadBytes], not fetch this URL directly (see its own comment for why). */
     fun downloadUrl(songId: String): String =
         client.endpointUrl("download.view", listOf("id" to songId))
+
+    /** Fetches the original file's bytes through the same Ktor/CIO client as every other call, so it's not subject to Android's cleartext-traffic block. */
+    suspend fun downloadBytes(songId: String): ByteArray =
+        client.getBytes("download.view", listOf("id" to songId))
 
     /** [id] is any item's `coverArt` field (not the item's own id). */
     fun coverArtUrl(coverArtId: String, size: Int = 300): String =

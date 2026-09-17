@@ -72,23 +72,44 @@ class DownloadRepository(
  */
 @LightJob(DownloadRepository.JOB_KEY)
 val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
-        val songId = input["songId"] ?: return@handler LightJobResult.Error()
+        val tag = "LightwaveDownload"
+        // input["songId"] comes back as the literal string "songId=<value>", not
+        // just "<value>" — confirmed on-device via logcat, 2026-09-17. Root cause is
+        // upstream: LightWork.kt's `Data.toStringMap()` does
+        // `keyValueMap.mapValues { it.toString() }`, but mapValues's lambda
+        // parameter is the Map.Entry, not the value, so `it.toString()` produces
+        // Java's default `"key=value"` Map.Entry format instead of the value alone.
+        // This is a Light SDK bug, not something fixable from a tool's own repo —
+        // worked around defensively here rather than trusting the value as-is.
+        val songId = input["songId"]?.removePrefix("songId=") ?: run {
+            android.util.Log.e(tag, "no songId in input: $input")
+            return@handler LightJobResult.Error()
+        }
 
         // First emitted value is enough — a job doesn't need to react to later config changes.
-        val config = ServerConfigRepository(lightContext.dataStore).serverConfig.first()
-            ?: return@handler LightJobResult.Error() // not configured — retrying won't help
+        val config = ServerConfigRepository(lightContext.dataStore).serverConfig.first() ?: run {
+            android.util.Log.e(tag, "no server config saved")
+            return@handler LightJobResult.Error() // not configured — retrying won't help
+        }
 
         val db = LightwaveDatabase.create(lightContext)
-        val track = db.trackDao().getById(songId) ?: return@handler LightJobResult.Error()
+        val track = db.trackDao().getById(songId) ?: run {
+            android.util.Log.e(tag, "no track row for songId=$songId")
+            return@handler LightJobResult.Error()
+        }
 
         val api = SubsonicApi(SubsonicClient(config))
         val destination = File(lightContext.filesDir, "downloads").apply { mkdirs() }
             .let { File(it, "$songId.${track.suffix ?: "mp3"}") }
 
         return@handler try {
-            java.net.URL(api.downloadUrl(songId)).openStream().use { input1 ->
-                destination.outputStream().use { output -> input1.copyTo(output) }
-            }
+            // Ktor/CIO, not java.net.URL(...).openStream() — the latter goes through
+            // the platform's default HttpURLConnection, which (like OkHttp) enforces
+            // Android's cleartext-traffic block, undoing the whole point of switching
+            // SubsonicClient to CIO. An earlier version of this job used openStream()
+            // directly and downloads silently failed against a real http:// server —
+            // found via on-device testing + logcat, not caught by compiling.
+            destination.writeBytes(api.downloadBytes(songId))
             db.downloadDao().upsert(
                 DownloadEntity(
                     songId = songId,
@@ -100,6 +121,7 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             )
             LightJobResult.Success()
         } catch (e: Exception) {
+            android.util.Log.e(tag, "download failed for songId=$songId", e)
             destination.delete()
             LightJobResult.Retry // transient (network) failure — let WorkManager back off and retry
         }

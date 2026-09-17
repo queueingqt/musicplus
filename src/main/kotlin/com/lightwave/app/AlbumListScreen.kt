@@ -19,13 +19,16 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -33,8 +36,23 @@ class AlbumListScreenViewModel(
     private val libraryRepository: LibraryRepository,
 ) : LightViewModel<Unit>() {
 
-    val albums: StateFlow<List<Album>> = libraryRepository.observeAlbums()
+    private val allAlbums: StateFlow<List<Album>> = libraryRepository.observeAlbums()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _filter = MutableStateFlow("")
+    val filter: StateFlow<String> = _filter
+
+    // Client-side filter over the already-cached list — a search-within-this-screen
+    // affordance, distinct in purpose from SearchScreen's server-side search3 call
+    // across all categories.
+    val albums: StateFlow<List<Album>> = combine(allAlbums, _filter) { albums, query ->
+        if (query.isBlank()) albums
+        else albums.filter { it.name.contains(query, ignoreCase = true) || it.artistName?.contains(query, ignoreCase = true) == true }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setFilter(query: String) {
+        _filter.value = query
+    }
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { libraryRepository.refreshAlbumList() }
@@ -51,10 +69,22 @@ class AlbumListScreen(activity: SealedLightActivity) :
     @Composable
     override fun Content() {
         val albums by viewModel.albums.collectAsState()
+        val filter by viewModel.filter.collectAsState()
 
         LightwaveTheme {
         Column {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Albums"))
+            LightTextField(
+                label = "Search",
+                value = filter,
+                placeholder = "Filter albums",
+                onClick = {
+                    navigateTo({ a -> TextEditScreen(a, "Search albums", filter) }) { result ->
+                        viewModel.setFilter(result)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
+            )
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(albums, key = { it.id }) { album ->
                     AlbumRow(album) {

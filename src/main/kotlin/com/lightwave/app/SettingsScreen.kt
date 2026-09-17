@@ -19,6 +19,7 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -81,8 +82,11 @@ class SettingsScreenViewModel(
     fun testConnection() {
         viewModelScope.launch {
             _testResult.value = "Testing..."
-            val ok = SubsonicClient(ServerConfig(_baseUrl.value, _username.value, _password.value)).ping()
-            _testResult.value = if (ok) "Connection OK" else "Connection failed"
+            val result = SubsonicClient(ServerConfig(_baseUrl.value, _username.value, _password.value)).ping()
+            _testResult.value = result.fold(
+                onSuccess = { "Connection OK" },
+                onFailure = { "Failed: ${it::class.simpleName}: ${it.message}" },
+            )
         }
     }
 
@@ -114,7 +118,7 @@ class SettingsScreen(activity: SealedLightActivity) :
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Settings"))
 
-            Column(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
+            LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 // Real LightOS pattern: a read-only LightTextField that opens the SDK's
                 // own full-screen LightTextInputEditor (with its embedded LP3 keyboard)
                 // on tap, instead of a raw system-IME text field. See TextEditScreen.kt.

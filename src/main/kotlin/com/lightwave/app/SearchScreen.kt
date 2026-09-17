@@ -126,7 +126,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                     ResultRow(track.title) {
                         scope.launch {
                             val graph = AppGraph.from(lightContext)
-                            PlaybackRepositoryHolder.get(activity, graph.apiHolder).play(listOf(track), 0)
+                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
                             navigateTo(::PlayerScreen)
                         }
                     }

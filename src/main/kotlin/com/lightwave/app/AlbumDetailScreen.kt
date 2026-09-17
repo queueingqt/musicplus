@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
@@ -38,6 +39,7 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -59,6 +61,20 @@ class AlbumDetailScreenViewModel(
     val album: StateFlow<Album?> = libraryRepository.observeAlbums()
         .map { albums -> albums.find { it.id == albumId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // Drives the album-level download button's icon: NONE (nothing downloaded),
+    // SOME (a mix — shows as the "start" icon, tapping downloads the rest),
+    // ALL (every track downloaded — shows as complete, tapping removes all).
+    val albumDownloadState: StateFlow<AlbumDownloadState> =
+        combine(tracks, downloadRepository.observeAll()) { trackList, downloads ->
+            if (trackList.isEmpty()) return@combine AlbumDownloadState.NONE
+            val downloadedIds = downloads.filter { it.status == DownloadStatus.COMPLETE }.map { it.songId }.toSet()
+            when {
+                downloadedIds.containsAll(trackList.map { it.id }) -> AlbumDownloadState.ALL
+                trackList.any { it.id in downloadedIds } -> AlbumDownloadState.SOME
+                else -> AlbumDownloadState.NONE
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlbumDownloadState.NONE)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { libraryRepository.refreshAlbumDetail(albumId) }
@@ -88,7 +104,20 @@ class AlbumDetailScreenViewModel(
             }
         }
     }
+
+    /** ALL -> remove every downloaded track; NONE/SOME -> download whatever isn't already complete. */
+    fun toggleAlbumDownload(lightContext: SealedLightContext) {
+        viewModelScope.launch {
+            val currentTracks = tracks.value
+            when (albumDownloadState.value) {
+                AlbumDownloadState.ALL -> currentTracks.forEach { downloadRepository.cancel(lightContext, it.id) }
+                AlbumDownloadState.NONE, AlbumDownloadState.SOME -> currentTracks.forEach { downloadRepository.enqueue(lightContext, it) }
+            }
+        }
+    }
 }
+
+enum class AlbumDownloadState { NONE, SOME, ALL }
 
 /**
  * `activity` is retained as a property (same reasoning as PlayerScreen's
@@ -112,23 +141,45 @@ class AlbumDetailScreen(
         val scope = rememberCoroutineScope()
         val tracks by viewModel.tracks.collectAsState()
         val album by viewModel.album.collectAsState()
+        val albumDownloadState by viewModel.albumDownloadState.collectAsState()
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
 
         LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(title))
 
+            // Favorite + album-level download, inline with the album title — icon-only,
+            // no text labels (self-explanatory iconography).
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .lightClickable { viewModel.toggleFavorite() }
                     .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                LightIcon(icon = if (album?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE, size = 1.5f)
-                LightText(
-                    text = if (album?.isFavorite == true) "Favorited" else "Favorite",
-                    variant = LightTextVariant.Fine,
-                    modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+                LightText(text = title, variant = LightTextVariant.Detail, modifier = Modifier.weight(1f))
+                LightIcon(
+                    icon = if (album?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                    size = 1.5f,
+                    contentDescription = if (album?.isFavorite == true) "Favorited" else "Favorite",
+                    modifier = Modifier
+                        .lightClickable { viewModel.toggleFavorite() }
+                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
+                )
+                LightIcon(
+                    icon = when (albumDownloadState) {
+                        AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
+                        AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
+                    },
+                    size = 1.5f,
+                    contentDescription = when (albumDownloadState) {
+                        AlbumDownloadState.ALL -> "Album downloaded — tap to remove"
+                        AlbumDownloadState.SOME -> "Some tracks downloaded — tap to download the rest"
+                        AlbumDownloadState.NONE -> "Download album"
+                    },
+                    modifier = Modifier
+                        .lightClickable { viewModel.toggleAlbumDownload(lightContext) }
+                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
                 )
             }
 
@@ -142,9 +193,12 @@ class AlbumDetailScreen(
                         onPlay = {
                             scope.launch {
                                 val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder).play(tracks, index)
+                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(tracks, index)
                                 navigateTo(::PlayerScreen)
                             }
+                        },
+                        onToggleFavorite = {
+                            scope.launch { AppGraph.from(lightContext).libraryRepository.setTrackFavorite(track.id, !track.isFavorite) }
                         },
                         onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
                     )
@@ -156,12 +210,13 @@ class AlbumDetailScreen(
 }
 
 @Composable
-private fun TrackRow(track: Track, status: DownloadEntity?, onPlay: () -> Unit, onDownload: () -> Unit) {
+private fun TrackRow(track: Track, status: DownloadEntity?, onPlay: () -> Unit, onToggleFavorite: () -> Unit, onDownload: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         LightText(
             text = track.title,
@@ -171,12 +226,32 @@ private fun TrackRow(track: Track, status: DownloadEntity?, onPlay: () -> Unit, 
                 .lightClickable(onClick = onPlay),
         )
         LightIcon(
-            icon = if (status?.status == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
+            icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+            size = 1.5f,
+            contentDescription = if (track.isFavorite) "Favorited" else "Favorite",
+            modifier = Modifier
+                .lightClickable(onClick = onToggleFavorite)
+                .padding(horizontal = 0.5f.gridUnitsAsDp()),
+        )
+        LightIcon(
+            icon = downloadIcon(status),
             size = 1.5f,
             contentDescription = downloadStatusLabel(status),
             modifier = Modifier.lightClickable(onClick = onDownload),
         )
     }
+}
+
+/**
+ * Three real visual states, not two: QUEUED/DOWNLOADING now render distinctly from
+ * both "not downloaded" and "downloaded" instead of only toggling between
+ * DOWNLOAD_ARROW/DOWNLOADED_ARROW — LOOP stands in for "in progress" since there's
+ * no confirmed spinner/progress-specific icon in LightIcons.
+ */
+private fun downloadIcon(status: DownloadEntity?) = when (status?.status) {
+    DownloadStatus.COMPLETE -> LightIcons.DOWNLOADED_ARROW
+    DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.LOOP
+    DownloadStatus.FAILED, null -> LightIcons.DOWNLOAD_ARROW
 }
 
 /** Tap semantics: QUEUED/DOWNLOADING/COMPLETE -> stop or remove; FAILED/null -> start. See `toggleDownload`. */

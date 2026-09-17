@@ -3,6 +3,7 @@ package com.lightwave.app
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -82,7 +83,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
 
     override fun createViewModel(): PlayerScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder)
+        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder, lightContext.filesDir)
         return PlayerScreenViewModel(playback, graph.libraryRepository)
     }
 
@@ -97,12 +98,21 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
 
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .weight(1f)
+                    .fillMaxWidth()
                     .padding(2f.gridUnitsAsDp()),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 LightText(text = track?.title ?: "Nothing playing", variant = LightTextVariant.Heading)
                 LightText(text = track?.artistName.orEmpty(), variant = LightTextVariant.Detail)
+
+                if (state.errorMessage != null) {
+                    LightText(
+                        text = "Playback error: ${state.errorMessage}",
+                        variant = LightTextVariant.Fine,
+                        modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
+                    )
+                }
 
                 LightProgressBar(
                     colors = LightThemeTokens.colors,
@@ -113,28 +123,34 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     variant = LightTextVariant.Fine,
                 )
 
-                Row(modifier = Modifier.lightClickable { viewModel.toggleShuffle() }) {
-                    LightIcon(icon = LightIcons.SHUFFLE, size = 1.5f)
-                    LightText(
-                        text = if (state.shuffle) "Shuffle: on" else "Shuffle: off",
-                        variant = LightTextVariant.Fine,
-                        modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+                // Icon-only, no text labels: shuffle/repeat/favorite are all standard,
+                // self-explanatory iconography — a visible label next to each one
+                // defeats the point of using icons at all. contentDescription still
+                // carries the meaning for accessibility.
+                Row(modifier = Modifier.padding(top = 1f.gridUnitsAsDp())) {
+                    LightIcon(
+                        icon = LightIcons.SHUFFLE,
+                        size = 2f,
+                        contentDescription = if (state.shuffle) "Shuffle on" else "Shuffle off",
+                        modifier = Modifier
+                            .lightClickable { viewModel.toggleShuffle() }
+                            .padding(horizontal = 1f.gridUnitsAsDp()),
                     )
-                }
-                Row(modifier = Modifier.lightClickable { viewModel.cycleRepeatMode() }) {
-                    LightIcon(icon = LightIcons.LOOP, size = 1.5f)
-                    LightText(
-                        text = "Repeat: ${state.repeatMode.name.lowercase()}",
-                        variant = LightTextVariant.Fine,
-                        modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+                    LightIcon(
+                        icon = LightIcons.LOOP,
+                        size = 2f,
+                        contentDescription = "Repeat ${state.repeatMode.name.lowercase()}",
+                        modifier = Modifier
+                            .lightClickable { viewModel.cycleRepeatMode() }
+                            .padding(horizontal = 1f.gridUnitsAsDp()),
                     )
-                }
-                Row(modifier = Modifier.lightClickable { viewModel.toggleFavoriteCurrentTrack() }) {
-                    LightIcon(icon = if (track?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE, size = 1.5f)
-                    LightText(
-                        text = if (track?.isFavorite == true) "Favorited" else "Favorite",
-                        variant = LightTextVariant.Fine,
-                        modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+                    LightIcon(
+                        icon = if (track?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                        size = 2f,
+                        contentDescription = if (track?.isFavorite == true) "Favorited" else "Favorite",
+                        modifier = Modifier
+                            .lightClickable { viewModel.toggleFavoriteCurrentTrack() }
+                            .padding(horizontal = 1f.gridUnitsAsDp()),
                     )
                 }
             }

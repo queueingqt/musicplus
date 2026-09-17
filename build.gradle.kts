@@ -82,7 +82,17 @@ dependencies {
     // there's no Light-provided HTTP client, and Navidrome speaks the open Subsonic
     // REST API, not anything SDK-specific.
     implementation(libs.ktor.client.core)
-    implementation(libs.ktor.client.okhttp)
+    // CIO, not OkHttp: OkHttp's Android platform integration enforces Android's
+    // default cleartext (plain http://) block, which would make any self-hosted
+    // Subsonic/Navidrome server running without TLS on a LAN/tailnet unreachable —
+    // and this SDK's manifest generator forbids a custom AndroidManifest.xml, so
+    // there's no android:usesCleartextTraffic escape hatch available to set. CIO is
+    // Ktor's own pure-Kotlin engine (kotlinx-io based sockets) and isn't subject to
+    // that Android-specific policy check at all. "io.ktor" is allowlisted as a
+    // whole group by the SDK's dependency policy (LightSdkPlugin.ALLOWED_DEPENDENCIES),
+    // so this artifact is fine even though it isn't one of Light's own catalog aliases.
+    // Confirmed via on-device testing 2026-09-17 (see project_lightwave memory note).
+    implementation("io.ktor:ktor-client-cio:3.4.2")
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.json)
     implementation(libs.kotlinx.serialization.json)

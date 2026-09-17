@@ -19,13 +19,16 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -33,8 +36,19 @@ class ArtistListScreenViewModel(
     private val libraryRepository: LibraryRepository,
 ) : LightViewModel<Unit>() {
 
-    val artists: StateFlow<List<Artist>> = libraryRepository.observeArtists()
+    private val allArtists: StateFlow<List<Artist>> = libraryRepository.observeArtists()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _filter = MutableStateFlow("")
+    val filter: StateFlow<String> = _filter
+
+    val artists: StateFlow<List<Artist>> = combine(allArtists, _filter) { artists, query ->
+        if (query.isBlank()) artists else artists.filter { it.name.contains(query, ignoreCase = true) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setFilter(query: String) {
+        _filter.value = query
+    }
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { libraryRepository.refreshArtists() }
@@ -51,10 +65,22 @@ class ArtistListScreen(activity: SealedLightActivity) :
     @Composable
     override fun Content() {
         val artists by viewModel.artists.collectAsState()
+        val filter by viewModel.filter.collectAsState()
 
         LightwaveTheme {
         Column {
             LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Artists"))
+            LightTextField(
+                label = "Search",
+                value = filter,
+                placeholder = "Filter artists",
+                onClick = {
+                    navigateTo({ a -> TextEditScreen(a, "Search artists", filter) }) { result ->
+                        viewModel.setFilter(result)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
+            )
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(artists, key = { it.id }) { artist ->
                     ArtistRow(artist) {

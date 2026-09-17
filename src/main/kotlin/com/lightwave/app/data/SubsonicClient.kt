@@ -2,7 +2,7 @@ package com.lightwave.app.data
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
@@ -22,17 +22,38 @@ class SubsonicApiException(val code: Int, message: String) : Exception(message)
 
 /**
  * Thin Subsonic REST client (https://www.subsonic.org/pages/api.jsp). Works against
- * Navidrome and any other Subsonic-compatible server. Ktor + the OkHttp engine is
- * the pattern the SDK's own `tool` and `examples/weather` use for network access —
- * no Light-provided HTTP primitive exists (see SETUP.md's SDK reference notes).
+ * Navidrome and any other Subsonic-compatible server. No Light-provided HTTP
+ * primitive exists (see SETUP.md's SDK reference notes), so this uses Ktor.
+ *
+ * Engine is CIO, not OkHttp: many self-hosted Subsonic servers run plain
+ * `http://` on a LAN/tailnet, and OkHttp's Android platform integration enforces
+ * Android's default cleartext-traffic block with no way to override it here (the
+ * SDK's manifest generator forbids a custom AndroidManifest.xml, so there's no
+ * `android:usesCleartextTraffic`/network-security-config to set). CIO is Ktor's
+ * own pure-Kotlin engine and isn't subject to that Android-specific check.
+ * Confirmed necessary via on-device testing against a real http:// server
+ * (2026-09-17) — see project_lightwave memory note.
  */
 class SubsonicClient(private val config: ServerConfig) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val http = HttpClient(OkHttp) {
+    private val http = HttpClient(CIO) {
         install(ContentNegotiation) { json(json) }
     }
+
+    // Normalized once here rather than trusted from the caller — ServerConfig.baseUrl
+    // is only trimmed of a trailing slash on the save path (ServerConfigRepository),
+    // not the raw value SettingsScreenViewModel.testConnection() builds straight from
+    // the typed field. An untrimmed baseUrl produces a double slash before "rest/...",
+    // which Navidrome's router doesn't match — it falls through to its web SPA at
+    // "/app/" (200 OK, text/html) instead of 404ing, which is what actually surfaced
+    // this on-device (a NoTransformationFoundException, not an obviously-URL-shaped
+    // error). Confirmed 2026-09-17.
+    private val baseUrl: String = config.baseUrl.trimEnd('/')
+
+    /** Used by PlaybackRepository to decide streaming vs. download-then-play — see its toAudioItem. */
+    val baseUrlIsHttps: Boolean = baseUrl.startsWith("https://", ignoreCase = true)
 
     companion object {
         private const val API_VERSION = "1.16.1"
@@ -65,12 +86,12 @@ class SubsonicClient(private val config: ServerConfig) {
     fun endpointUrl(method: String, params: List<Pair<String, String>> = emptyList()): String {
         val all = authParams() + params
         val query = all.joinToString("&") { (k, v) -> "$k=${java.net.URLEncoder.encode(v, "UTF-8")}" }
-        return "${config.baseUrl}/rest/$method?$query"
+        return "$baseUrl/rest/$method?$query"
     }
 
     /** Calls a JSON endpoint and unwraps the `subsonic-response` envelope. */
     suspend fun call(method: String, params: List<Pair<String, String>> = emptyList()): SubsonicResponse {
-        val response: SubsonicEnvelope = http.get("${config.baseUrl}/rest/$method") {
+        val response: SubsonicEnvelope = http.get("$baseUrl/rest/$method") {
             (authParams() + params).forEach { (k, v) -> parameter(k, v) }
         }.body()
         val body = response.response
@@ -81,10 +102,23 @@ class SubsonicClient(private val config: ServerConfig) {
         return body
     }
 
-    /** `ping.view` — verifies the server is reachable and the credentials are valid. */
-    suspend fun ping(): Boolean = try {
-        call("ping.view").isOk
+    /** Raw bytes from a binary endpoint (download.view, getCoverArt.view, ...) — same client/engine as [call], so it gets the same cleartext-over-CIO handling. */
+    suspend fun getBytes(method: String, params: List<Pair<String, String>> = emptyList()): ByteArray =
+        http.get("$baseUrl/rest/$method") {
+            (authParams() + params).forEach { (k, v) -> parameter(k, v) }
+        }.body()
+
+    /**
+     * `ping.view` — verifies the server is reachable and the credentials are valid.
+     * Returns the underlying exception on failure (not just a boolean) — a silently
+     * swallowed exception here made an earlier real bug (cleartext HTTP blocked by
+     * Android's default network security policy) look identical to a wrong
+     * password or an unreachable host, with no way to tell them apart.
+     */
+    suspend fun ping(): Result<Unit> = try {
+        call("ping.view") // throws SubsonicApiException if the server itself reports failure
+        Result.success(Unit)
     } catch (e: Exception) {
-        false
+        Result.failure(e)
     }
 }

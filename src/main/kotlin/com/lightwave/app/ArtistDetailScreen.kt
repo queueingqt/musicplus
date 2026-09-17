@@ -22,13 +22,16 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -38,8 +41,19 @@ class ArtistDetailScreenViewModel(
     private val artistId: String,
 ) : LightViewModel<Unit>() {
 
-    val albums: StateFlow<List<Album>> = libraryRepository.observeAlbumsByArtist(artistId)
+    private val allAlbums: StateFlow<List<Album>> = libraryRepository.observeAlbumsByArtist(artistId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _filter = MutableStateFlow("")
+    val filter: StateFlow<String> = _filter
+
+    val albums: StateFlow<List<Album>> = combine(allAlbums, _filter) { albums, query ->
+        if (query.isBlank()) albums else albums.filter { it.name.contains(query, ignoreCase = true) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setFilter(query: String) {
+        _filter.value = query
+    }
 
     // Same caveat as AlbumDetailScreenViewModel's `album` state: depends on the
     // artist already being cached locally (true once refreshArtists() has run, e.g.
@@ -72,24 +86,34 @@ class ArtistDetailScreen(
     override fun Content() {
         val albums by viewModel.albums.collectAsState()
         val artist by viewModel.artist.collectAsState()
+        val filter by viewModel.filter.collectAsState()
 
         LightwaveTheme {
         Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(artist?.name ?: "Artist"))
+            // Favorite inline with the artist name — via LightTopBar's rightButton
+            // slot, rather than a separate row, since the name is already the
+            // title here (no need to repeat it). Icon-only, no text label.
+            LightTopBar(
+                leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                center = LightTopBarCenter.Text(artist?.name ?: "Artist"),
+                rightButton = LightBarButton.LightIcon(
+                    icon = if (artist?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                    onClick = { viewModel.toggleFavorite() },
+                    contentDescription = if (artist?.isFavorite == true) "Favorited" else "Favorite",
+                ),
+            )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .lightClickable { viewModel.toggleFavorite() }
-                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-            ) {
-                LightIcon(icon = if (artist?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE, size = 1.5f)
-                LightText(
-                    text = if (artist?.isFavorite == true) "Favorited" else "Favorite",
-                    variant = LightTextVariant.Fine,
-                    modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-                )
-            }
+            LightTextField(
+                label = "Search",
+                value = filter,
+                placeholder = "Filter albums",
+                onClick = {
+                    navigateTo({ a -> TextEditScreen(a, "Search albums", filter) }) { result ->
+                        viewModel.setFilter(result)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
+            )
 
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(albums, key = { it.id }) { album ->
