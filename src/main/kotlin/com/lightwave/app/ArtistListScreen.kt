@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.LibraryRepository
@@ -106,7 +107,7 @@ private fun ArtistRow(artist: Artist, onClick: () -> Unit) {
             .lightClickable(onClick = onClick)
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
     ) {
-        LightText(text = artist.name, variant = LightTextVariant.Copy)
+        LightText(text = artist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
         LightText(text = "${artist.albumCount} albums", variant = LightTextVariant.Fine)
     }
 }

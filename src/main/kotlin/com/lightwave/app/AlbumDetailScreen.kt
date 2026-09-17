@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.DownloadEntity
@@ -171,7 +172,13 @@ class AlbumDetailScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                LightText(text = title, variant = LightTextVariant.Detail, modifier = Modifier.weight(1f))
+                LightText(
+                    text = title,
+                    variant = LightTextVariant.Detail,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 LightIcon(
                     icon = if (album?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
                     size = 1.5f,
@@ -266,6 +273,8 @@ private fun TrackRow(
             modifier = Modifier
                 .weight(1f)
                 .lightClickable(onClick = onPlay),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         LightIcon(
             icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,

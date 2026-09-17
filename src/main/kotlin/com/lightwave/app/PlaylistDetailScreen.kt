@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.DownloadEntity
@@ -239,6 +240,8 @@ private fun PlaylistTrackRow(
                 modifier = Modifier
                     .weight(1f)
                     .lightClickable(onClick = onPlay),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             LightIcon(
                 icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,

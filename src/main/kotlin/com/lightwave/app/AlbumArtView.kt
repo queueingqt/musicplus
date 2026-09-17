@@ -47,17 +47,31 @@ fun AlbumArt(
     val graph = remember(lightContext) { AppGraph.from(lightContext) }
     val showArtwork by graph.appSettingsRepository.showAlbumArtwork.collectAsState(initial = true)
 
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var loadFailed by remember { mutableStateOf(false) }
+    // Seeded from a synchronous cache peek so a row that's already been loaded once
+    // (e.g. scrolled out of view and back) shows its art on the very first frame
+    // instead of flashing back to the placeholder while getBitmap() re-confirms a
+    // cache hit it's going to return instantly anyway.
+    var bitmap by remember(url, showArtwork) {
+        mutableStateOf(url?.takeIf { showArtwork }?.let { graph.albumArtRepository.peekCached(it) })
+    }
+    var loadFailed by remember(url, showArtwork) { mutableStateOf(false) }
 
     LaunchedEffect(url, showArtwork) {
+        if (url == null || !showArtwork) {
+            bitmap = null
+            loadFailed = false
+            return@LaunchedEffect
+        }
+        val cached = graph.albumArtRepository.peekCached(url)
+        if (cached != null) {
+            bitmap = cached
+            return@LaunchedEffect
+        }
         bitmap = null
         loadFailed = false
-        if (url != null && showArtwork) {
-            val result = graph.albumArtRepository.getBitmap(url)
-            bitmap = result
-            loadFailed = result == null
-        }
+        val result = graph.albumArtRepository.getBitmap(url)
+        bitmap = result
+        loadFailed = result == null
     }
 
     val colors = LightThemeTokens.colors

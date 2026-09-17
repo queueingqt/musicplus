@@ -10,6 +10,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.LibraryRepository
@@ -121,8 +122,8 @@ private fun AlbumRow(lightContext: SealedLightContext, album: Album, onClick: ()
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )
         Column {
-            LightText(text = album.name, variant = LightTextVariant.Copy)
-            LightText(text = album.artistName ?: "Unknown artist", variant = LightTextVariant.Fine)
+            LightText(text = album.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            LightText(text = album.artistName ?: "Unknown artist", variant = LightTextVariant.Fine, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

@@ -9,6 +9,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.PlaylistRepository
@@ -137,7 +138,7 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
             .lightClickable(onClick = onClick)
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
     ) {
-        LightText(text = playlist.name, variant = LightTextVariant.Copy)
+        LightText(text = playlist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
         LightText(text = "${playlist.songCount} tracks", variant = LightTextVariant.Fine)
     }
 }

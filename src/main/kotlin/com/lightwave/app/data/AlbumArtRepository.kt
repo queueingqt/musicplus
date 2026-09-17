@@ -43,6 +43,9 @@ class AlbumArtRepository(
     // fetch the same art doesn't redundantly re-fetch once the winner finishes.
     private val fetchMutex = Mutex()
 
+    /** Synchronous, memory-cache-only lookup — lets a caller show an already-cached image on its very first composition instead of flashing a placeholder while [getBitmap] re-confirms the same cache hit. */
+    fun peekCached(url: String): Bitmap? = memoryCache[url]
+
     /** Returns the decoded [Bitmap] for [url] (cached after the first successful fetch), or null if it's not fetchable/decodable. */
     suspend fun getBitmap(url: String): Bitmap? {
         memoryCache[url]?.let { return it }

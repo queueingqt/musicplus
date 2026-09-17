@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.LibraryRepository
@@ -227,6 +228,6 @@ private fun FavoriteRowWithArt(lightContext: SealedLightContext, label: String, 
             size = 2.5f.gridUnitsAsDp(),
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )
-        LightText(text = label, variant = LightTextVariant.Copy)
+        LightText(text = label, variant = LightTextVariant.Copy, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

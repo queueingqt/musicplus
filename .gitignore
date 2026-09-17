@@ -12,4 +12,5 @@
 *.jks
 local.properties
 .kotlin/
+.claude/
 
