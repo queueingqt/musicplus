@@ -15,6 +15,8 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -51,7 +53,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
         val artists by viewModel.artists.collectAsState()
 
         Column {
-            LightTopBar(center = LightTopBarCenter.Text("Artists"))
+            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Artists"))
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(artists, key = { it.id }) { artist ->
                     ArtistRow(artist) {

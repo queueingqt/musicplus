@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.ServerConfig
@@ -18,8 +19,11 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
@@ -109,7 +113,7 @@ class SettingsScreen(activity: SealedLightActivity) :
         val saveMessage by viewModel.saveMessage.collectAsState()
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(center = LightTopBarCenter.Text("Settings"))
+            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Settings"))
 
             Column(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 LightText(text = "Server URL", variant = LightTextVariant.Fine)
@@ -118,10 +122,14 @@ class SettingsScreen(activity: SealedLightActivity) :
                 // confirmed (see sdk/ui/.../LightTextInputEditor.kt and
                 // LightEmbeddedLp3Keyboard.kt) — BasicTextField is a plain-Compose
                 // fallback for all three fields below, not an SDK component, and it
-                // doesn't mask the password field either.
+                // doesn't mask the password field either. textStyle/cursorBrush are
+                // set explicitly below because BasicTextField defaults to black text
+                // — invisible against LightOS's dark theme (found on-device testing).
                 BasicTextField(
                     value = baseUrl,
                     onValueChange = viewModel::onBaseUrlChange,
+                    textStyle = TextStyle(color = LightThemeTokens.colors.content),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(LightThemeTokens.colors.content),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 0.5f.gridUnitsAsDp()),
                 )
 
@@ -129,6 +137,8 @@ class SettingsScreen(activity: SealedLightActivity) :
                 BasicTextField(
                     value = username,
                     onValueChange = viewModel::onUsernameChange,
+                    textStyle = TextStyle(color = LightThemeTokens.colors.content),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(LightThemeTokens.colors.content),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 0.5f.gridUnitsAsDp()),
                 )
 
@@ -136,6 +146,8 @@ class SettingsScreen(activity: SealedLightActivity) :
                 BasicTextField(
                     value = password,
                     onValueChange = viewModel::onPasswordChange,
+                    textStyle = TextStyle(color = LightThemeTokens.colors.content),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(LightThemeTokens.colors.content),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 0.5f.gridUnitsAsDp()),
                 )
 

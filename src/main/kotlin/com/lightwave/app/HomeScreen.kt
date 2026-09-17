@@ -1,11 +1,13 @@
 package com.lightwave.app
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
@@ -63,20 +65,45 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
 
         Column {
             LightTopBar(center = LightTopBarCenter.Text("Lightwave"))
-            LightScrollView(modifier = Modifier.fillMaxWidth()) {
-                if (!isConfigured) {
-                    MenuRow("Set up your server") { navigateTo(::SettingsScreen) }
+            if (!isConfigured) {
+                SetUpServerSplash { navigateTo(::SettingsScreen) }
+            } else {
+                LightScrollView(modifier = Modifier.fillMaxWidth()) {
+                    if (nowPlaying != null) {
+                        MenuRow("Now playing: $nowPlaying") { navigateTo(::PlayerScreen) }
+                    }
+                    MenuRow("Albums") { navigateTo(::AlbumListScreen) }
+                    MenuRow("Artists") { navigateTo(::ArtistListScreen) }
+                    MenuRow("Search") { navigateTo(::SearchScreen) }
+                    MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
+                    MenuRow("Settings") { navigateTo(::SettingsScreen) }
                 }
-                if (nowPlaying != null) {
-                    MenuRow("Now playing: $nowPlaying") { navigateTo(::PlayerScreen) }
-                }
-                MenuRow("Albums") { navigateTo(::AlbumListScreen) }
-                MenuRow("Artists") { navigateTo(::ArtistListScreen) }
-                MenuRow("Search") { navigateTo(::SearchScreen) }
-                MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
-                MenuRow("Settings") { navigateTo(::SettingsScreen) }
             }
         }
+    }
+}
+
+/** Shown instead of the whole menu when no server is configured yet — Albums/Artists/Search/Favorites are all meaningless with nothing to browse. */
+@Composable
+private fun SetUpServerSplash(onSetUp: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(2f.gridUnitsAsDp()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        LightText(text = "Welcome to Lightwave", variant = LightTextVariant.Heading)
+        LightText(
+            text = "Connect to your Navidrome server to start browsing your library.",
+            variant = LightTextVariant.Detail,
+            align = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(top = 1f.gridUnitsAsDp(), bottom = 2f.gridUnitsAsDp()),
+        )
+        LightText(
+            text = "Set up your server",
+            variant = LightTextVariant.Button,
+            modifier = Modifier.lightClickable(onClick = onSetUp),
+        )
     }
 }
 

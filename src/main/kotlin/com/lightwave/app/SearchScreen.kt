@@ -19,6 +19,8 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -98,7 +100,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
         val tracks by viewModel.trackResults.collectAsState()
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(center = LightTopBarCenter.Text("Search"))
+            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Search"))
 
             LightText(
                 text = "Search",
@@ -111,10 +113,14 @@ class SearchScreen(private val activity: SealedLightActivity) :
             // `LightTextInputEditor` pattern once that component's exact API is
             // confirmed (see sdk/ui/.../LightTextInputEditor.kt and
             // LightEmbeddedLp3Keyboard.kt) — BasicTextField is a plain-Compose
-            // fallback, not an SDK component.
+            // fallback, not an SDK component. textStyle/cursorBrush are set
+            // explicitly because BasicTextField defaults to black text — invisible
+            // against LightOS's dark theme (found on-device testing).
             BasicTextField(
                 value = query,
                 onValueChange = viewModel::onQueryChange,
+                textStyle = androidx.compose.ui.text.TextStyle(color = com.thelightphone.sdk.ui.LightThemeTokens.colors.content),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(com.thelightphone.sdk.ui.LightThemeTokens.colors.content),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),

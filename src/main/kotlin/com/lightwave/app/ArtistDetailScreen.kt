@@ -17,6 +17,7 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -73,7 +74,7 @@ class ArtistDetailScreen(
         val artist by viewModel.artist.collectAsState()
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(center = LightTopBarCenter.Text(artist?.name ?: "Artist"))
+            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(artist?.name ?: "Artist"))
 
             Row(
                 modifier = Modifier

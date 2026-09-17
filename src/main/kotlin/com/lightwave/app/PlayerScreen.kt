@@ -92,7 +92,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val track = state.currentTrack
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(center = LightTopBarCenter.Text("Now Playing"))
+            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Now Playing"))
 
             Column(
                 modifier = Modifier

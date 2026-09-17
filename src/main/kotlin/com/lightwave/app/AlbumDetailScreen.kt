@@ -25,6 +25,7 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -114,7 +115,7 @@ class AlbumDetailScreen(
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(center = LightTopBarCenter.Text(title))
+            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(title))
 
             Row(
                 modifier = Modifier
