@@ -11,7 +11,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
-import com.lightwave.app.data.PlaybackRepositoryHolder
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -24,7 +23,6 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -38,12 +36,11 @@ class HomeScreenViewModel(
         .map { it != null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    // Non-creating peek — see PlaybackRepositoryHolder: Home shouldn't itself spend
-    // the app's one detached-audio handle just by being shown.
-    val nowPlayingTitle: StateFlow<String?> =
-        (PlaybackRepositoryHolder.peek()?.state?.map { it.currentTrack?.title }
-            ?: MutableStateFlow(null))
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    // Note: the old "Now playing: <title>" row that used to live here (via a
+    // PlaybackRepositoryHolder.peek() StateFlow) was dropped — the persistent
+    // mini-player (LightwaveScaffold, visible on every screen incl. this one) now
+    // covers that, and duplicating it here would just be two now-playing
+    // indicators competing for attention on the same screen.
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch {
@@ -61,24 +58,22 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
     @Composable
     override fun Content() {
         val isConfigured by viewModel.isConfigured.collectAsState()
-        val nowPlaying by viewModel.nowPlayingTitle.collectAsState()
 
-        LightwaveTheme {
-            Column {
-                LightTopBar(center = LightTopBarCenter.Text("Lightwave"))
-                if (!isConfigured) {
-                    SetUpServerSplash { navigateTo(::SettingsScreen) }
-                } else {
-                    LightScrollView(modifier = Modifier.fillMaxWidth()) {
-                        if (nowPlaying != null) {
-                            MenuRow("Now playing: $nowPlaying") { navigateTo(::PlayerScreen) }
-                        }
-                        MenuRow("Albums") { navigateTo(::AlbumListScreen) }
-                        MenuRow("Artists") { navigateTo(::ArtistListScreen) }
-                        MenuRow("Search") { navigateTo(::SearchScreen) }
-                        MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
-                        MenuRow("Settings") { navigateTo(::SettingsScreen) }
-                    }
+        // Root screen — no back button (see AlbumListScreen etc. for the
+        // leftButton = BACK pattern every non-root screen uses).
+        LightwaveScaffold(
+            topBar = { LightTopBar(center = LightTopBarCenter.Text("Lightwave")) },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
+            if (!isConfigured) {
+                SetUpServerSplash { navigateTo(::SettingsScreen) }
+            } else {
+                LightScrollView(modifier = Modifier.fillMaxWidth()) {
+                    MenuRow("Albums") { navigateTo(::AlbumListScreen) }
+                    MenuRow("Artists") { navigateTo(::ArtistListScreen) }
+                    MenuRow("Search") { navigateTo(::SearchScreen) }
+                    MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
+                    MenuRow("Settings") { navigateTo(::SettingsScreen) }
                 }
             }
         }

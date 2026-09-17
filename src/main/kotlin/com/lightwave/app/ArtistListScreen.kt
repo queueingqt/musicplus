@@ -67,9 +67,15 @@ class ArtistListScreen(activity: SealedLightActivity) :
         val artists by viewModel.artists.collectAsState()
         val filter by viewModel.filter.collectAsState()
 
-        LightwaveTheme {
-        Column {
-            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Artists"))
+        LightwaveScaffold(
+            topBar = {
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text("Artists"),
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
             LightTextField(
                 label = "Search",
                 value = filter,
@@ -88,7 +94,6 @@ class ArtistListScreen(activity: SealedLightActivity) :
                     }
                 }
             }
-        }
         }
     }
 }

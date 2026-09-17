@@ -1,9 +1,7 @@
 package com.lightwave.app
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -144,12 +142,17 @@ class AlbumDetailScreen(
         val albumDownloadState by viewModel.albumDownloadState.collectAsState()
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
 
-        LightwaveTheme {
-        Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text(title))
-
-            // Favorite + album-level download, inline with the album title — icon-only,
-            // no text labels (self-explanatory iconography).
+        // Favorite + album-level download + add-to-queue, inline with the album
+        // title — icon-only, no text labels (self-explanatory iconography).
+        LightwaveScaffold(
+            topBar = {
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text(title),
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -181,6 +184,20 @@ class AlbumDetailScreen(
                         .lightClickable { viewModel.toggleAlbumDownload(lightContext) }
                         .padding(horizontal = 0.5f.gridUnitsAsDp()),
                 )
+                // Whole-album "add to queue" — appends every track on the album
+                // after whatever's currently playing, same action as each row's
+                // own add-to-queue icon but for the full track list at once.
+                LightIcon(
+                    icon = LightIcons.ADD,
+                    size = 1.5f,
+                    contentDescription = "Add album to queue",
+                    modifier = Modifier.lightClickable {
+                        scope.launch {
+                            val graph = AppGraph.from(lightContext)
+                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
+                        }
+                    },
+                )
             }
 
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
@@ -200,17 +217,29 @@ class AlbumDetailScreen(
                         onToggleFavorite = {
                             scope.launch { AppGraph.from(lightContext).libraryRepository.setTrackFavorite(track.id, !track.isFavorite) }
                         },
+                        onAddToQueue = {
+                            scope.launch {
+                                val graph = AppGraph.from(lightContext)
+                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
+                            }
+                        },
                         onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
                     )
                 }
             }
         }
-        }
     }
 }
 
 @Composable
-private fun TrackRow(track: Track, status: DownloadEntity?, onPlay: () -> Unit, onToggleFavorite: () -> Unit, onDownload: () -> Unit) {
+private fun TrackRow(
+    track: Track,
+    status: DownloadEntity?,
+    onPlay: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onDownload: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -234,10 +263,20 @@ private fun TrackRow(track: Track, status: DownloadEntity?, onPlay: () -> Unit, 
                 .padding(horizontal = 0.5f.gridUnitsAsDp()),
         )
         LightIcon(
+            icon = LightIcons.ADD,
+            size = 1.5f,
+            contentDescription = "Add to queue",
+            modifier = Modifier
+                .lightClickable(onClick = onAddToQueue)
+                .padding(start = 0.5f.gridUnitsAsDp()),
+        )
+        LightIcon(
             icon = downloadIcon(status),
             size = 1.5f,
             contentDescription = downloadStatusLabel(status),
-            modifier = Modifier.lightClickable(onClick = onDownload),
+            modifier = Modifier
+                .lightClickable(onClick = onDownload)
+                .padding(start = 0.5f.gridUnitsAsDp()),
         )
     }
 }
