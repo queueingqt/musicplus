@@ -31,8 +31,11 @@ class TextEditScreenViewModel(initialValue: String) : LightViewModel<String>() {
  *
  * Not used for the password field — `LightTextInputEditor` has no masking option
  * (there's no such parameter on it, and `KeyboardOptions` comes from the external
- * `light-keyboard` artifact, which isn't source-available to check further), so
- * Settings keeps a `BasicTextField` + `PasswordVisualTransformation` for that one field.
+ * `light-keyboard` artifact, which isn't source-available to patch). SettingsScreen's
+ * password field instead uses `MaskedTextEditScreen` (`MaskedTextInputEditor.kt`), a
+ * local fork of this same SDK pattern that masks the rendered text — see that file's
+ * header for the full explanation. Tracked at
+ * tracked issue #2
  */
 class TextEditScreen(
     activity: SealedLightActivity,
