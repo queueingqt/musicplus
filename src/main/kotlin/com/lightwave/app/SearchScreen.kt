@@ -1,7 +1,7 @@
 package com.lightwave.app
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
@@ -19,6 +19,7 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
@@ -90,10 +91,15 @@ class SearchScreen(private val activity: SealedLightActivity) :
         val albums by viewModel.albumResults.collectAsState()
         val tracks by viewModel.trackResults.collectAsState()
 
-        LightwaveTheme {
-        Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Search"))
-
+        LightwaveScaffold(
+            topBar = {
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text("Search"),
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
             LightTextField(
                 label = "Search",
                 value = query,
@@ -123,16 +129,24 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 }
                 item { SectionHeader("Tracks") }
                 items(tracks, key = { "track-${it.id}" }) { track ->
-                    ResultRow(track.title) {
-                        scope.launch {
-                            val graph = AppGraph.from(lightContext)
-                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
-                            navigateTo(::PlayerScreen)
-                        }
-                    }
+                    TrackResultRow(
+                        track = track,
+                        onPlay = {
+                            scope.launch {
+                                val graph = AppGraph.from(lightContext)
+                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
+                                navigateTo(::PlayerScreen)
+                            }
+                        },
+                        onAddToQueue = {
+                            scope.launch {
+                                val graph = AppGraph.from(lightContext)
+                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
+                            }
+                        },
+                    )
                 }
             }
-        }
         }
     }
 }
@@ -158,4 +172,29 @@ private fun ResultRow(label: String, onClick: () -> Unit) {
             .lightClickable(onClick = onClick)
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
     )
+}
+
+@Composable
+private fun TrackResultRow(track: Track, onPlay: () -> Unit, onAddToQueue: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        LightText(
+            text = track.title,
+            variant = LightTextVariant.Copy,
+            modifier = Modifier
+                .weight(1f)
+                .lightClickable(onClick = onPlay)
+                .padding(vertical = 0.5f.gridUnitsAsDp()),
+        )
+        LightIcon(
+            icon = LightIcons.ADD,
+            size = 1.5f,
+            contentDescription = "Add to queue",
+            modifier = Modifier.lightClickable(onClick = onAddToQueue),
+        )
+    }
 }

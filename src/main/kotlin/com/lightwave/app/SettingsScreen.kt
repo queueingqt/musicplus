@@ -1,7 +1,5 @@
 package com.lightwave.app
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -114,10 +112,15 @@ class SettingsScreen(activity: SealedLightActivity) :
         val testResult by viewModel.testResult.collectAsState()
         val saveMessage by viewModel.saveMessage.collectAsState()
 
-        LightwaveTheme {
-        Column(modifier = Modifier.fillMaxSize()) {
-            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Settings"))
-
+        LightwaveScaffold(
+            topBar = {
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text("Settings"),
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 // Real LightOS pattern: a read-only LightTextField that opens the SDK's
                 // own full-screen LightTextInputEditor (with its embedded LP3 keyboard)
@@ -180,7 +183,6 @@ class SettingsScreen(activity: SealedLightActivity) :
                         .padding(vertical = 1f.gridUnitsAsDp()),
                 )
             }
-        }
         }
     }
 }

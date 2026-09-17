@@ -71,9 +71,15 @@ class AlbumListScreen(activity: SealedLightActivity) :
         val albums by viewModel.albums.collectAsState()
         val filter by viewModel.filter.collectAsState()
 
-        LightwaveTheme {
-        Column {
-            LightTopBar(leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }), center = LightTopBarCenter.Text("Albums"))
+        LightwaveScaffold(
+            topBar = {
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text("Albums"),
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
             LightTextField(
                 label = "Search",
                 value = filter,
@@ -92,7 +98,6 @@ class AlbumListScreen(activity: SealedLightActivity) :
                     }
                 }
             }
-        }
         }
     }
 }

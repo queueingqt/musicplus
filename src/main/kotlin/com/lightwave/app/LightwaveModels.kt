@@ -52,4 +52,7 @@ data class PlaybackState(
     val errorMessage: String? = null,
 ) {
     val currentTrack: Track? get() = queue.getOrNull(currentIndex)
+
+    /** Tracks after [currentTrack] in [queue] — what the queue view shows as "up next". */
+    val upcomingTracks: List<Track> get() = if (currentIndex in queue.indices) queue.drop(currentIndex + 1) else emptyList()
 }

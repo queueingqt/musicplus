@@ -77,6 +77,71 @@ class PlaybackRepository(
         player.play()
     }
 
+    /**
+     * Appends [tracks] after the current queue instead of replacing it. If nothing
+     * is queued yet, this is equivalent to [play] starting at index 0.
+     *
+     * `LightAudioPlayer`'s confirmed public surface only exposes
+     * `setMediaQueue(items, startIndex)`, which always replaces the whole queue —
+     * there's no incremental append. So this rebuilds the full queue from this
+     * repository's own [queue] state (see [rebuildQueue]) and re-calls
+     * `setMediaQueue`, capturing/restoring the current position and play state
+     * around it so appending doesn't interrupt or rewind whatever is currently
+     * playing.
+     */
+    suspend fun addToQueue(tracks: List<Track>) {
+        if (tracks.isEmpty()) return
+        if (queue.value.isEmpty()) {
+            play(tracks, 0)
+            return
+        }
+        rebuildQueue(queue.value + tracks)
+    }
+
+    /**
+     * Removes the upcoming track at [index]. Only indices after the currently
+     * playing one are eligible — the queue view only offers removal for upcoming
+     * tracks, never the one actively playing (removing "the current track" would
+     * mean deciding what plays next, which is really a skip, not a queue edit).
+     */
+    suspend fun removeFromQueue(index: Int) {
+        val current = queue.value
+        val currentIndex = player.currentMediaItemIndex.value
+        if (index !in current.indices || index <= currentIndex) return
+        rebuildQueue(current.toMutableList().also { it.removeAt(index) })
+    }
+
+    /**
+     * Moves the upcoming track at [index] by [delta] slots (e.g. -1/+1 for the
+     * up/down reorder buttons in the queue view). Both the source and destination
+     * must be after the currently playing index — see [removeFromQueue].
+     */
+    suspend fun moveQueueItem(index: Int, delta: Int) {
+        val current = queue.value
+        val currentIndex = player.currentMediaItemIndex.value
+        val targetIndex = index + delta
+        if (index !in current.indices || targetIndex !in current.indices) return
+        if (index <= currentIndex || targetIndex <= currentIndex) return
+        rebuildQueue(current.toMutableList().also { it.add(targetIndex, it.removeAt(index)) })
+    }
+
+    /**
+     * Re-calls `setMediaQueue` with [newQueue] in full (see [addToQueue]'s doc for
+     * why), preserving the currently playing item's index/position/play state so
+     * a queue edit elsewhere doesn't interrupt what's already playing.
+     */
+    private suspend fun rebuildQueue(newQueue: List<Track>) {
+        if (!player.awaitReady()) return
+        val api = apiHolder.get() ?: return
+        val currentIndex = player.currentMediaItemIndex.value.coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
+        val savedPositionMs = player.positionMs.value
+        val wasPlaying = player.isPlaying.value
+        queue.value = newQueue
+        player.setMediaQueue(newQueue.map { it.toAudioItem(api) }, currentIndex)
+        player.seekTo(savedPositionMs)
+        if (wasPlaying) player.play()
+    }
+
     fun togglePlayPause() {
         if (player.isPlaying.value) player.pause() else player.play()
     }

@@ -1,8 +1,6 @@
 package com.lightwave.app
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
@@ -18,7 +16,6 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
-import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
@@ -88,21 +85,23 @@ class ArtistDetailScreen(
         val artist by viewModel.artist.collectAsState()
         val filter by viewModel.filter.collectAsState()
 
-        LightwaveTheme {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Favorite inline with the artist name — via LightTopBar's rightButton
-            // slot, rather than a separate row, since the name is already the
-            // title here (no need to repeat it). Icon-only, no text label.
-            LightTopBar(
-                leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
-                center = LightTopBarCenter.Text(artist?.name ?: "Artist"),
-                rightButton = LightBarButton.LightIcon(
-                    icon = if (artist?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                    onClick = { viewModel.toggleFavorite() },
-                    contentDescription = if (artist?.isFavorite == true) "Favorited" else "Favorite",
-                ),
-            )
-
+        // Favorite inline with the artist name — via LightTopBar's rightButton
+        // slot, rather than a separate row, since the name is already the title
+        // here (no need to repeat it). Icon-only, no text label.
+        LightwaveScaffold(
+            topBar = {
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text(artist?.name ?: "Artist"),
+                    rightButton = LightBarButton.LightIcon(
+                        icon = if (artist?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                        onClick = { viewModel.toggleFavorite() },
+                        contentDescription = if (artist?.isFavorite == true) "Favorited" else "Favorite",
+                    ),
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+        ) {
             LightTextField(
                 label = "Search",
                 value = filter,
@@ -122,7 +121,6 @@ class ArtistDetailScreen(
                     }
                 }
             }
-        }
         }
     }
 }
