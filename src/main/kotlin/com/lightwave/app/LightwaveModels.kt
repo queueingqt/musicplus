@@ -38,6 +38,13 @@ data class Track(
     val localFilePath: String?,
 )
 
+data class Playlist(
+    val id: String,
+    val name: String,
+    val songCount: Int,
+    val durationSec: Int,
+)
+
 enum class RepeatMode { OFF, REPEAT_QUEUE, REPEAT_TRACK }
 
 data class PlaybackState(

@@ -16,6 +16,7 @@ object AppGraph {
         val apiHolder: SubsonicApiHolder,
         val database: LightwaveDatabase,
         val libraryRepository: LibraryRepository,
+        val playlistRepository: PlaylistRepository,
         val downloadRepository: DownloadRepository,
         val albumArtRepository: AlbumArtRepository,
         val connectivity: LightConnectivity,
@@ -49,6 +50,12 @@ object AppGraph {
             trackDao = database.trackDao(),
             connectivity = connectivity,
         )
+        val playlistRepository = PlaylistRepository(
+            apiHolder = apiHolder,
+            playlistDao = database.playlistDao(),
+            trackDao = database.trackDao(),
+            connectivity = connectivity,
+        )
         val downloadRepository = DownloadRepository(
             downloadDao = database.downloadDao(),
             trackDao = database.trackDao(),
@@ -63,6 +70,7 @@ object AppGraph {
             apiHolder = apiHolder,
             database = database,
             libraryRepository = libraryRepository,
+            playlistRepository = playlistRepository,
             downloadRepository = downloadRepository,
             albumArtRepository = albumArtRepository,
             connectivity = connectivity,

@@ -147,6 +147,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                                 PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
                             }
                         },
+                        onAddToPlaylist = { navigateTo({ a -> PlaylistPickerScreen(a, track.id) }) },
                     )
                 }
             }
@@ -198,7 +199,13 @@ private fun ResultRowWithArt(lightContext: SealedLightContext, label: String, co
 }
 
 @Composable
-private fun TrackResultRow(lightContext: SealedLightContext, track: Track, onPlay: () -> Unit, onAddToQueue: () -> Unit) {
+private fun TrackResultRow(
+    lightContext: SealedLightContext,
+    track: Track,
+    onPlay: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -224,7 +231,17 @@ private fun TrackResultRow(lightContext: SealedLightContext, track: Track, onPla
             icon = LightIcons.ADD,
             size = 1.5f,
             contentDescription = "Add to queue",
-            modifier = Modifier.lightClickable(onClick = onAddToQueue),
+            modifier = Modifier
+                .lightClickable(onClick = onAddToQueue)
+                .padding(start = 0.5f.gridUnitsAsDp()),
+        )
+        LightIcon(
+            icon = LightIcons.LIST,
+            size = 1.5f,
+            contentDescription = "Add to playlist",
+            modifier = Modifier
+                .lightClickable(onClick = onAddToPlaylist)
+                .padding(start = 0.5f.gridUnitsAsDp()),
         )
     }
 }

@@ -48,6 +48,60 @@ class SubsonicApi(private val client: SubsonicClient) {
         client.call("unstar.view", listOf("id" to id))
     }
 
+    suspend fun getPlaylists(): List<SubsonicPlaylist> =
+        client.call("getPlaylists.view").playlists?.playlist ?: emptyList()
+
+    suspend fun getPlaylist(id: String): SubsonicPlaylistDetail? =
+        client.call("getPlaylist.view", listOf("id" to id)).playlist
+
+    /**
+     * Creates a new playlist ([playlistId] omitted), or replaces an existing one's
+     * entire track list when [playlistId] is supplied — confirmed against
+     * Navidrome's actual server source (core/playlists/playlists.go, `Create()`):
+     * `pls.Tracks = nil` followed by `pls.AddMediaFilesByID(ids)`, i.e. a genuine
+     * replace, not a merge/append. That playlistId-replace form is how
+     * [reorderPlaylist] rewrites track order below, since the Subsonic API has no
+     * dedicated "move" endpoint.
+     */
+    suspend fun createPlaylist(name: String, songIds: List<String> = emptyList(), playlistId: String? = null): SubsonicPlaylistDetail? {
+        val params = buildList {
+            if (playlistId != null) add("playlistId" to playlistId)
+            add("name" to name)
+            songIds.forEach { add("songId" to it) }
+        }
+        return client.call("createPlaylist.view", params).playlist
+    }
+
+    suspend fun renamePlaylist(playlistId: String, name: String) {
+        client.call("updatePlaylist.view", listOf("playlistId" to playlistId, "name" to name))
+    }
+
+    suspend fun addSongToPlaylist(playlistId: String, songId: String) {
+        client.call("updatePlaylist.view", listOf("playlistId" to playlistId, "songIdToAdd" to songId))
+    }
+
+    /**
+     * [songIndex] is the song's position within the playlist's current track list
+     * (as returned by [getPlaylist]'s `entry` order) — zero-based, confirmed
+     * against Navidrome's actual server source (core/playlists/playlists.go,
+     * `Update()`): `positions[i] = strconv.Itoa(idx + 1)`, with the comment
+     * "Convert 0-based indices to 1-based position IDs". The Subsonic spec itself
+     * never states this explicitly; this was verified against the real target
+     * server's implementation, not guessed.
+     */
+    suspend fun removeSongFromPlaylist(playlistId: String, songIndex: Int) {
+        client.call("updatePlaylist.view", listOf("playlistId" to playlistId, "songIndexToRemove" to songIndex.toString()))
+    }
+
+    /** Full reorder — see [createPlaylist]'s playlistId-replace form. [songIds] is the complete new track order. */
+    suspend fun reorderPlaylist(playlistId: String, name: String, songIds: List<String>) {
+        createPlaylist(name = name, songIds = songIds, playlistId = playlistId)
+    }
+
+    suspend fun deletePlaylist(id: String) {
+        client.call("deletePlaylist.view", listOf("id" to id))
+    }
+
     /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. Only safe to use when [baseUrlIsHttps] — see PlaybackRepository.toAudioItem. */
     fun streamUrl(songId: String, maxBitRateKbps: Int? = null): String {
         val params = buildList {

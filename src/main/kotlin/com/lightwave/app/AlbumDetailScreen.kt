@@ -235,6 +235,7 @@ class AlbumDetailScreen(
                             }
                         },
                         onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
+                        onAddToPlaylist = { navigateTo({ a -> PlaylistPickerScreen(a, track.id) }) },
                     )
                 }
             }
@@ -249,6 +250,7 @@ private fun TrackRow(
     onPlay: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onDownload: () -> Unit,
 ) {
     Row(
@@ -279,6 +281,14 @@ private fun TrackRow(
             contentDescription = "Add to queue",
             modifier = Modifier
                 .lightClickable(onClick = onAddToQueue)
+                .padding(start = 0.5f.gridUnitsAsDp()),
+        )
+        LightIcon(
+            icon = LightIcons.LIST,
+            size = 1.5f,
+            contentDescription = "Add to playlist",
+            modifier = Modifier
+                .lightClickable(onClick = onAddToPlaylist)
                 .padding(start = 0.5f.gridUnitsAsDp()),
         )
         LightIcon(

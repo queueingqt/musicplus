@@ -47,6 +47,28 @@ data class TrackEntity(
     val starred: Boolean,
 )
 
+@Entity(tableName = "playlists")
+data class PlaylistEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val songCount: Int,
+    val durationSec: Int,
+)
+
+/**
+ * Membership + ordering join table — [position] is zero-based (matches `getPlaylist`'s
+ * `entry` order, and `SubsonicApi.removeSongFromPlaylist`'s `songIndexToRemove`).
+ * PK is (playlistId, position) rather than a surrogate id so a full re-sync
+ * (`PlaylistRepository.refreshPlaylistDetail`) can upsert the whole ordered list in
+ * one shot via `REPLACE`, same as the other cache tables here.
+ */
+@Entity(tableName = "playlist_tracks", primaryKeys = ["playlistId", "position"])
+data class PlaylistTrackEntity(
+    val playlistId: String,
+    val position: Int,
+    val songId: String,
+)
+
 enum class DownloadStatus { QUEUED, DOWNLOADING, COMPLETE, FAILED }
 
 @Entity(tableName = "downloads")

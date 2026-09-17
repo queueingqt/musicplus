@@ -142,6 +142,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                                 PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
                             }
                         },
+                        onAddToPlaylist = { navigateTo({ a -> PlaylistPickerScreen(a, track.id) }) },
                     )
                 }
             }
@@ -173,7 +174,12 @@ private fun FavoriteRow(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FavoriteTrackRow(track: Track, onPlay: () -> Unit, onAddToQueue: () -> Unit) {
+private fun FavoriteTrackRow(
+    track: Track,
+    onPlay: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -193,6 +199,14 @@ private fun FavoriteTrackRow(track: Track, onPlay: () -> Unit, onAddToQueue: () 
             size = 1.5f,
             contentDescription = "Add to queue",
             modifier = Modifier.lightClickable(onClick = onAddToQueue),
+        )
+        LightIcon(
+            icon = LightIcons.LIST,
+            size = 1.5f,
+            contentDescription = "Add to playlist",
+            modifier = Modifier
+                .lightClickable(onClick = onAddToPlaylist)
+                .padding(start = 0.5f.gridUnitsAsDp()),
         )
     }
 }

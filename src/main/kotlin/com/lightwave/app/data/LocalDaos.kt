@@ -71,6 +71,53 @@ interface TrackDao {
 }
 
 @Dao
+interface PlaylistDao {
+    @Query("SELECT * FROM playlists ORDER BY name COLLATE NOCASE")
+    fun observeAll(): Flow<List<PlaylistEntity>>
+
+    @Query("SELECT * FROM playlists WHERE id = :id")
+    fun observeById(id: String): Flow<PlaylistEntity?>
+
+    @Query("SELECT * FROM playlists WHERE id = :id")
+    suspend fun getById(id: String): PlaylistEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(playlist: PlaylistEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(playlists: List<PlaylistEntity>)
+
+    @Query("DELETE FROM playlists WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query(
+        """
+        SELECT tracks.* FROM tracks
+        INNER JOIN playlist_tracks ON tracks.id = playlist_tracks.songId
+        WHERE playlist_tracks.playlistId = :playlistId
+        ORDER BY playlist_tracks.position
+        """,
+    )
+    fun observeTracks(playlistId: String): Flow<List<TrackEntity>>
+
+    @Query("SELECT songId FROM playlist_tracks WHERE playlistId = :playlistId ORDER BY position")
+    suspend fun getSongIdsInOrder(playlistId: String): List<String>
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
+    suspend fun clearTracks(playlistId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTracks(tracks: List<PlaylistTrackEntity>)
+
+    /** Wholesale re-sync of one playlist's membership/order after a server refresh. */
+    @Transaction
+    suspend fun replaceTracks(playlistId: String, tracks: List<PlaylistTrackEntity>) {
+        clearTracks(playlistId)
+        insertTracks(tracks)
+    }
+}
+
+@Dao
 interface DownloadDao {
     @Query("SELECT * FROM downloads ORDER BY queuedAtEpochMs DESC")
     fun observeAll(): Flow<List<DownloadEntity>>
