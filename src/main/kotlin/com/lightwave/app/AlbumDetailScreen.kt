@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -13,7 +15,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.DownloadEntity
@@ -26,14 +30,11 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
-import com.thelightphone.sdk.ui.LightTopBar
-import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.Flow
@@ -144,13 +145,24 @@ class AlbumDetailScreen(
         val albumDownloadState by viewModel.albumDownloadState.collectAsState()
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
 
-        // Favorite + album-level download + add-to-queue, inline with the album
-        // title — icon-only, no text labels (self-explanatory iconography).
+        // Favorite + album-level download + add-to-queue live in the top bar
+        // itself (not a separate row below the art) to save vertical space —
+        // icon-only, no text labels (self-explanatory iconography).
         LightwaveScaffold(
             topBar = {
-                LightTopBar(
-                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
-                    center = LightTopBarCenter.Text(title),
+                AlbumTopBar(
+                    title = title,
+                    isFavorite = album?.isFavorite == true,
+                    downloadState = albumDownloadState,
+                    onBack = { goBack() },
+                    onToggleFavorite = { viewModel.toggleFavorite() },
+                    onToggleDownload = { viewModel.toggleAlbumDownload(lightContext) },
+                    onAddToQueue = {
+                        scope.launch {
+                            val graph = AppGraph.from(lightContext)
+                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
+                        }
+                    },
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
@@ -162,59 +174,6 @@ class AlbumDetailScreen(
                     size = 9f.gridUnitsAsDp(),
                     placeholderIconSize = 4f,
                     modifier = Modifier.padding(vertical = 1f.gridUnitsAsDp()),
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                LightText(
-                    text = title,
-                    variant = LightTextVariant.Detail,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                LightIcon(
-                    icon = if (album?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                    size = 1.5f,
-                    contentDescription = if (album?.isFavorite == true) "Favorited" else "Favorite",
-                    modifier = Modifier
-                        .lightClickable { viewModel.toggleFavorite() }
-                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
-                )
-                LightIcon(
-                    icon = when (albumDownloadState) {
-                        AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
-                        AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
-                    },
-                    size = 1.5f,
-                    contentDescription = when (albumDownloadState) {
-                        AlbumDownloadState.ALL -> "Album downloaded — tap to remove"
-                        AlbumDownloadState.SOME -> "Some tracks downloaded — tap to download the rest"
-                        AlbumDownloadState.NONE -> "Download album"
-                    },
-                    modifier = Modifier
-                        .lightClickable { viewModel.toggleAlbumDownload(lightContext) }
-                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
-                )
-                // Whole-album "add to queue" — appends every track on the album
-                // after whatever's currently playing, same action as each row's
-                // own add-to-queue icon but for the full track list at once.
-                LightIcon(
-                    icon = LightIcons.ADD,
-                    size = 1.5f,
-                    contentDescription = "Add album to queue",
-                    modifier = Modifier.lightClickable {
-                        scope.launch {
-                            val graph = AppGraph.from(lightContext)
-                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
-                        }
-                    },
                 )
             }
 
@@ -246,6 +205,92 @@ class AlbumDetailScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Custom top bar replicating [com.thelightphone.sdk.ui.LightTopBar]'s layout
+ * (same height/padding constants, same overlaid-Box centering trick so the
+ * title stays truly centered regardless of how wide the left/right content
+ * is) — [com.thelightphone.sdk.ui.LightTopBar] itself only has room for one
+ * `rightButton`, and this needs three (favorite, download, add-to-queue), so
+ * a plain `rightButton` slot can't fit them without a separate row.
+ */
+@Composable
+private fun AlbumTopBar(
+    title: String,
+    isFavorite: Boolean,
+    downloadState: AlbumDownloadState,
+    onBack: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onToggleDownload: () -> Unit,
+    onAddToQueue: () -> Unit,
+) {
+    val barHeight = 3f.gridUnitsAsDp()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(barHeight)
+            .padding(horizontal = 1f.gridUnitsAsDp()),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(barHeight).zIndex(2f),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LightIcon(
+                icon = LightIcons.BACK,
+                modifier = Modifier.lightClickable(onClick = onBack),
+                contentDescription = "Back",
+            )
+            Box(modifier = Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LightIcon(
+                    icon = if (isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                    size = 1.5f,
+                    contentDescription = if (isFavorite) "Favorited" else "Favorite",
+                    modifier = Modifier
+                        .lightClickable(onClick = onToggleFavorite)
+                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
+                )
+                LightIcon(
+                    icon = when (downloadState) {
+                        AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
+                        AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
+                    },
+                    size = 1.5f,
+                    contentDescription = when (downloadState) {
+                        AlbumDownloadState.ALL -> "Album downloaded — tap to remove"
+                        AlbumDownloadState.SOME -> "Some tracks downloaded — tap to download the rest"
+                        AlbumDownloadState.NONE -> "Download album"
+                    },
+                    modifier = Modifier
+                        .lightClickable(onClick = onToggleDownload)
+                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
+                )
+                // Whole-album "add to queue" — appends every track on the album
+                // after whatever's currently playing, same action as each row's
+                // own add-to-queue icon but for the full track list at once.
+                LightIcon(
+                    icon = LightIcons.ADD,
+                    size = 1.5f,
+                    contentDescription = "Add album to queue",
+                    modifier = Modifier.lightClickable(onClick = onAddToQueue),
+                )
+            }
+        }
+        Box(
+            modifier = Modifier.fillMaxWidth().height(barHeight),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightText(
+                text = title,
+                variant = LightTextVariant.Fine,
+                align = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 13f.gridUnitsAsDp()),
+            )
         }
     }
 }
