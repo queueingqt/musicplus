@@ -129,24 +129,34 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                                                     ),
                                                 )
                                             }
-                                            add(
-                                                ActionMenuItem(
-                                                    icon = LightIcons.TRASH,
-                                                    label = "Delete",
-                                                    onSelect = ActionMenuSelection.Perform {
-                                                        LightModalManager.show(
-                                                            ConfirmModal(
-                                                                title = "Delete \"${server.name}\"?",
-                                                                message = "Removes access to this server's library. Downloaded music and cached data stay on the device.",
-                                                                confirmContentDescription = "Delete server",
-                                                                onConfirm = { viewModel.remove(server.id) },
-                                                            ),
-                                                            duration = 30.seconds,
-                                                        )
-                                                        null
-                                                    },
-                                                ),
+                                            // lateinit self-reference, not a plain `null` return — Perform's
+                                            // contract is "null means this row no longer applies, drop it"
+                                            // (see ActionsMenuScreen.kt's doc). This row still applies
+                                            // whether the confirm dialog it opens gets confirmed or
+                                            // cancelled, so it must return itself. `null` here dropped this
+                                            // row the instant it was tapped, before the dialog even showed —
+                                            // masked as "seems fine" only because this menu has another row
+                                            // ("Set active") still left after it disappeared. Reported live
+                                            // via the identical, more visible bug in PlaylistDetailScreen's
+                                            // own Delete row (that menu's only row), 2026-09-18.
+                                            lateinit var deleteItem: ActionMenuItem
+                                            deleteItem = ActionMenuItem(
+                                                icon = LightIcons.TRASH,
+                                                label = "Delete",
+                                                onSelect = ActionMenuSelection.Perform {
+                                                    LightModalManager.show(
+                                                        ConfirmModal(
+                                                            title = "Delete \"${server.name}\"?",
+                                                            message = "Removes access to this server's library. Downloaded music and cached data stay on the device.",
+                                                            confirmContentDescription = "Delete server",
+                                                            onConfirm = { viewModel.remove(server.id) },
+                                                        ),
+                                                        duration = 30.seconds,
+                                                    )
+                                                    deleteItem
+                                                },
                                             )
+                                            add(deleteItem)
                                         },
                                     )
                                 })

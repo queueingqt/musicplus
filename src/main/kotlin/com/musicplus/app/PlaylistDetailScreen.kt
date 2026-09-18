@@ -143,7 +143,11 @@ class PlaylistDetailScreen(
                         icon = LightIcons.BACK,
                         onClick = { goBack() },
                     ),
-                    center = LightTopBarCenter.Text(title),
+                    // Generic label, not the playlist's own name — that's shown
+                    // (and interactive) as the body heading below. Reported live:
+                    // showing the exact same name in both places read as a
+                    // double title once the body heading was added.
+                    center = LightTopBarCenter.Text("Playlist"),
                     rightButton = LightBarButton.LightIcon(
                         icon = LightIcons.PENCIL,
                         contentDescription = "Rename playlist",
@@ -179,27 +183,37 @@ class PlaylistDetailScreen(
                         onClick = {},
                         onLongClick = {
                             navigateTo({ a ->
+                                // lateinit self-reference, not a plain `null` return — Perform's
+                                // contract is "null means this row no longer applies at all, drop
+                                // it from the menu" (see ActionsMenuScreen.kt's doc). This row still
+                                // applies regardless of whether the confirm dialog it just opened
+                                // gets confirmed or cancelled, so it must return itself, not null.
+                                // Returning null here (copied from ServerSettingsScreen's identical
+                                // Delete row, which has the same latent bug) dropped this row the
+                                // instant it was tapped — invisible there since it's one of several
+                                // rows, but this menu has only this one row, so it went blank.
+                                // Reported live, 2026-09-18.
+                                lateinit var deleteItem: ActionMenuItem
+                                deleteItem = ActionMenuItem(
+                                    icon = LightIcons.TRASH,
+                                    label = "Delete playlist",
+                                    onSelect = ActionMenuSelection.Perform {
+                                        LightModalManager.show(
+                                            ConfirmModal(
+                                                title = "Delete \"$title\"?",
+                                                message = "This removes the playlist. The tracks themselves aren't affected.",
+                                                confirmContentDescription = "Delete playlist",
+                                                onConfirm = { viewModel.delete { goBack() } },
+                                            ),
+                                            duration = 30.seconds,
+                                        )
+                                        deleteItem
+                                    },
+                                )
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = title,
-                                    items = listOf(
-                                        ActionMenuItem(
-                                            icon = LightIcons.TRASH,
-                                            label = "Delete playlist",
-                                            onSelect = ActionMenuSelection.Perform {
-                                                LightModalManager.show(
-                                                    ConfirmModal(
-                                                        title = "Delete \"$title\"?",
-                                                        message = "This removes the playlist. The tracks themselves aren't affected.",
-                                                        confirmContentDescription = "Delete playlist",
-                                                        onConfirm = { viewModel.delete { goBack() } },
-                                                    ),
-                                                    duration = 30.seconds,
-                                                )
-                                                null
-                                            },
-                                        ),
-                                    ),
+                                    items = listOf(deleteItem),
                                 )
                             })
                         },
