@@ -53,6 +53,30 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/**
+ * Which URL actually counts as "the current album art" — shared by
+ * [PlayerScreenViewModel] and `AlbumArtScreenViewModel` so both screens agree
+ * on exactly the same art for the same playback state, rather than each
+ * re-deriving its own answer.
+ *
+ * Prefers, in order: (1) the explicit hint PlaybackRepository.play() was
+ * given — set synchronously by the caller the same moment playback starts,
+ * see PlaybackRepository.albumArtUrlHint's doc; (2) the *album's* art looked
+ * up by id, for sessions that didn't supply a hint (e.g. resuming via the
+ * mini-player, where nothing is "in progress" to pass one); (3) the track's
+ * own art as a last resort. Navidrome assigns every individual track its own
+ * distinct coverArt id (a "mf-..." id, separate from the album's "al-..."
+ * one) even when it's the exact same embedded image every other track on the
+ * album shares, so falling all the way back to (3) without ever reaching (1)
+ * or (2) means a real, uncached fetch every time — confirmed on-device
+ * 2026-09-18. (1) is what actually avoids the one-frame flash a Room-based
+ * lookup can't fully avoid on its own, since it needs an async combine to
+ * resolve even when the answer is already known synchronously at
+ * play()-time.
+ */
+fun resolveAlbumArtUrl(track: Track?, albums: List<Album>, hint: String?): String? =
+    hint ?: albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
+
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PlayerScreenViewModel(
     private val playback: PlaybackRepository,
@@ -63,36 +87,24 @@ class PlayerScreenViewModel(
     val state: StateFlow<PlaybackState> =
         playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
 
-    // Prefers, in order: (1) the explicit hint PlaybackRepository.play() was
-    // given — set synchronously by the caller the same moment playback starts,
-    // see PlaybackRepository.albumArtUrlHint's doc; (2) the *album's* art
-    // looked up by id, for sessions that didn't supply a hint (e.g. resuming
-    // via the mini-player, where nothing is "in progress" to pass one); (3)
-    // the track's own art as a last resort. Navidrome assigns every individual
-    // track its own distinct coverArt id (a "mf-..." id, separate from the
-    // album's "al-..." one) even when it's the exact same embedded image every
-    // other track on the album shares, so falling all the way back to (3)
-    // without ever reaching (1) or (2) means a real, uncached fetch every
-    // time — confirmed on-device 2026-09-18. (1) is what actually avoids the
-    // one-frame flash a Room-based lookup can't fully avoid on its own, since
-    // it needs an async combine to resolve even when the answer is already
-    // known synchronously at play()-time.
-    //
-    // Seeded from the same synchronous values used above, not null — every
-    // navigation to PlayerScreen (even replaying the identical track) creates
-    // a fresh ViewModel, and this StateFlow's initial value otherwise has
-    // nothing to do with whether the art was already known a moment ago.
-    // Confirmed on-device 2026-09-18: even the *same* track played twice in a
-    // row still flashed placeholder-then-art here, purely from this cold start.
+    // Seeded from the same synchronous values [resolveAlbumArtUrl] would
+    // eventually settle on, not null — every navigation to PlayerScreen (even
+    // replaying the identical track) creates a fresh ViewModel, and this
+    // StateFlow's initial value otherwise has nothing to do with whether the
+    // art was already known a moment ago. Confirmed on-device 2026-09-18:
+    // even the *same* track played twice in a row still flashed
+    // placeholder-then-art here, purely from this cold start. The seed skips
+    // the album lookup (no album list available synchronously) — harmless,
+    // since resolveAlbumArtUrl only reaches that tier when there's no hint,
+    // and a hint is exactly what's usually available synchronously anyway.
     val albumArtUrl: StateFlow<String?> = combine(
         state, libraryRepository.observeAlbums(), playback.albumArtUrlHint,
     ) { s, albums, hint ->
-        val track = s.currentTrack
-        hint ?: albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
+        resolveAlbumArtUrl(s.currentTrack, albums, hint)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        playback.albumArtUrlHint.value ?: playback.currentSnapshot().currentTrack?.coverArtUrl,
+        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, emptyList(), playback.albumArtUrlHint.value),
     )
 
     /** True while the current track's favorite state is still waiting to reach the server (issue #24) — the star's own filled/outline state already reflects the optimistic local value, so this drives a separate "still syncing" indicator rather than a third icon state. */
@@ -245,12 +257,26 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 // "Up next" off the bottom of the screen entirely on-device,
                 // and made the art size visibly jump between these two screens.
                 // Confirmed both problems live 2026-09-18.
+                //
+                // Only tappable when there's real art to show full-screen (issue
+                // #37) — AlbumArt itself already renders just the placeholder
+                // icon for a null url or the artwork setting being off, and
+                // opening AlbumArtScreen onto that would just be a blank/empty
+                // full-screen view with nothing to look at.
                 AlbumArt(
                     lightContext = lightContext,
                     url = albumArtUrl,
                     size = 9f.gridUnitsAsDp(),
                     placeholderIconSize = 4f,
-                    modifier = Modifier.padding(vertical = 1f.gridUnitsAsDp()),
+                    modifier = Modifier
+                        .let { m ->
+                            if (showArtwork && albumArtUrl != null) {
+                                m.lightClickable { navigateTo(::AlbumArtScreen) }
+                            } else {
+                                m
+                            }
+                        }
+                        .padding(vertical = 1f.gridUnitsAsDp()),
                 )
                 LightText(
                     text = track?.title ?: "Nothing playing",
