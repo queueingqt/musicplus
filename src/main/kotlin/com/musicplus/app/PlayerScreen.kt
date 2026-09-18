@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -276,7 +277,16 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 // standard, self-explanatory iconography — a visible label next to
                 // each one defeats the point of using icons at all.
                 // contentDescription still carries the meaning for accessibility.
-                Row(modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp())) {
+                // CenterVertically, not the Row default (Top) — ToggleableIcon's
+                // circular pill adds its own padding around shuffle/repeat, making
+                // those two taller than the plain favorite/lyrics LightIcons next
+                // to them; Top-aligned, that extra padding pushed their glyphs
+                // down relative to the others instead of sharing a center.
+                // Reported live.
+                Row(
+                    modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     ToggleableIcon(
                         icon = LightIcons.SHUFFLE,
                         active = state.shuffle,
@@ -341,17 +351,17 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
             // instead of a lead-in to the controls below it.
             Spacer(modifier = Modifier.weight(1f))
 
-            // "Up Next:" and the next track's name share one row, justified
-            // (label hugs the left edge, title hugs the right) rather than
-            // clumped left — just a quick glance at what's coming up, not a
-            // management surface. Small/Fine text, same size as the duration
-            // readout above — this is a secondary hint, not on par with the
-            // current track's own title. Full queue (reorder/remove, the whole
-            // list) lives in QueueScreen, reachable via the queue icon on the
-            // top bar (this screen) or the mini-player (every other screen) —
-            // no separate "view queue" link needed here since that icon is
-            // already always visible. Nothing renders at all when the queue is
-            // empty — no placeholder text.
+            // "Up Next:" and the next track's name share one row, centered as
+            // a pair rather than justified (label hugging the left edge,
+            // title hugging the right) — reported live as reading better
+            // centered. Small/Fine text, same size as the duration readout
+            // above — this is a secondary hint, not on par with the current
+            // track's own title. Full queue (reorder/remove, the whole list)
+            // lives in QueueScreen, reachable via the queue icon on the top
+            // bar (this screen) or the mini-player (every other screen) — no
+            // separate "view queue" link needed here since that icon is
+            // already always visible. Nothing renders at all when the queue
+            // is empty — no placeholder text.
             if (upcoming.isNotEmpty()) {
                 val nextTrack = upcoming.first()
                 Row(
@@ -360,16 +370,15 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                         .lightClickable { navigateTo(::QueueScreen) }
                         .padding(horizontal = 2f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(0.5f.gridUnitsAsDp(), Alignment.CenterHorizontally),
                 ) {
-                    LightText(text = "Up Next:", variant = LightTextVariant.Fine)
+                    LightText(text = "Up Next:", variant = LightTextVariant.Fine, maxLines = 1)
                     LightText(
                         text = nextTrack.title,
                         variant = LightTextVariant.Fine,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        align = TextAlign.End,
-                        modifier = Modifier.weight(1f).padding(start = 0.5f.gridUnitsAsDp()),
+                        modifier = Modifier.widthIn(max = 14f.gridUnitsAsDp()),
                     )
                 }
             }
