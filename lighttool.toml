@@ -1,7 +1,7 @@
 # Light Phone III tool manifest. Schema per lightphone/light-sdk docs/tool_metadata/README.md.
 
 [tool]
-id            = "com.lightwave.app"
+id            = "com.musicplus.app"
 label         = "Music +"
 versionCode   = 1
 versionName   = "0.1.0"

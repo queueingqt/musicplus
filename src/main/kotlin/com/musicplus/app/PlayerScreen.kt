@@ -1,0 +1,312 @@
+package com.musicplus.app
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.PlaybackRepository
+import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.thelightphone.sdk.LightScreen
+import com.thelightphone.sdk.LightViewModel
+import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
+import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightBottomBar
+import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightProgressBar
+import com.thelightphone.sdk.ui.LightText
+import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.LightTopBar
+import com.thelightphone.sdk.ui.LightTopBarCenter
+import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class PlayerScreenViewModel(
+    private val playback: PlaybackRepository,
+    private val libraryRepository: com.musicplus.app.data.LibraryRepository,
+) : LightViewModel<Unit>() {
+
+    val state: StateFlow<PlaybackState> =
+        playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PlaybackState())
+
+    fun togglePlayPause() = playback.togglePlayPause()
+    fun skipBack() = playback.skipBack()
+    fun skipForward() = playback.skipForward()
+    fun skipToPrevious() = playback.skipToPrevious()
+    fun skipToNext() = playback.skipToNext()
+
+    fun toggleFavoriteCurrentTrack() {
+        val track = state.value.currentTrack ?: return
+        viewModelScope.launch { libraryRepository.setTrackFavorite(track.id, !track.isFavorite) }
+    }
+
+    fun toggleShuffle() = playback.setShuffle(!state.value.shuffle)
+
+    fun cycleRepeatMode() {
+        val next = when (state.value.repeatMode) {
+            RepeatMode.OFF -> RepeatMode.REPEAT_QUEUE
+            RepeatMode.REPEAT_QUEUE -> RepeatMode.REPEAT_TRACK
+            RepeatMode.REPEAT_TRACK -> RepeatMode.OFF
+        }
+        playback.setRepeatMode(next)
+    }
+
+    fun removeFromQueue(index: Int) = viewModelScope.launch { playback.removeFromQueue(index) }
+    fun moveQueueItemUp(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, -1) }
+    fun moveQueueItemDown(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, 1) }
+}
+
+/**
+ * Now-playing screen: current track, transport controls, favorite/shuffle/repeat
+ * toggles, and (Issue #4) the upcoming queue with per-row remove and up/down
+ * reorder. Reached from HomeScreen's menu, the persistent mini-player
+ * (LightwaveScaffold), or a track/album list that starts playback (see
+ * AlbumDetailScreen).
+ *
+ * `sealedActivity` is captured as a property here (unlike other screens) because
+ * `PlaybackRepositoryHolder.get(...)` needs it in `createViewModel()`, and
+ * `SimpleLightScreen` doesn't retain the raw activity for subclasses to reuse
+ * (only the derived `lightContext` is exposed) — see the SDK reference notes.
+ */
+class PlayerScreen(private val sealedActivity: SealedLightActivity) :
+    LightScreen<Unit, PlayerScreenViewModel>(sealedActivity) {
+
+    override val viewModelClass = PlayerScreenViewModel::class.java
+
+    override fun createViewModel(): PlayerScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder, lightContext.filesDir)
+        return PlayerScreenViewModel(playback, graph.libraryRepository)
+    }
+
+    @Composable
+    override fun Content() {
+        val state by viewModel.state.collectAsState()
+        val track = state.currentTrack
+        val upcoming = state.upcomingTracks
+
+        // showMiniPlayer = false — the full now-playing UI is already on screen
+        // here, a mini-player row would just duplicate it.
+        LightwaveScaffold(
+            topBar = {
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text("Now Playing"),
+                )
+            },
+            showMiniPlayer = false,
+            bottomBar = {
+                LightBottomBar(
+                    items = listOf(
+                        LightBarButton.LightIcon(LightIcons.REWIND, viewModel::skipToPrevious, contentDescription = "Previous track"),
+                        LightBarButton.LightIcon(LightIcons.SKIP_BACKWARD_FIFTEEN, viewModel::skipBack, contentDescription = "Back 15s"),
+                        LightBarButton.LightIcon(
+                            if (state.isPlaying) LightIcons.PAUSE else LightIcons.PLAY,
+                            viewModel::togglePlayPause,
+                            contentDescription = if (state.isPlaying) "Pause" else "Play",
+                        ),
+                        LightBarButton.LightIcon(LightIcons.SKIP_FORWARD_FIFTEEN, viewModel::skipForward, contentDescription = "Forward 15s"),
+                        LightBarButton.LightIcon(LightIcons.FAST_FORWARD, viewModel::skipToNext, contentDescription = "Next track"),
+                    ),
+                )
+            },
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(2f.gridUnitsAsDp()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                AlbumArt(
+                    lightContext = lightContext,
+                    url = track?.coverArtUrl,
+                    size = 13f.gridUnitsAsDp(),
+                    placeholderIconSize = 6f,
+                    modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
+                )
+                LightText(
+                    text = track?.title ?: "Nothing playing",
+                    variant = LightTextVariant.Heading,
+                    modifier = Modifier.fillMaxWidth(),
+                    align = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                LightText(
+                    text = track?.artistName.orEmpty(),
+                    variant = LightTextVariant.Detail,
+                    modifier = Modifier.fillMaxWidth(),
+                    align = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                if (state.errorMessage != null) {
+                    LightText(
+                        text = "Playback error: ${state.errorMessage}",
+                        variant = LightTextVariant.Fine,
+                        modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
+                    )
+                }
+
+                LightProgressBar(
+                    colors = LightThemeTokens.colors,
+                    progress = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f,
+                )
+                LightText(
+                    text = "${formatDuration(state.positionMs)} / ${formatDuration(state.durationMs)}",
+                    variant = LightTextVariant.Fine,
+                )
+
+                // Icon-only, no text labels: shuffle/repeat/favorite are all standard,
+                // self-explanatory iconography — a visible label next to each one
+                // defeats the point of using icons at all. contentDescription still
+                // carries the meaning for accessibility.
+                Row(modifier = Modifier.padding(top = 1f.gridUnitsAsDp())) {
+                    LightIcon(
+                        icon = LightIcons.SHUFFLE,
+                        size = 2f,
+                        contentDescription = if (state.shuffle) "Shuffle on" else "Shuffle off",
+                        modifier = Modifier
+                            .lightClickable { viewModel.toggleShuffle() }
+                            .padding(horizontal = 1f.gridUnitsAsDp()),
+                    )
+                    LightIcon(
+                        icon = LightIcons.LOOP,
+                        size = 2f,
+                        contentDescription = "Repeat ${state.repeatMode.name.lowercase()}",
+                        modifier = Modifier
+                            .lightClickable { viewModel.cycleRepeatMode() }
+                            .padding(horizontal = 1f.gridUnitsAsDp()),
+                    )
+                    LightIcon(
+                        icon = if (track?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                        size = 2f,
+                        contentDescription = if (track?.isFavorite == true) "Favorited" else "Favorite",
+                        modifier = Modifier
+                            .lightClickable { viewModel.toggleFavoriteCurrentTrack() }
+                            .padding(horizontal = 1f.gridUnitsAsDp()),
+                    )
+                }
+            }
+
+            LightText(
+                text = "Up next",
+                variant = LightTextVariant.Heading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+            )
+            if (upcoming.isEmpty()) {
+                LightText(
+                    text = "Nothing queued",
+                    variant = LightTextVariant.Fine,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+                )
+            } else {
+                LightLazyScrollView(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    uniformItemHeightGridUnits = 3f,
+                ) {
+                    itemsIndexed(upcoming, key = { _, queuedTrack -> queuedTrack.id }) { i, queuedTrack ->
+                        val absoluteIndex = state.currentIndex + 1 + i
+                        QueueRow(
+                            track = queuedTrack,
+                            canMoveUp = i > 0,
+                            canMoveDown = i < upcoming.lastIndex,
+                            onMoveUp = { viewModel.moveQueueItemUp(absoluteIndex) },
+                            onMoveDown = { viewModel.moveQueueItemDown(absoluteIndex) },
+                            onRemove = { viewModel.removeFromQueue(absoluteIndex) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One upcoming-queue row: title, then up/down reorder (omitted at either end of
+ * the list) and a remove icon. `LightLazyScrollView` has no drag-reorder
+ * primitive (checked: `sdk/ui/.../LightScrollView.kt` only offers a plain
+ * `LazyColumn` plus its own scrollbar) — up/down icon buttons are the fallback
+ * the task background calls out for exactly this case.
+ */
+@Composable
+private fun QueueRow(
+    track: Track,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LightText(
+            text = track.title,
+            variant = LightTextVariant.Copy,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (canMoveUp) {
+            LightIcon(
+                icon = LightIcons.UP,
+                size = 1.5f,
+                contentDescription = "Move up",
+                modifier = Modifier
+                    .lightClickable(onClick = onMoveUp)
+                    .padding(start = 0.5f.gridUnitsAsDp()),
+            )
+        }
+        if (canMoveDown) {
+            LightIcon(
+                icon = LightIcons.DOWN,
+                size = 1.5f,
+                contentDescription = "Move down",
+                modifier = Modifier
+                    .lightClickable(onClick = onMoveDown)
+                    .padding(start = 0.5f.gridUnitsAsDp()),
+            )
+        }
+        LightIcon(
+            icon = LightIcons.TRASH,
+            size = 1.5f,
+            contentDescription = "Remove from queue",
+            modifier = Modifier
+                .lightClickable(onClick = onRemove)
+                .padding(start = 0.5f.gridUnitsAsDp()),
+        )
+    }
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(minutes, seconds)
+}
