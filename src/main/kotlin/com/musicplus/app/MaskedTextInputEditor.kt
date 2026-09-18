@@ -52,8 +52,7 @@ import kotlinx.coroutines.flow.StateFlow
 // ONLY so the rendered text is masked instead of shown in plain text — see the
 // `BasicText(text = ...)` call in the second overload below, the sole behavioral diff.
 //
-// Why this exists (Forgejo issue #2 —
-// tracked issue #2): the real
+// Why this exists (tracked issue #2): the real
 // `LightTextInputEditor` renders `state.text` directly via `BasicText` with no
 // `visualTransformation`-style hook, and its `KeyboardOptions` type comes from the
 // external `light-keyboard` Maven artifact (`com.github.lightphone:light-keyboard`),

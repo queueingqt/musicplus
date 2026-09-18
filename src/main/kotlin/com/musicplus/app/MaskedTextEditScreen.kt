@@ -23,10 +23,10 @@ class MaskedTextEditScreenViewModel(initialValue: String) : LightViewModel<Strin
  * Exists because [com.thelightphone.sdk.ui.LightTextInputEditor] (used by
  * [TextEditScreen] for every other field) has no masking hook at all — see
  * [MaskedTextInputEditor]'s file header for the full explanation and for why this has
- * to be a duplicated component rather than a parameter on the real one. Tracked at
- * tracked issue #2 — delete this file
- * (and [MaskedTextInputEditor]) once upstream adds real masking support, and switch
- * SettingsScreen's password field back to plain [TextEditScreen].
+ * to be a duplicated component rather than a parameter on the real one. Tracked as
+ * issue #2 — delete this file (and [MaskedTextInputEditor]) once upstream adds real
+ * masking support, and switch SettingsScreen's password field back to plain
+ * [TextEditScreen].
  *
  * Only used by SettingsScreen.kt's password field.
  */
