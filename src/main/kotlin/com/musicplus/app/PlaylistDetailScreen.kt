@@ -54,6 +54,7 @@ class PlaylistDetailScreenViewModel(
     private val downloadRepository: DownloadRepository,
     private val syncQueueRepository: SyncQueueRepository,
     private val playlistId: String,
+    startInReorderMode: Boolean = false,
 ) : LightViewModel<Unit>() {
 
     val tracks: StateFlow<List<Track>> = playlistRepository.observeTracks(playlistId)
@@ -71,7 +72,7 @@ class PlaylistDetailScreenViewModel(
     // landed on a `remember`'d state object whose composition had already been
     // torn down by the time it ran. Lives on the ViewModel instead, which
     // (unlike Content()) survives that round trip.
-    private val _reorderMode = MutableStateFlow(false)
+    private val _reorderMode = MutableStateFlow(startInReorderMode)
     val reorderMode: StateFlow<Boolean> = _reorderMode.asStateFlow()
     fun setReorderMode(enabled: Boolean) { _reorderMode.value = enabled }
 
@@ -141,13 +142,17 @@ class PlaylistDetailScreenViewModel(
 class PlaylistDetailScreen(
     private val activity: SealedLightActivity,
     private val playlistId: String,
+    // Lets the Playlists list screen's own "Edit order" menu item land here
+    // with reorder mode already active, instead of navigating in and making
+    // the person long-press the title a second time.
+    private val startInReorderMode: Boolean = false,
 ) : LightScreen<Unit, PlaylistDetailScreenViewModel>(activity) {
 
     override val viewModelClass = PlaylistDetailScreenViewModel::class.java
 
     override fun createViewModel(): PlaylistDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, playlistId)
+        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, playlistId, startInReorderMode)
     }
 
     @Composable

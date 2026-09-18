@@ -31,6 +31,7 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.gridUnitsAsDp
@@ -44,6 +45,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 class PlaylistListScreenViewModel(
     private val playlistRepository: PlaylistRepository,
@@ -90,6 +92,21 @@ class PlaylistListScreenViewModel(
 
     suspend fun togglePlaylistDownload(lightContext: SealedLightContext, playlistId: String): TrackListDownloadState =
         SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).toggleDownload(lightContext, downloadRepository)
+
+    // Same actions as PlaylistDetailScreenViewModel's own rename/delete —
+    // reported live: this list's long-press menu only offered Download,
+    // unlike the one reached from inside a playlist, which also had
+    // Rename/Edit order/Delete. ("Edit order" itself doesn't need a
+    // ViewModel-side method here: it just navigates into PlaylistDetailScreen
+    // with reorder mode pre-armed, since reordering needs the track list
+    // actually on screen to show handles on.)
+    fun rename(playlistId: String, name: String) {
+        viewModelScope.launch { syncQueueRepository.renamePlaylist(playlistId, name) }
+    }
+
+    fun delete(playlistId: String) {
+        viewModelScope.launch { syncQueueRepository.deletePlaylist(playlistId) }
+    }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
@@ -144,10 +161,52 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                         onClick = { navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) }) },
                         onOpenActions = {
                             navigateTo({ a ->
+                                // Same 4 items, same order, as PlaylistDetailScreen's own
+                                // long-press menu — reported live: this list's menu only had
+                                // Download, unlike the one reached from inside a playlist.
+                                // lateinit self-reference for Delete, not a plain `null`
+                                // return — see PlaylistDetailScreen's identical fix for why
+                                // that matters once a ConfirmModal is involved.
+                                lateinit var deleteItem: ActionMenuItem
+                                deleteItem = ActionMenuItem(
+                                    icon = LightIcons.TRASH,
+                                    label = "Delete playlist",
+                                    onSelect = ActionMenuSelection.Perform {
+                                        LightModalManager.show(
+                                            ConfirmModal(
+                                                title = "Delete \"${playlist.name}\"?",
+                                                message = "This removes the playlist. The tracks themselves aren't affected.",
+                                                confirmContentDescription = "Delete playlist",
+                                                onConfirm = { viewModel.delete(playlist.id) },
+                                            ),
+                                            duration = 30.seconds,
+                                        )
+                                        deleteItem
+                                    },
+                                )
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = playlist.name,
                                     items = listOf(
+                                        ActionMenuItem(
+                                            icon = LightIcons.PENCIL,
+                                            label = "Rename playlist",
+                                            onSelect = ActionMenuSelection.Navigate {
+                                                navigateTo({ a2 -> TextEditScreen(a2, "Playlist name", playlist.name) }) { newName ->
+                                                    if (!newName.isNullOrBlank()) viewModel.rename(playlist.id, newName)
+                                                }
+                                            },
+                                        ),
+                                        ActionMenuItem(
+                                            icon = LightIcons.REVERSE_ORDER,
+                                            label = "Edit order",
+                                            // Navigates in with reorder mode already active, rather
+                                            // than needing a second long-press once there — this
+                                            // screen has no track list of its own to show handles on.
+                                            onSelect = ActionMenuSelection.Navigate {
+                                                navigateTo({ a2 -> PlaylistDetailScreen(a2, playlist.id, startInReorderMode = true) })
+                                            },
+                                        ),
                                         // Real state only starts being read once this menu is actually
                                         // open (via liveUpdates below) — see AlbumListScreen's identical
                                         // fix for why this used to be collected per-row in the list itself.
@@ -160,6 +219,7 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                                                 }
                                             },
                                         ),
+                                        deleteItem,
                                     ),
                                 )
                             })
