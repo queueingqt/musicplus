@@ -2,8 +2,10 @@ package com.musicplus.app.data
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -74,23 +76,36 @@ class AlbumArtRepository(
         }
     }
 
-    private suspend fun fetchDecodeAndCache(coverArtId: String, size: Int, key: String): Bitmap? {
-        return try {
-            val bytes = readFromDisk(coverArtId, size) ?: fetchFromNetwork(coverArtId, size)
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            if (bitmap == null) {
+    /**
+     * Dispatched to [Dispatchers.IO] — reported live as stuttery fast-scrolling
+     * on the Albums list while artwork was still lazy-loading in. Root cause:
+     * this whole function used to run on whatever dispatcher the caller's
+     * coroutine was on, and every caller is `AlbumArt`'s own `LaunchedEffect`,
+     * which is Main-confined (Compose UI coroutines). `File.readBytes()` and
+     * `BitmapFactory.decodeByteArray()` are both synchronous, blocking calls —
+     * a disk read plus a real image decode running directly on the UI thread
+     * for every row that scrolled into view for the first time, with nothing
+     * to shield the frame clock from it. Confirmed by reading the file: no
+     * `Dispatchers`/`withContext` usage existed here at all before this fix.
+     */
+    private suspend fun fetchDecodeAndCache(coverArtId: String, size: Int, key: String): Bitmap? =
+        withContext(Dispatchers.IO) {
+            try {
+                val bytes = readFromDisk(coverArtId, size) ?: fetchFromNetwork(coverArtId, size)
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (bitmap == null) {
+                    failedKeys += key
+                    null
+                } else {
+                    memoryCache[key] = bitmap
+                    bitmap
+                }
+            } catch (e: Exception) {
+                AppLogger.e("AlbumArtRepository", "fetchDecodeAndCache($coverArtId, $size) failed", e)
                 failedKeys += key
                 null
-            } else {
-                memoryCache[key] = bitmap
-                bitmap
             }
-        } catch (e: Exception) {
-            AppLogger.e("AlbumArtRepository", "fetchDecodeAndCache($coverArtId, $size) failed", e)
-            failedKeys += key
-            null
         }
-    }
 
     private fun cacheKey(coverArtId: String, size: Int) = "$coverArtId:$size"
 
