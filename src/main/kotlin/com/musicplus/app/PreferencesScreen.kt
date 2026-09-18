@@ -113,6 +113,14 @@ class PreferencesScreen(activity: SealedLightActivity) :
                     isOn = hapticFeedbackEnabled,
                     onToggle = { viewModel.toggleHapticFeedback() },
                 )
+                LightText(
+                    text = "Streaming quality",
+                    variant = LightTextVariant.Copy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable { navigateTo(::StreamingQualityScreen) }
+                        .padding(vertical = 1f.gridUnitsAsDp()),
+                )
                 // Always last — the least likely to be touched day-to-day.
                 ToggleRow(
                     label = "Debug logging",

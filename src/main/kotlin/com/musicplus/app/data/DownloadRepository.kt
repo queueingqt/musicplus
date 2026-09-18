@@ -152,8 +152,18 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
         }
 
         val api = SubsonicApi(SubsonicClient(config))
+        // Preferences > Streaming quality's "Downloads" setting — null (the
+        // default) means the original file, same as this job's behavior
+        // before that setting existed. A non-null cap means the server
+        // transcodes on the fly, which per AppSettingsRepository.downloadQuality's
+        // doc Navidrome (and stream.view generally) returns as mp3 regardless
+        // of the source format — same convention PlaybackRepository.cachedStreamFile
+        // already uses for the same reason, so the extension has to be
+        // decided the same way here, not trusted from track.suffix (the
+        // *original* format, wrong once transcoding is actually happening).
+        val maxBitRateKbps = AppGraph.from(lightContext).appSettingsRepository.downloadQuality.first()
         val destination = File(lightContext.filesDir, "downloads").apply { mkdirs() }
-            .let { File(it, "$songId.${track.suffix ?: "mp3"}") }
+            .let { File(it, "$songId.${if (maxBitRateKbps != null) "mp3" else (track.suffix ?: "mp3")}") }
 
         // Read before the attempt, not in the catch block — a WorkManager retry is a
         // fresh invocation of this same handler, so attemptCount has to be persisted
@@ -174,7 +184,17 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             // ByteArray, which crashed the app outright (OutOfMemoryError) on a
             // real ~30MB track, confirmed on-device 2026-09-18. See
             // SubsonicClient.downloadToFile's doc.
-            api.downloadToFile(songId, destination)
+            //
+            // streamToFile (not downloadToFile) when a quality cap is set —
+            // download.view has no maxBitRate parameter at all (confirmed via
+            // SubsonicApi.downloadToFile's own doc: "original file" only), so
+            // getting a transcoded download means going through stream.view,
+            // same endpoint live playback already uses for this.
+            if (maxBitRateKbps != null) {
+                api.streamToFile(songId, destination, maxBitRateKbps)
+            } else {
+                api.downloadToFile(songId, destination)
+            }
             db.downloadDao().upsert(
                 DownloadEntity(
                     songId = songId,

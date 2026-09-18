@@ -3,6 +3,7 @@ package com.musicplus.app.data
 import com.musicplus.app.PlaybackState
 import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
+import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.audio.LightAudio
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayback
@@ -35,6 +36,8 @@ class PlaybackRepository(
     private val libraryRepository: LibraryRepository,
     private val queueDao: QueueDao,
     private val playbackStateRepository: PlaybackStateRepository,
+    private val appSettingsRepository: AppSettingsRepository,
+    private val connectivity: LightConnectivity,
 ) {
     private val player = audio.newPlayer(playback = LightAudioPlayback.Detached)
 
@@ -887,12 +890,18 @@ class PlaybackRepository(
      * plays that instead of streaming — for an https:// server it streams directly
      * as before. See project memory / tracked Forgejo issues for the
      * follow-up (progressive streaming, not pre-download, for cleartext servers).
+     *
+     * Both branches request [currentStreamMaxBitRateKbps] rather than always
+     * the original file — see its doc for why (issue #7, a huge lossless
+     * source file turning "just the starting track" back into a
+     * multi-second block).
      */
     private suspend fun Track.toAudioItem(api: SubsonicApi): LightAudioItem {
+        val maxBitRateKbps = currentStreamMaxBitRateKbps()
         val source = when {
             localFilePath != null -> LightAudioSource.FileSource(File(localFilePath))
-            api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id))
-            else -> LightAudioSource.FileSource(cachedStreamFile(api))
+            api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
+            else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps))
         }
         return LightAudioItem(
             source = source,
@@ -905,9 +914,37 @@ class PlaybackRepository(
         )
     }
 
-    private suspend fun Track.cachedStreamFile(api: SubsonicApi): File {
+    /**
+     * Picks Wi-Fi or cellular quality based on the connection actually in use
+     * right now — read fresh on every call (not cached/observed), same
+     * reasoning as reading [apiHolder] fresh each time: this only needs the
+     * answer at the exact moment a track is about to be fetched, not a live
+     * subscription. [LightConnectivity.currentStatus] requires
+     * ACCESS_NETWORK_STATE, already granted (this SDK's own
+     * `observeNetworkStatus()` — see AppGraph's reconnect observer — needs
+     * the same permission and is already relied on elsewhere).
+     */
+    private suspend fun currentStreamMaxBitRateKbps(): Int? =
+        if (connectivity.currentStatus.isWifi) {
+            appSettingsRepository.streamQualityWifi.first()
+        } else {
+            appSettingsRepository.streamQualityCellular.first()
+        }
+
+    /**
+     * [maxBitRateKbps] is folded into the cache filename (not just the
+     * request) — otherwise a track cached once at one quality would keep
+     * being reused forever afterward even after switching networks/quality,
+     * since the plain `$id`-keyed cache has no way to tell "already have
+     * this at the quality that's wanted right now" from "already have this
+     * at some other quality." Means the same track can end up with more than
+     * one cached copy at different qualities over time, an accepted tradeoff
+     * (streamcache has no eviction policy regardless — see "Clear all local
+     * data" for the manual escape hatch).
+     */
+    private suspend fun Track.cachedStreamFile(api: SubsonicApi, maxBitRateKbps: Int?): File {
         val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
-        val cached = File(cacheDir, "$id.mp3")
+        val cached = File(cacheDir, "$id-${maxBitRateKbps ?: "orig"}.mp3")
         if (!cached.exists()) {
             AppLogger.d("PlaybackRepository", "cachedStreamFile($id): not cached, downloading")
             try {
@@ -915,7 +952,7 @@ class PlaybackRepository(
                 // doc: the old `cached.writeBytes(api.streamBytes(id))` briefly
                 // held the whole track as one in-memory ByteArray, which crashed
                 // the app outright (OutOfMemoryError) on a real ~30MB track.
-                api.streamToFile(id, cached)
+                api.streamToFile(id, cached, maxBitRateKbps)
                 AppLogger.d("PlaybackRepository", "cachedStreamFile($id): write complete")
             } catch (e: Exception) {
                 // A failed/interrupted download can leave a truncated file at
@@ -967,6 +1004,8 @@ object PlaybackRepositoryHolder {
                 libraryRepository = graph.libraryRepository,
                 queueDao = graph.database.queueDao(),
                 playbackStateRepository = graph.playbackStateRepository,
+                appSettingsRepository = graph.appSettingsRepository,
+                connectivity = graph.connectivity,
             ).also { instance = it }
         }
 

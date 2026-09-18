@@ -48,6 +48,32 @@ data class Playlist(
 enum class RepeatMode { OFF, REPEAT_QUEUE, REPEAT_TRACK }
 
 /**
+ * A capped bitrate (kbps) to request from the server instead of always
+ * fetching the original file — see
+ * [com.musicplus.app.data.AppSettingsRepository]'s
+ * streamQualityWifi/streamQualityCellular/downloadQuality and
+ * [com.musicplus.app.data.PlaybackRepository]'s doc for why this exists
+ * (issue #7: some lossless-source tracks are hundreds of MB, turning even a
+ * single track's resolve into a real multi-second block on a cleartext
+ * server). Passed straight through as Subsonic's `stream.view` `maxBitRate`
+ * parameter, which accepts any integer the server's transcoder supports —
+ * not a fixed set of tiers, so this is a plain `Int?` rather than a closed
+ * enum. `null` omits the parameter entirely, which the server treats as
+ * "no limit" (the original file).
+ *
+ * [STREAM_QUALITY_PRESETS] are just common, recognizable tiers to show as
+ * quick picks in the UI (roughly matching typical streaming-service
+ * quality levels) — not something the API itself restricts you to. Any
+ * other value (e.g. 96, or 1411 for literal CD quality) is equally valid
+ * and reachable via the UI's "Custom…" entry. A plain `Int?` (kbps, null
+ * meaning "original") is used everywhere this value flows, rather than a
+ * closed enum, for the same reason.
+ */
+val STREAM_QUALITY_PRESETS: List<Int> = listOf(96, 128, 192, 320)
+
+fun streamQualityLabel(maxBitRateKbps: Int?): String = maxBitRateKbps?.let { "$it kbps" } ?: "Original"
+
+/**
  * What actually happened when a repository attempted a server write.
  * [NOT_CONFIGURED] (no server saved at all) is deliberately distinct from
  * [FAILED] (a configured server's call itself threw, e.g. offline or a
