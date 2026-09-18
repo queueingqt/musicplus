@@ -80,19 +80,17 @@ at-rest encryption, so this repo adds its own.
 
 ## What's real vs. stubbed
 
-The data layer (`data/`), `HomeScreen`, and `PlayerScreen` are fully wired against
-the SDK's confirmed APIs. The remaining screens (`SearchScreen`, `AlbumListScreen`,
-`AlbumDetailScreen`, `ArtistListScreen`, `ArtistDetailScreen`, `FavoritesScreen`,
-`DownloadsScreen`, `SettingsScreen`) follow the same `LightScreen`/`LightViewModel`
-pattern but are lighter — check each file's own comments for what's simplified.
-Search `TODO` across `src/` for the complete list of known gaps, notably:
+Every screen (`data/`, `HomeScreen`, `PlayerScreen`, and the rest) is fully wired
+against the SDK's confirmed APIs — this hasn't been a scaffold-with-gaps for a
+while now. Known, deliberate gaps (all SDK-level limitations, not missing app
+code — check the tracked-issues list for the current, authoritative set):
 
-- Shuffle/repeat toggle state exists but isn't wired to actual queue reordering or
-  end-of-track looping yet — `LightAudioPlayer`'s confirmed public surface has no
-  track-completed callback to hook that up to (see `PlaybackRepository.kt`).
-- Server password is stored unencrypted in DataStore (see `ServerConfigRepository.kt`).
+- No hardware volume key control, no Bluetooth device picker, no lock-screen
+  now-playing integration, no Data Saver Mode detection — all confirmed
+  platform limitations, not app bugs.
 - `LightProgressBar` (a real SDK component) isn't used yet — Now Playing shows
-  position/duration as text instead, since this component's exact signature wasn't
-  confirmed while scaffolding.
-- Issue tracked on this repo: a Winamp-style spectrum analyzer for Now Playing,
-  starting from the SDK's own `examples/audio-demo/.../SpectrumAnalyzer.kt`.
+  position/duration as text instead.
+- No way to open a browser or trigger a package install from a tool — the SDK
+  build plugin blocks both at compile time, and the relevant permission isn't
+  in the allowlist. Relevant to the update checker (Settings shows a version +
+  link as plain text, not a tappable one) and to distribution generally.
