@@ -22,7 +22,6 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -88,15 +87,16 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                         .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
                 )
             } else {
+                // Default (Outside) scrollbar position, not Inside — Inside
+                // draws the scrollbar as an overlay directly on top of row
+                // content instead of reserving its own space, which put the
+                // trailing X right underneath/crossing through the scrollbar
+                // track. Reported live as worse, not better. Outside's own
+                // reserved gutter is normal spacing before a scrollbar, not a
+                // bug — reverted.
                 LightLazyScrollView(
                     modifier = Modifier.fillMaxWidth(),
                     uniformItemHeightGridUnits = 3f,
-                    // Inside, not the default Outside — Outside reserves a
-                    // permanent 2-grid-unit gutter on every row for the
-                    // scrollbar track, which pushed the trailing X icon well
-                    // short of the actual right edge. Reported live as "too
-                    // far left."
-                    scrollBarPosition = LightScrollBarPosition.Inside,
                 ) {
                     itemsIndexed(state.queue, key = { _, track -> track.id }) { i, track ->
                         val isCurrent = i == state.currentIndex
