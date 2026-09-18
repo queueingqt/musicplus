@@ -54,7 +54,7 @@ object AppGraph {
     // Opts into MusicPlusDatabase.create() — see DatabaseFactoryAccess's doc for
     // why that function is opt-in-gated rather than just `internal`: this is the
     // one function in the whole tool meant to ever call it.
-    @OptIn(MusicPlusDatabase.DatabaseFactoryAccess::class)
+    @OptIn(DatabaseFactoryAccess::class)
     private fun build(lightContext: SealedLightContext): Graph {
         // First thing any screen touches (see class doc) — as early as this
         // process-lifetime singleton can install the crash handler.
