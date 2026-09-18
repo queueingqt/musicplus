@@ -233,7 +233,6 @@ class ActionsMenuScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(visibleItems, key = { it.key }) { item ->

@@ -125,7 +125,6 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             // Inside, not Outside — see AlbumDetailScreen's identical call site
             // for why (Outside's gutter width isn't known until after first

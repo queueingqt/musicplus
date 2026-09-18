@@ -145,7 +145,6 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 LightTextField(

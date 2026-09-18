@@ -101,7 +101,6 @@ class PreferencesScreen(activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 ToggleRow(

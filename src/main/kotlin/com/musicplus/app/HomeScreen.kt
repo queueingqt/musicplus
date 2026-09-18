@@ -80,7 +80,6 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             if (!isConfigured) {
                 SetUpServerSplash { navigateTo(::SettingsScreen) }

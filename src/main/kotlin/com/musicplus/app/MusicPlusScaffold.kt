@@ -50,13 +50,6 @@ import com.thelightphone.sdk.ui.lightClickable
 fun MusicPlusScaffold(
     topBar: @Composable () -> Unit,
     onMiniPlayerClick: () -> Unit = {},
-    // Queue icon on the mini-player itself, so the queue is reachable from
-    // every screen that shows one (i.e. everywhere but PlayerScreen, which has
-    // its own top-bar queue icon since it never shows a mini-player) without
-    // adding a queue icon to every individual screen's own top bar. Defaults
-    // to a no-op rather than being required, matching onMiniPlayerClick's own
-    // convention, but every real call site should pass it.
-    onQueueClick: () -> Unit = {},
     showMiniPlayer: Boolean = true,
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
@@ -95,7 +88,7 @@ fun MusicPlusScaffold(
                     content = content,
                 )
                 if (showMiniPlayer) {
-                    MiniPlayerBar(onClick = onMiniPlayerClick, onQueueClick = onQueueClick)
+                    MiniPlayerBar(onClick = onMiniPlayerClick)
                 }
                 bottomBar()
             }
@@ -110,13 +103,16 @@ fun MusicPlusScaffold(
  * on screen there). Tapping anywhere but the play/pause control navigates to
  * PlayerScreen via [onClick].
  *
+ * No queue icon here (removed — reported live as redundant with Now Playing's
+ * own top-bar queue icon, the only place the queue is reachable from now).
+ *
  * Uses [PlaybackRepositoryHolder.peek] — same reasoning as HomeScreen previously
  * used it for its "now playing" row: showing state shouldn't itself spend the
  * app's one detached-audio handle by creating a player. Renders nothing until a
  * track has actually been played at least once in this process.
  */
 @Composable
-private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
+private fun MiniPlayerBar(onClick: () -> Unit) {
     val playback = PlaybackRepositoryHolder.peek() ?: return
     val state by playback.state.collectAsState(initial = playback.currentSnapshot())
     val track = state.currentTrack ?: return
@@ -130,25 +126,6 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(0.5f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            // Fixed touch-target size around the icon, not just trailing
-            // padding — the icon glyph alone (1.5 grid units) is a small,
-            // easy-to-miss tap target, and three of these clustered together
-            // with only one-sided padding left too little gap between them.
-            // Reported live: the skip icon read as unresponsive/too close to
-            // play, traced to exactly this.
-            modifier = Modifier
-                .size(2.5f.gridUnitsAsDp())
-                .lightClickable(onClick = onQueueClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            // Sized up from 1.5f (matching PAUSE/PLAY's nominal size param) —
-            // LIST's own vector artwork has more internal padding baked in
-            // than PAUSE/PLAY's, so at the identical size value it visibly
-            // reads smaller. Compensating here since the drawable itself
-            // isn't ours to edit (SDK-owned resource).
-            LightIcon(icon = LightIcons.LIST, size = 1.9f, contentDescription = "View queue")
-        }
         Column(modifier = Modifier.weight(1f)) {
             LightText(
                 text = track.title,

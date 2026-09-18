@@ -107,7 +107,6 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {

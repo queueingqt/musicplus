@@ -44,7 +44,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth()) {
                 SettingsMenuRow("Server") { navigateTo(::ServerSettingsScreen) }

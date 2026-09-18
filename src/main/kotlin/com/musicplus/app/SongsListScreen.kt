@@ -132,7 +132,6 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             if (tracks.isEmpty()) {
                 LightText(

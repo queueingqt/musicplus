@@ -96,7 +96,6 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             if (servers.isEmpty()) {
                 LightText(

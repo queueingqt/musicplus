@@ -182,7 +182,6 @@ class PlaylistDetailScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             // The trash icon that used to live here moved into this long-press
             // menu (issue reported live: wanted delete off a standalone glyph and
