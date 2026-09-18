@@ -2,7 +2,7 @@ package com.musicplus.app.data
 
 /**
  * Endpoint-level Subsonic calls, one function per REST method actually used by
- * Lightwave. Kept separate from [SubsonicClient] so the raw request/auth
+ * Music +. Kept separate from [SubsonicClient] so the raw request/auth
  * machinery doesn't get lost in endpoint-specific parameter lists.
  */
 class SubsonicApi(private val client: SubsonicClient) {

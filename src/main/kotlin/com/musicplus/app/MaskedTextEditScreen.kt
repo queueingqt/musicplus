@@ -41,7 +41,7 @@ class MaskedTextEditScreen(
 
     @Composable
     override fun Content() {
-        LightwaveTheme {
+        MusicPlusTheme {
             MaskedTextInputEditor(
                 title = title,
                 state = viewModel.fieldState,

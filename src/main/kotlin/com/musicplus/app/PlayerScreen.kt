@@ -1,5 +1,6 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -110,7 +111,7 @@ class PlayerScreenViewModel(
  * Now-playing screen: current track, transport controls, favorite/shuffle/repeat
  * toggles, and (Issue #4) the upcoming queue with per-row remove and up/down
  * reorder. Reached from HomeScreen's menu, the persistent mini-player
- * (LightwaveScaffold), or a track/album list that starts playback (see
+ * (MusicPlusScaffold), or a track/album list that starts playback (see
  * AlbumDetailScreen).
  *
  * `sealedActivity` is captured as a property here (unlike other screens) because
@@ -138,7 +139,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
 
         // showMiniPlayer = false — the full now-playing UI is already on screen
         // here, a mini-player row would just duplicate it.
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -253,21 +254,16 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 }
             }
 
-            // "Up Next:" and the next track's name share one row — just a
-            // quick glance at what's coming up, not a management surface. Full
-            // queue (reorder/remove, the whole list) lives in QueueScreen,
-            // reachable via the queue icon on the top bar (this screen) or the
-            // mini-player (every other screen) — no separate "view queue" link
-            // needed here since that icon is already always visible.
-            if (upcoming.isEmpty()) {
-                LightText(
-                    text = "Up Next: nothing queued",
-                    variant = LightTextVariant.Fine,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
-                )
-            } else {
+            // "Up Next:" and the next track's name share one row, justified
+            // (label hugs the left edge, title hugs the right) rather than
+            // clumped left — just a quick glance at what's coming up, not a
+            // management surface. Full queue (reorder/remove, the whole list)
+            // lives in QueueScreen, reachable via the queue icon on the top bar
+            // (this screen) or the mini-player (every other screen) — no
+            // separate "view queue" link needed here since that icon is
+            // already always visible. Nothing renders at all when the queue is
+            // empty — no placeholder text.
+            if (upcoming.isNotEmpty()) {
                 val nextTrack = upcoming.first()
                 Row(
                     modifier = Modifier
@@ -275,6 +271,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                         .lightClickable { navigateTo(::QueueScreen) }
                         .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     LightText(text = "Up Next:", variant = LightTextVariant.Heading)
                     LightText(
@@ -282,6 +279,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                         variant = LightTextVariant.Copy,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        align = TextAlign.End,
                         modifier = Modifier.weight(1f).padding(start = 0.5f.gridUnitsAsDp()),
                     )
                 }

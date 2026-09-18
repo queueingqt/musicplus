@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -93,7 +94,20 @@ class SearchScreen(private val activity: SealedLightActivity) :
         val albums by viewModel.albumResults.collectAsState()
         val tracks by viewModel.trackResults.collectAsState()
 
-        LightwaveScaffold(
+        // Open the text editor immediately on arrival, not just on a tap — this
+        // screen exists to be typed into right away, and requiring an extra tap
+        // on the field first was a real friction point reported live. Runs once
+        // per SearchScreen instance (LaunchedEffect(Unit) survives recomposition,
+        // not screen navigation), so backing out of the editor without submitting
+        // doesn't re-trigger it — the field's own onClick below still covers
+        // wanting to search again afterward.
+        LaunchedEffect(Unit) {
+            navigateTo({ a -> TextEditScreen(a, "Search", query) }) { result ->
+                viewModel.runSearch(result)
+            }
+        }
+
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

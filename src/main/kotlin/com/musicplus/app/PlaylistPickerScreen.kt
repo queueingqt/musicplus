@@ -79,7 +79,7 @@ class PlaylistPickerScreen(
         val scope = rememberCoroutineScope()
         val playlists by viewModel.playlists.collectAsState()
 
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(

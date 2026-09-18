@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /**
@@ -222,6 +224,27 @@ class PlaybackRepository(
      * Re-calls `setMediaQueue` with [newQueue] in full (see [addToQueue]'s doc for
      * why), preserving the currently playing item's index/position/play state so
      * a queue edit elsewhere doesn't interrupt what's already playing.
+     *
+     * The restart-to-0:00 bug (Forgejo #12): `LightAudioPlayer.seekTo(ms)`'s
+     * confirmed implementation is `player.seekTo(ms.coerceIn(0L,
+     * player.duration.validDuration()))`, and its own doc says outright "Unknown
+     * duration clamps to zero" — `validDuration()` maps media3's `C.TIME_UNSET`
+     * (duration not yet known) to `0`. `setMediaQueue`'s `setMediaItems(...,
+     * C.TIME_UNSET) + prepare()` call synchronously resets `LightAudioPlayer`'s
+     * own `durationMs` StateFlow to `0` as part of that same call (its
+     * `updateDuration()` reads `player.duration`, which media3 documents as
+     * `C.TIME_UNSET` until the freshly-set item has actually been probed —
+     * `Player.getDuration()`: "or C.TIME_UNSET if the duration is not known").
+     * So calling `seekTo(savedPositionMs)` immediately afterward — as this used
+     * to — coerces the target down to `0` every time, regardless of
+     * [savedPositionMs]: not a dispatch-ordering race (`PendingPlayerCommands`
+     * runs queued commands synchronously and in order once ready), but this
+     * exact clamp. Waiting here for `durationMs` to report the real,
+     * newly-resolved duration before seeking lets the same clamp pass
+     * [savedPositionMs] through unchanged. `withTimeoutOrNull` keeps a
+     * pathological source (duration that never resolves) from hanging a queue
+     * edit forever; on timeout this falls through to the old (broken-for-that-
+     * case) behavior rather than getting stuck.
      */
     private suspend fun rebuildQueue(newQueue: List<Track>) {
         if (!player.awaitReady()) return
@@ -232,6 +255,9 @@ class PlaybackRepository(
         queue.value = newQueue
         pendingIndex.value = currentIndex
         player.setMediaQueue(newQueue.map { it.toAudioItem(api) }, currentIndex)
+        withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
+            player.durationMs.first { it > 0L }
+        }
         player.seekTo(savedPositionMs)
         if (wasPlaying) player.play()
     }
@@ -275,7 +301,7 @@ class PlaybackRepository(
      * a custom data source, so for a plain-http server this downloads the track
      * (via the same Ktor/CIO client SubsonicApi already uses) into a cache file and
      * plays that instead of streaming — for an https:// server it streams directly
-     * as before. See project_lightwave memory / tracked Forgejo issues for the
+     * as before. See project memory / tracked Forgejo issues for the
      * follow-up (progressive streaming, not pre-download, for cleartext servers).
      */
     private suspend fun Track.toAudioItem(api: SubsonicApi): LightAudioItem {
@@ -302,6 +328,11 @@ class PlaybackRepository(
             cached.writeBytes(api.streamBytes(id))
         }
         return cached
+    }
+
+    private companion object {
+        /** See [rebuildQueue]'s doc — caps how long a queue edit waits for the rebuilt player to resolve a real duration before seeking. */
+        const val REBUILD_DURATION_WAIT_MS = 5_000L
     }
 }
 

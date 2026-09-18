@@ -49,7 +49,7 @@ class TextEditScreen(
 
     @Composable
     override fun Content() {
-        LightwaveTheme {
+        MusicPlusTheme {
             LightTextInputEditor(
                 title = title,
                 state = viewModel.fieldState,

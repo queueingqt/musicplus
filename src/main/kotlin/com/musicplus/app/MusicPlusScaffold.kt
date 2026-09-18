@@ -41,7 +41,7 @@ import com.thelightphone.sdk.ui.lightClickable
  * something is loaded, then [bottomBar].
  */
 @Composable
-fun LightwaveScaffold(
+fun MusicPlusScaffold(
     topBar: @Composable () -> Unit,
     onMiniPlayerClick: () -> Unit = {},
     // Queue icon on the mini-player itself, so the queue is reachable from
@@ -55,12 +55,12 @@ fun LightwaveScaffold(
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    LightwaveTheme {
+    MusicPlusTheme {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 // Belt-and-suspenders, not itself the on-device-confirmed fix (see
-                // LightwaveTheme.kt's doc comment for that — it's the LightTheme
+                // MusicPlusTheme.kt's doc comment for that — it's the LightTheme
                 // wrap, needed for Surface-based Material3 components like
                 // LightTextInputEditor). A plain Column doesn't pick up
                 // MaterialTheme's colorScheme.background on its own the way
@@ -86,7 +86,7 @@ fun LightwaveScaffold(
 
 /**
  * Fixed bottom row showing the current track and a play/pause control, visible
- * on every screen that adopts [LightwaveScaffold] (all but PlayerScreen itself,
+ * on every screen that adopts [MusicPlusScaffold] (all but PlayerScreen itself,
  * which passes `showMiniPlayer = false` since the full now-playing UI is already
  * on screen there). Tapping anywhere but the play/pause control navigates to
  * PlayerScreen via [onClick].
@@ -110,6 +110,16 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
             .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        LightIcon(
+            icon = LightIcons.LIST,
+            size = 1.5f,
+            contentDescription = "View queue",
+            // Own lightClickable, not the row's onClick — this needs to open
+            // QueueScreen specifically, not PlayerScreen like the rest of the row.
+            modifier = Modifier
+                .lightClickable(onClick = onQueueClick)
+                .padding(end = 0.5f.gridUnitsAsDp()),
+        )
         Column(modifier = Modifier.weight(1f)) {
             LightText(
                 text = track.title,
@@ -126,14 +136,12 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
             )
         }
         LightIcon(
-            icon = LightIcons.LIST,
+            icon = LightIcons.FAST_FORWARD,
             size = 1.5f,
-            contentDescription = "View queue",
-            // Own lightClickable, not the row's onClick — this needs to open
-            // QueueScreen specifically, not PlayerScreen like the rest of the row.
+            contentDescription = "Next track",
             modifier = Modifier
-                .lightClickable(onClick = onQueueClick)
-                .padding(horizontal = 0.5f.gridUnitsAsDp()),
+                .lightClickable { playback.skipToNext() }
+                .padding(end = 0.5f.gridUnitsAsDp()),
         )
         LightIcon(
             icon = if (state.isPlaying) LightIcons.PAUSE else LightIcons.PLAY,

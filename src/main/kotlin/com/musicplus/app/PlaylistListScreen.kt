@@ -1,15 +1,22 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.PlaylistRepository
@@ -17,14 +24,11 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
-import com.thelightphone.sdk.ui.LightTopBar
-import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,45 +85,32 @@ class PlaylistListScreen(activity: SealedLightActivity) :
         val query by viewModel.query.collectAsState()
         val playlists by viewModel.playlists.collectAsState()
 
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
-                LightTopBar(
-                    leftButton = LightBarButton.LightIcon(
-                        icon = LightIcons.BACK,
-                        onClick = { goBack() },
-                    ),
-                    center = LightTopBarCenter.Text("Playlists"),
-                    rightButton = LightBarButton.LightIcon(
-                        icon = LightIcons.ADD,
-                        contentDescription = "New playlist",
-                        onClick = {
-                            navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
-                                if (!name.isNullOrBlank()) {
-                                    scope.launch {
-                                        val id = viewModel.createPlaylist(name)
-                                        if (id != null) navigateTo({ a -> PlaylistDetailScreen(a, id) })
-                                    }
+                // Custom top bar, not LightTopBar — that only has room for one
+                // rightButton, and this needs two (search, new playlist).
+                PlaylistListTopBar(
+                    onBack = { goBack() },
+                    onSearch = {
+                        navigateTo({ a -> TextEditScreen(a, "Search playlists", query) }) { result ->
+                            viewModel.onQueryChange(result)
+                        }
+                    },
+                    onNewPlaylist = {
+                        navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
+                            if (!name.isNullOrBlank()) {
+                                scope.launch {
+                                    val id = viewModel.createPlaylist(name)
+                                    if (id != null) navigateTo({ a -> PlaylistDetailScreen(a, id) })
                                 }
                             }
-                        },
-                    ),
+                        }
+                    },
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            LightTextField(
-                label = "Search",
-                value = query,
-                placeholder = "Filter playlists",
-                onClick = {
-                    navigateTo({ a -> TextEditScreen(a, "Search playlists", query) }) { result ->
-                        viewModel.onQueryChange(result)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
-            )
-
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(playlists, key = { it.id }) { playlist ->
                     PlaylistRow(playlist) {
@@ -141,5 +132,72 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
     ) {
         LightText(text = playlist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
         LightText(text = "${playlist.songCount} tracks", variant = LightTextVariant.Fine)
+    }
+}
+
+private const val TOPBAR_HEIGHT_UNITS = 3f
+private const val HORIZONTAL_PADDING_UNITS = 1f
+private const val CENTER_MAX_WIDTH_UNITS = 18f
+
+/**
+ * Custom top bar, not LightTopBar — that only has room for one rightButton, and
+ * this screen needs two (search, new playlist) alongside the back button.
+ * Replicates LightTopBar's own Box + Row(zIndex 2f) + separately-centered-title
+ * Box structure (sdk/ui/.../LightTopBar.kt) rather than approximating it, so
+ * this bar's height/padding/title placement matches every other screen's top
+ * bar exactly. LightBarButtonView (what LightTopBar uses internally to render
+ * a button) is `internal` to :sdk:ui and not visible here, so the icons below
+ * are built directly from the public LightIcon composable instead.
+ */
+@Composable
+private fun PlaylistListTopBar(onBack: () -> Unit, onSearch: () -> Unit, onNewPlaylist: () -> Unit) {
+    val barHeight = TOPBAR_HEIGHT_UNITS.gridUnitsAsDp()
+    val horizontalPadding = HORIZONTAL_PADDING_UNITS.gridUnitsAsDp()
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(barHeight)
+            .padding(horizontal = horizontalPadding),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(barHeight)
+                .zIndex(2f),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LightIcon(
+                icon = LightIcons.BACK,
+                contentDescription = "Back",
+                modifier = Modifier.lightClickable(onClick = onBack),
+            )
+            Box(modifier = Modifier.weight(1f))
+            LightIcon(
+                icon = LightIcons.SEARCH,
+                contentDescription = "Search playlists",
+                modifier = Modifier
+                    .lightClickable(onClick = onSearch)
+                    .padding(end = 0.5f.gridUnitsAsDp()),
+            )
+            LightIcon(
+                icon = LightIcons.ADD,
+                contentDescription = "New playlist",
+                modifier = Modifier.lightClickable(onClick = onNewPlaylist),
+            )
+        }
+        Box(
+            modifier = Modifier.fillMaxWidth().height(barHeight),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightText(
+                text = "Playlists",
+                variant = LightTextVariant.Fine,
+                align = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = CENTER_MAX_WIDTH_UNITS.gridUnitsAsDp()),
+            )
+        }
     }
 }

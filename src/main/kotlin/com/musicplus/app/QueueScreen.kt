@@ -66,7 +66,7 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
     override fun Content() {
         val state by viewModel.state.collectAsState()
 
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

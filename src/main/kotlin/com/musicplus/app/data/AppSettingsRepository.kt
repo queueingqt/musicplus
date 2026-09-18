@@ -18,6 +18,7 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     private object Keys {
         val SHOW_ALBUM_ARTWORK = booleanPreferencesKey("show_album_artwork")
+        val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
     }
 
     /** On by default (issue #9 amendment) — absent key means "not yet set", not "off". */
@@ -27,5 +28,18 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setShowAlbumArtwork(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[Keys.SHOW_ALBUM_ARTWORK] = enabled }
+    }
+
+    /**
+     * On by default — the whole point is catching crashes/errors before the user
+     * knows to go turn it on. Gates [com.musicplus.app.data.AppLogger.d]/[e]; the
+     * crash handler itself always writes regardless of this flag.
+     */
+    val debugLoggingEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[Keys.DEBUG_LOGGING_ENABLED] ?: true
+    }
+
+    suspend fun setDebugLoggingEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[Keys.DEBUG_LOGGING_ENABLED] = enabled }
     }
 }

@@ -5,7 +5,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,6 +89,19 @@ class ActionsMenuScreenViewModel : LightViewModel<Unit>()
  * "runs" it, since `viewModelScope` outlives composition (cleared only when
  * that screen is itself popped) — but an `action` should never wrap its own
  * body in `scope.launch { }` against a scope it captured from elsewhere.
+ *
+ * Second implementation note (issue #20): every tap here — any row, or the
+ * back button — is only ever acted on once per screen instance, via the
+ * `handled` latch in [Content]. `LightActivity`'s back stack (`currentScreen`
+ * / `backStack` in `LightActivity.kt`) is Activity-global state, not scoped
+ * to this screen, so a *second* `goBack()` call doesn't harmlessly no-op just
+ * because this screen already popped itself once — it pops whatever screen
+ * is now on top, i.e. the one this menu was opened from. [ActionRow] uses
+ * `lightClickable`, which by design shows no press indication (see
+ * `LightClickable.kt`), so a person gets no visual confirmation their tap
+ * landed; an accidental second tap — on the same row, a different one, or
+ * the back icon — landing before this screen is actually torn down would,
+ * without this guard, silently close the caller's screen too.
  */
 class ActionsMenuScreen(
     activity: SealedLightActivity,
@@ -99,10 +116,42 @@ class ActionsMenuScreen(
     override fun Content() {
         val scope = rememberCoroutineScope()
 
-        LightwaveScaffold(
+        // See the class doc comment ("Second implementation note") — only the
+        // first tap this screen instance ever receives (row or back button) is
+        // acted on; every later one is ignored.
+        var handled by remember { mutableStateOf(false) }
+
+        fun handleSelection(selection: ActionMenuSelection) {
+            if (handled) return
+            handled = true
+            when (selection) {
+                is ActionMenuSelection.Perform -> scope.launch {
+                    selection.action()
+                    goBack()
+                }
+                is ActionMenuSelection.Navigate -> {
+                    // goBack() *before* opening the next screen so it lands directly
+                    // on top of the row's own screen instead of on top of this menu —
+                    // otherwise its own goBack() would only return here, leaving one
+                    // extra screen for the person to dismiss afterward.
+                    goBack()
+                    selection.open()
+                }
+            }
+        }
+
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
-                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    leftButton = LightBarButton.LightIcon(
+                        icon = LightIcons.BACK,
+                        onClick = {
+                            if (!handled) {
+                                handled = true
+                                goBack()
+                            }
+                        },
+                    ),
                     center = LightTopBarCenter.TwoLineDetail(line1 = "Actions", line2 = subtitle),
                 )
             },
@@ -111,22 +160,7 @@ class ActionsMenuScreen(
         ) {
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(items, key = { it.label }) { item ->
-                    ActionRow(item) {
-                        when (val selection = item.onSelect) {
-                            is ActionMenuSelection.Perform -> scope.launch {
-                                selection.action()
-                                goBack()
-                            }
-                            is ActionMenuSelection.Navigate -> {
-                                // goBack() *before* opening the next screen so it lands directly
-                                // on top of the row's own screen instead of on top of this menu —
-                                // otherwise its own goBack() would only return here, leaving one
-                                // extra screen for the person to dismiss afterward.
-                                goBack()
-                                selection.open()
-                            }
-                        }
-                    }
+                    ActionRow(item) { handleSelection(item.onSelect) }
                 }
             }
         }

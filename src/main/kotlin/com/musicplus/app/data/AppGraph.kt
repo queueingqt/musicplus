@@ -2,6 +2,10 @@ package com.musicplus.app.data
 
 import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.SealedLightContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Composition root. A single process-lifetime instance, built synchronously the
@@ -14,7 +18,7 @@ object AppGraph {
         val serverConfigRepository: ServerConfigRepository,
         val appSettingsRepository: AppSettingsRepository,
         val apiHolder: SubsonicApiHolder,
-        val database: LightwaveDatabase,
+        val database: MusicPlusDatabase,
         val libraryRepository: LibraryRepository,
         val playlistRepository: PlaylistRepository,
         val downloadRepository: DownloadRepository,
@@ -23,6 +27,12 @@ object AppGraph {
     )
 
     @Volatile private var instance: Graph? = null
+
+    // Process-lifetime, not tied to any screen's own viewModelScope — needed so
+    // debugLoggingEnabled keeps being observed (and AppLogger kept in sync) no
+    // matter which screen is currently on top, including screens that never
+    // touch AppSettingsRepository themselves.
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     fun from(lightContext: SealedLightContext): Graph =
         instance ?: synchronized(this) {
@@ -35,10 +45,17 @@ object AppGraph {
     }
 
     private fun build(lightContext: SealedLightContext): Graph {
+        // First thing any screen touches (see class doc) — as early as this
+        // process-lifetime singleton can install the crash handler.
+        AppLogger.init(lightContext.filesDir)
+
         val serverConfigRepository = ServerConfigRepository(lightContext.dataStore)
         val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
+        appScope.launch {
+            appSettingsRepository.debugLoggingEnabled.collect { AppLogger.setEnabled(it) }
+        }
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
-        val database = LightwaveDatabase.create(lightContext)
+        val database = MusicPlusDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible
         // to a consumer module like this one) — it already exposes a `connectivity`
         // property built from it for exactly this reason.

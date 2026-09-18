@@ -152,7 +152,7 @@ class AlbumDetailScreen(
         // to a long-press on the artwork below instead (issue #16). See the long-press
         // handler's own comment for why the artwork rather than the title, and why a
         // long-press at all rather than leaving them in the top bar.
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

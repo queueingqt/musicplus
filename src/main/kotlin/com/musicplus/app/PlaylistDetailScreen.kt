@@ -141,7 +141,7 @@ class PlaylistDetailScreen(
             }
         }
 
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(

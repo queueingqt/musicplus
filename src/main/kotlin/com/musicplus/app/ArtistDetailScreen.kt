@@ -92,7 +92,7 @@ class ArtistDetailScreen(
         // Favorite inline with the artist name — via LightTopBar's rightButton
         // slot, rather than a separate row, since the name is already the title
         // here (no need to repeat it). Icon-only, no text label.
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

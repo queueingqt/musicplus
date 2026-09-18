@@ -1,4 +1,4 @@
-// Module build file for the Lightwave Light Phone III tool.
+// Module build file for the Music + Light Phone III tool.
 //
 // This module is NOT independently buildable — it's the payload that gets dropped
 // into a github.com/lightphone/light-sdk checkout (replacing the placeholder
@@ -100,7 +100,7 @@ dependencies {
     // that Android-specific policy check at all. "io.ktor" is allowlisted as a
     // whole group by the SDK's dependency policy (LightSdkPlugin.ALLOWED_DEPENDENCIES),
     // so this artifact is fine even though it isn't one of Light's own catalog aliases.
-    // Confirmed via on-device testing 2026-09-17 (see project_lightwave memory note).
+    // Confirmed via on-device testing 2026-09-17 (see project memory note).
     implementation("io.ktor:ktor-client-cio:3.4.2")
     implementation(libs.ktor.client.content.negotiation)
     implementation(libs.ktor.serialization.json)

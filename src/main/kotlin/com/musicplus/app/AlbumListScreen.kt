@@ -23,7 +23,6 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
@@ -75,27 +74,25 @@ class AlbumListScreen(activity: SealedLightActivity) :
         val albums by viewModel.albums.collectAsState()
         val filter by viewModel.filter.collectAsState()
 
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Albums"),
+                    rightButton = LightBarButton.LightIcon(
+                        icon = LightIcons.SEARCH,
+                        onClick = {
+                            navigateTo({ a -> TextEditScreen(a, "Search albums", filter) }) { result ->
+                                viewModel.setFilter(result)
+                            }
+                        },
+                        contentDescription = "Search albums",
+                    ),
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            LightTextField(
-                label = "Search",
-                value = filter,
-                placeholder = "Filter albums",
-                onClick = {
-                    navigateTo({ a -> TextEditScreen(a, "Search albums", filter) }) { result ->
-                        viewModel.setFilter(result)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
-            )
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(albums, key = { it.id }) { album ->
                     AlbumRow(lightContext, album) {

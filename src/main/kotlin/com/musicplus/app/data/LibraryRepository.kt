@@ -67,7 +67,8 @@ class LibraryRepository(
         try {
             artistDao.upsertAll(api.getArtists().map { it.toEntity() })
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            // Cache left as-is deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("LibraryRepository", "refreshArtists failed", e)
         }
     }
 
@@ -77,7 +78,8 @@ class LibraryRepository(
         try {
             albumDao.upsertAll(api.getAlbumList(type).map { it.toEntity() })
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            // Cache left as-is deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("LibraryRepository", "refreshAlbumList failed", e)
         }
     }
 
@@ -88,7 +90,8 @@ class LibraryRepository(
             val detail = api.getArtist(artistId) ?: return
             albumDao.upsertAll(detail.album.map { it.toEntity() })
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            // Cache left as-is deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("LibraryRepository", "refreshArtistDetail($artistId) failed", e)
         }
     }
 
@@ -99,7 +102,8 @@ class LibraryRepository(
             val detail = api.getAlbum(albumId) ?: return
             trackDao.upsertAll(detail.song.map { it.toEntity() })
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            // Cache left as-is deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("LibraryRepository", "refreshAlbumDetail($albumId) failed", e)
         }
     }
 
@@ -116,6 +120,7 @@ class LibraryRepository(
                 result.song.map { it.toEntity().toDomain(downloaded = false, localFilePath = null) },
             )
         } catch (e: Exception) {
+            AppLogger.e("LibraryRepository", "search(\"$query\") failed", e)
             Triple(emptyList(), emptyList(), emptyList())
         }
     }
@@ -130,8 +135,8 @@ class LibraryRepository(
         try {
             if (favorite) api.star(id) else api.unstar(id)
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
             // Local state already reflects the tap; a later refresh reconciles.
+            AppLogger.e("LibraryRepository", "setFavorite($id, $favorite) failed", e)
         }
     }
 

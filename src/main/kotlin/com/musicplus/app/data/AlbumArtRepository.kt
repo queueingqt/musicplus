@@ -86,6 +86,7 @@ class AlbumArtRepository(
                 bitmap
             }
         } catch (e: Exception) {
+            AppLogger.e("AlbumArtRepository", "fetchDecodeAndCache($coverArtId, $size) failed", e)
             failedKeys += key
             null
         }

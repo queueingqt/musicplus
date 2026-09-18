@@ -64,7 +64,7 @@ class DownloadRepository(
  * says it marks a "top-level `val`" — the KSP plugin scans for exactly that shape
  * at compile time to populate `LightSdkRegistry.jobs`, so this MUST be a true
  * top-level declaration, not nested in an `object` (an earlier draft nested it in
- * `object LightwaveJobs`, which the processor would not have discovered).
+ * `object DownloadJobs`, which the processor would not have discovered).
  *
  * The job is self-contained on purpose (builds its own DB/network clients rather
  * than reusing app-process singletons) since WorkManager can run it in a fresh
@@ -72,7 +72,7 @@ class DownloadRepository(
  */
 @LightJob(DownloadRepository.JOB_KEY)
 val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
-        val tag = "LightwaveDownload"
+        val tag = "MusicPlusDownload"
         // input["songId"] comes back as the literal string "songId=<value>", not
         // just "<value>" — confirmed on-device via logcat, 2026-09-17. Root cause is
         // upstream: LightWork.kt's `Data.toStringMap()` does
@@ -92,9 +92,10 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             return@handler LightJobResult.Error() // not configured — retrying won't help
         }
 
-        val db = LightwaveDatabase.create(lightContext)
+        val db = MusicPlusDatabase.create(lightContext)
         val track = db.trackDao().getById(songId) ?: run {
             android.util.Log.e(tag, "no track row for songId=$songId")
+            AppLogger.e(tag, "no track row for songId=$songId")
             return@handler LightJobResult.Error()
         }
 
@@ -122,6 +123,7 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             LightJobResult.Success()
         } catch (e: Exception) {
             android.util.Log.e(tag, "download failed for songId=$songId", e)
+            AppLogger.e(tag, "download failed for songId=$songId", e)
             destination.delete()
             LightJobResult.Retry // transient (network) failure — let WorkManager back off and retry
         }

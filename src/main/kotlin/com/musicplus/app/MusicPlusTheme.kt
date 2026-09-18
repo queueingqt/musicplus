@@ -20,7 +20,7 @@ import com.thelightphone.sdk.ui.LightThemeController
  * Every screen's `Content()` must wrap its root composable in this.
  */
 @Composable
-fun LightwaveTheme(content: @Composable () -> Unit) {
+fun MusicPlusTheme(content: @Composable () -> Unit) {
     val colors by LightThemeController.colors.collectAsState()
     LightTheme(colors = colors, content = content)
 }

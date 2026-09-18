@@ -23,7 +23,7 @@ import java.io.File
     version = 2,
     exportSchema = false,
 )
-abstract class LightwaveDatabase : RoomDatabase() {
+abstract class MusicPlusDatabase : RoomDatabase() {
     abstract fun artistDao(): ArtistDao
     abstract fun albumDao(): AlbumDao
     abstract fun trackDao(): TrackDao
@@ -32,8 +32,8 @@ abstract class LightwaveDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
 
     companion object {
-        // Read verbatim off a real build's generated LightwaveDatabase_Impl.kt
-        // (`build/generated/ksp/debug/kotlin/.../LightwaveDatabase_Impl.kt`) after
+        // Read verbatim off a real build's generated MusicPlusDatabase_Impl.kt
+        // (`build/generated/ksp/debug/kotlin/.../MusicPlusDatabase_Impl.kt`) after
         // adding PlaylistEntity/PlaylistTrackEntity — not invented. This is the
         // `RoomOpenDelegate(2, "<this>", "<legacy>")` hash Room's own onCreate()
         // writes into `room_master_table`, and what its onValidateSchema/identity
@@ -42,14 +42,55 @@ abstract class LightwaveDatabase : RoomDatabase() {
         // own from-scratch hand migration built the same way (rebuild, re-read the
         // freshly generated hash from the new _Impl.kt). There's no way to avoid
         // repeating this by hand each time without an SDK-side fix (see below).
+        // Unaffected by the class/file rename from LightwaveDatabase below — Room's
+        // identity hash is derived from the entity/column shape, not the class name.
         private const val V2_IDENTITY_HASH = "7ebbf7cb6e6169831fde6abd69471667"
+
+        private const val DB_FILE_NAME = "musicplus.db"
+        private const val LEGACY_DB_FILE_NAME = "lightwave.db"
 
         // `buildDatabase` is the SDK's Room-builder extension on SealedLightContext
         // (sdk/client/.../LightDb.kt) — routes storage through the sandboxed app
         // context LightOS expects rather than a raw Context.
-        fun create(lightContext: SealedLightContext): LightwaveDatabase {
+        fun create(lightContext: SealedLightContext): MusicPlusDatabase {
+            renameLegacyDbFileIfNeeded(lightContext)
             migrateV1ToV2IfNeeded(lightContext)
-            return lightContext.buildDatabase(LightwaveDatabase::class.java, "lightwave.db")
+            return lightContext.buildDatabase(MusicPlusDatabase::class.java, DB_FILE_NAME)
+        }
+
+        /**
+         * One-time on-disk rename from this app's old filename ("lightwave.db",
+         * left over from when this app was called Lightwave) to "musicplus.db".
+         * Room derives its actual on-disk filename from the string passed to
+         * buildDatabase(), not from the entity/database class name — so without
+         * this step, an already-installed device's local DB (favorites cache,
+         * downloads index) would silently orphan: Room would just create a fresh
+         * empty "musicplus.db" next to the untouched "lightwave.db", discarding
+         * everything already local. Same "patch the file before Room ever opens
+         * it" approach as migrateV1ToV2IfNeeded below, for the same reason (no
+         * addMigrations hook exposed by this SDK). No-op on a fresh install, or
+         * once already renamed.
+         */
+        private fun renameLegacyDbFileIfNeeded(lightContext: SealedLightContext) {
+            try {
+                val dir = File(lightContext.filesDir.parentFile, "databases")
+                val legacy = File(dir, LEGACY_DB_FILE_NAME)
+                val current = File(dir, DB_FILE_NAME)
+                if (!legacy.exists() || current.exists()) return
+                legacy.renameTo(current)
+                for (suffix in listOf("-wal", "-shm", "-journal")) {
+                    val legacySidecar = File(dir, "$LEGACY_DB_FILE_NAME$suffix")
+                    if (legacySidecar.exists()) legacySidecar.renameTo(File(dir, "$DB_FILE_NAME$suffix"))
+                }
+            } catch (e: Exception) {
+                // Swallow rather than crash from inside our own pre-flight step —
+                // worst case Room just creates a fresh musicplus.db, same as a
+                // clean install (local cache only; nothing unrecoverable — the
+                // server remains the source of truth for everything but the
+                // downloads index).
+                android.util.Log.e("MusicPlusDatabase", "lightwave.db -> musicplus.db rename failed, falling back to a fresh db", e)
+                AppLogger.e("MusicPlusDatabase", "lightwave.db -> musicplus.db rename failed, falling back to a fresh db", e)
+            }
         }
 
         /**
@@ -83,7 +124,7 @@ abstract class LightwaveDatabase : RoomDatabase() {
          * dir)>/databases/<name>` — and, if it already exists with `user_version`
          * still 1, `CREATE TABLE` the two new tables with byte-identical DDL to
          * Room's own generated `createAllTables()` (copied from a real build's
-         * generated `LightwaveDatabase_Impl.kt`, not hand-retyped from the
+         * generated `MusicPlusDatabase_Impl.kt`, not hand-retyped from the
          * `@Entity` classes — column order/nullability there is exactly what Room's
          * `onValidateSchema` checks against on every open), write the matching
          * `room_master_table` identity hash, and bump `user_version` to 2 — all
@@ -102,7 +143,7 @@ abstract class LightwaveDatabase : RoomDatabase() {
          */
         private fun migrateV1ToV2IfNeeded(lightContext: SealedLightContext) {
             try {
-                val dbFile = File(lightContext.filesDir.parentFile, "databases/lightwave.db")
+                val dbFile = File(lightContext.filesDir.parentFile, "databases/$DB_FILE_NAME")
                 if (!dbFile.exists()) return // fresh install — Room creates everything at v2 itself, nothing to migrate
 
                 val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
@@ -122,7 +163,8 @@ abstract class LightwaveDatabase : RoomDatabase() {
                 // Swallow rather than crash from inside our own pre-flight step —
                 // worst case we fall through to Room's own (already-flagged, already
                 // understood) failure mode below, never a new one.
-                android.util.Log.e("LightwaveDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
+                android.util.Log.e("MusicPlusDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
+                AppLogger.e("MusicPlusDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
             }
         }
     }

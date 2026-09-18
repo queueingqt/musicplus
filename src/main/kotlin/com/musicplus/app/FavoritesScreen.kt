@@ -25,7 +25,6 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
@@ -92,27 +91,25 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
         val tracks by viewModel.tracks.collectAsState()
         val filter by viewModel.filter.collectAsState()
 
-        LightwaveScaffold(
+        MusicPlusScaffold(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Favorites"),
+                    rightButton = LightBarButton.LightIcon(
+                        icon = LightIcons.SEARCH,
+                        onClick = {
+                            navigateTo({ a -> TextEditScreen(a, "Search favorites", filter) }) { result ->
+                                viewModel.setFilter(result)
+                            }
+                        },
+                        contentDescription = "Search favorites",
+                    ),
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            LightTextField(
-                label = "Search",
-                value = filter,
-                placeholder = "Filter favorites",
-                onClick = {
-                    navigateTo({ a -> TextEditScreen(a, "Search favorites", filter) }) { result ->
-                        viewModel.setFilter(result)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
-            )
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->

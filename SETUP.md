@@ -1,4 +1,4 @@
-# Building and running Lightwave
+# Building and running Music +
 
 ## Why this repo isn't buildable on its own
 
@@ -14,7 +14,7 @@ dependency from a separate, independent repo.
 Every real community fork found while researching this (`gauravmallya/light-apps`,
 `tattaccato/light-sdk`, `zduvall/light-sdk`) is a literal fork of the whole
 `light-sdk` repo, with the developer's tool added as/instead of the `tool/` module.
-Lightwave is kept as its own tracked repo instead (so it has clean history and
+Music + is kept as its own tracked repo instead (so it has clean history and
 lives on this NAS's Forgejo like everything else), which means attaching it to an
 SDK checkout is a manual step rather than something `git clone` alone gives you.
 

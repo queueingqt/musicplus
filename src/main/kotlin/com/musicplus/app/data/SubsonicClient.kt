@@ -7,6 +7,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import kotlin.random.Random
@@ -17,6 +18,23 @@ data class ServerConfig(
     val username: String,
     val password: String,
 )
+
+/**
+ * One saved server connection (issue: multi-server support) — [ServerConfig] plus
+ * a stable [id] and a person-facing [name] so more than one can be listed/picked
+ * between. [ServerConfigRepository] persists a list of these; exactly one is
+ * "active" at a time (the one [ServerConfigRepository.serverConfig] resolves to).
+ */
+@Serializable
+data class ServerProfile(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val username: String,
+    val password: String,
+) {
+    fun toServerConfig() = ServerConfig(baseUrl = baseUrl, username = username, password = password)
+}
 
 class SubsonicApiException(val code: Int, message: String) : Exception(message)
 
@@ -32,7 +50,7 @@ class SubsonicApiException(val code: Int, message: String) : Exception(message)
  * `android:usesCleartextTraffic`/network-security-config to set). CIO is Ktor's
  * own pure-Kotlin engine and isn't subject to that Android-specific check.
  * Confirmed necessary via on-device testing against a real http:// server
- * (2026-09-17) — see project_lightwave memory note.
+ * (2026-09-17) — see project memory note.
  */
 class SubsonicClient(private val config: ServerConfig) {
 
@@ -57,7 +75,7 @@ class SubsonicClient(private val config: ServerConfig) {
 
     companion object {
         private const val API_VERSION = "1.16.1"
-        private const val CLIENT_ID = "Lightwave"
+        private const val CLIENT_ID = "Music+"
         private val SALT_CHARS = ('a'..'z') + ('A'..'Z') + ('0'..'9')
     }
 

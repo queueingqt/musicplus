@@ -44,7 +44,8 @@ class PlaylistRepository(
         try {
             playlistDao.upsertAll(api.getPlaylists().map { it.toEntity() })
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            // Cache left as-is deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("PlaylistRepository", "refreshPlaylists failed", e)
         }
     }
 
@@ -60,7 +61,8 @@ class PlaylistRepository(
                 detail.entry.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
             )
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            // Cache left as-is deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("PlaylistRepository", "refreshPlaylistDetail($playlistId) failed", e)
         }
     }
 
@@ -72,6 +74,7 @@ class PlaylistRepository(
             playlistDao.upsert(created.toEntity())
             created.id
         } catch (e: Exception) {
+            AppLogger.e("PlaylistRepository", "createPlaylist(\"$name\") failed", e)
             null
         }
     }
@@ -86,7 +89,7 @@ class PlaylistRepository(
             api.renamePlaylist(playlistId, name)
             refreshPlaylistDetail(playlistId)
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("PlaylistRepository", "renamePlaylist($playlistId, \"$name\") failed", e)
         }
     }
 
@@ -95,8 +98,9 @@ class PlaylistRepository(
         try {
             if (api != null) api.deletePlaylist(playlistId)
         } catch (e: Exception) {
-            // Swallowed deliberately — still remove the local copy below even if
-            // the server call failed, matching this function's own local-delete intent.
+            // Still remove the local copy below even if the server call failed,
+            // matching this function's own local-delete intent.
+            AppLogger.e("PlaylistRepository", "deletePlaylist($playlistId) server call failed", e)
         }
         playlistDao.delete(playlistId)
     }
@@ -107,7 +111,7 @@ class PlaylistRepository(
             api.addSongToPlaylist(playlistId, songId)
             refreshPlaylistDetail(playlistId)
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("PlaylistRepository", "addTrack($playlistId, $songId) failed", e)
         }
     }
 
@@ -118,7 +122,7 @@ class PlaylistRepository(
             api.removeSongFromPlaylist(playlistId, position)
             refreshPlaylistDetail(playlistId)
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("PlaylistRepository", "removeTrack($playlistId, $position) failed", e)
         }
     }
 
@@ -150,7 +154,7 @@ class PlaylistRepository(
             api.reorderPlaylist(playlistId, playlist.name, songIds)
             refreshPlaylistDetail(playlistId)
         } catch (e: Exception) {
-            // Swallowed deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("PlaylistRepository", "moveTrack($playlistId, $fromPosition -> $toPosition) failed", e)
         }
     }
 

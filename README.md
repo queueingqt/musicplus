@@ -1,4 +1,4 @@
-# Lightwave
+# Music +
 
 A full-featured music player for the [Light Phone III](https://www.thelightphone.com/),
 built on Light's own [Light SDK](https://github.com/lightphone/light-sdk), streaming
@@ -46,9 +46,9 @@ established pattern rather than fully polished UI. See the `TODO`s scattered thr
 lighttool.toml                 tool manifest (id, permissions, capabilities)
 build.gradle.kts               module build file (see SETUP.md — this repo is NOT
                                 independently buildable, see below)
-src/main/kotlin/com/lightwave/app/
-  LightwaveEntryPoint.kt        optional SDK entry point (currently a no-op)
-  LightwaveModels.kt            UI-facing domain models (Artist/Album/Track/...)
+src/main/kotlin/com/musicplus/app/
+  MusicPlusEntryPoint.kt        optional SDK entry point (currently a no-op)
+  MusicPlusModels.kt            UI-facing domain models (Artist/Album/Track/...)
   HomeScreen.kt                 @InitialScreen — navigation hub
   PlayerScreen.kt                now playing / transport controls
   SearchScreen.kt, AlbumListScreen.kt, AlbumDetailScreen.kt,

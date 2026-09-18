@@ -17,6 +17,8 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -38,7 +40,7 @@ class HomeScreenViewModel(
 
     // Note: the old "Now playing: <title>" row that used to live here (via a
     // PlaybackRepositoryHolder.peek() StateFlow) was dropped — the persistent
-    // mini-player (LightwaveScaffold, visible on every screen incl. this one) now
+    // mini-player (MusicPlusScaffold, visible on every screen incl. this one) now
     // covers that, and duplicating it here would just be two now-playing
     // indicators competing for attention on the same screen.
 
@@ -61,8 +63,22 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
 
         // Root screen — no back button (see AlbumListScreen etc. for the
         // leftButton = BACK pattern every non-root screen uses).
-        LightwaveScaffold(
-            topBar = { LightTopBar(center = LightTopBarCenter.Text("Music +")) },
+        MusicPlusScaffold(
+            topBar = {
+                LightTopBar(
+                    center = LightTopBarCenter.Text("Music +"),
+                    // The only search icon that opens the real, unscoped
+                    // SearchScreen (server-side search3 across all categories)
+                    // — every other list screen's search icon just filters that
+                    // screen's own already-cached items instead. See
+                    // AlbumListScreen etc.
+                    rightButton = LightBarButton.LightIcon(
+                        icon = LightIcons.SEARCH,
+                        onClick = { navigateTo(::SearchScreen) },
+                        contentDescription = "Search",
+                    ),
+                )
+            },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
@@ -91,7 +107,7 @@ private fun SetUpServerSplash(onSetUp: () -> Unit) {
             .padding(2f.gridUnitsAsDp()),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        LightText(text = "Welcome to Lightwave", variant = LightTextVariant.Heading)
+        LightText(text = "Welcome to Music +", variant = LightTextVariant.Heading)
         LightText(
             text = "Connect to your Navidrome server to start browsing your library.",
             variant = LightTextVariant.Detail,
