@@ -1,8 +1,6 @@
 # Music +
 
-A full-featured music player for the [Light Phone III](https://www.thelightphone.com/),
-built on Light's own [Light SDK](https://github.com/lightphone/light-sdk), streaming
-from a self-hosted [Navidrome](https://www.navidrome.org/) server (or any other
+A full-featured music player for the [Light Phone III](https://www.thelightphone.com/) to access your self-hosted [Navidrome](https://www.navidrome.org/) music server (or any other
 Subsonic-API-compatible server — Gonic, Airsonic, etc.).
 
 **Fully offline-capable.** Download any song, album, or playlist for offline
