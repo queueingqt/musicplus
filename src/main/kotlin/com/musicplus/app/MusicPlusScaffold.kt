@@ -142,7 +142,12 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
                 .lightClickable(onClick = onQueueClick),
             contentAlignment = Alignment.Center,
         ) {
-            LightIcon(icon = LightIcons.LIST, size = 1.5f, contentDescription = "View queue")
+            // Sized up from 1.5f (matching PAUSE/PLAY's nominal size param) —
+            // LIST's own vector artwork has more internal padding baked in
+            // than PAUSE/PLAY's, so at the identical size value it visibly
+            // reads smaller. Compensating here since the drawable itself
+            // isn't ours to edit (SDK-owned resource).
+            LightIcon(icon = LightIcons.LIST, size = 1.9f, contentDescription = "View queue")
         }
         Column(modifier = Modifier.weight(1f)) {
             LightText(
@@ -165,7 +170,9 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
                 .lightClickable { playback.skipToNext() },
             contentAlignment = Alignment.Center,
         ) {
-            LightIcon(icon = LightIcons.FAST_FORWARD, size = 1.5f, contentDescription = "Next track")
+            // Same reasoning as LIST above — FAST_FORWARD's own artwork reads
+            // visibly smaller than PAUSE/PLAY at an identical size value.
+            LightIcon(icon = LightIcons.FAST_FORWARD, size = 1.9f, contentDescription = "Next track")
         }
         Box(
             modifier = Modifier

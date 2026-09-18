@@ -88,7 +88,13 @@ class PlayerScreenViewModel(
 
     fun toggleFavoriteCurrentTrack() {
         val track = state.value.currentTrack ?: return
-        viewModelScope.launch { libraryRepository.setTrackFavorite(track.id, !track.isFavorite) }
+        val newValue = !track.isFavorite
+        // Patches PlaybackRepository's own queue snapshot too, not just Room/the
+        // server — state.currentTrack is sourced from that snapshot, which
+        // setTrackFavorite alone never touches, so without this the write
+        // succeeds but the star icon never visibly updates (issue #8).
+        playback.updateTrackFavorite(track.id, newValue)
+        viewModelScope.launch { libraryRepository.setTrackFavorite(track.id, newValue) }
     }
 
     fun toggleShuffle() = playback.setShuffle(!state.value.shuffle)

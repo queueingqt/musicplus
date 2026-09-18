@@ -194,6 +194,21 @@ class PlaybackRepository(
     }
 
     /**
+     * Patches [trackId]'s favorite flag in the live queue in place — metadata
+     * only, doesn't touch the player at all (no rebuildQueue/setMediaQueue
+     * call), so it can't cause the reorder-style playback pause (issue #23).
+     * Needed because [queue] is a snapshot captured at play()/rebuildQueue()
+     * time: [LibraryRepository.setTrackFavorite] writes through to Room/the
+     * server correctly on its own, but nothing else re-syncs an
+     * already-queued [Track]'s now-stale `isFavorite` afterward — confirmed
+     * live as the Now Playing star icon not updating after a successful
+     * favorite toggle (issue #8).
+     */
+    fun updateTrackFavorite(trackId: String, isFavorite: Boolean) {
+        queue.value = queue.value.map { if (it.id == trackId) it.copy(isFavorite = isFavorite) else it }
+    }
+
+    /**
      * Removes the upcoming track at [index]. Only indices after the currently
      * playing one are eligible — the queue view only offers removal for upcoming
      * tracks, never the one actively playing (removing "the current track" would
