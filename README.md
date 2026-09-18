@@ -5,6 +5,11 @@ built on Light's own [Light SDK](https://github.com/lightphone/light-sdk), strea
 from a self-hosted [Navidrome](https://www.navidrome.org/) server (or any other
 Subsonic-API-compatible server — Gonic, Airsonic, etc.).
 
+**Fully offline-capable.** Download any song, album, or playlist for offline
+listening — long-press it and choose Download. Favorites, playlist edits, and
+everything else made while offline sync automatically the next time you're
+connected.
+
 <p float="left">
   <img src="screenshots/now-playing.png" width="200" alt="Now Playing screen, showing album art, transport controls, and shuffle/repeat/favorite/lyrics toggles" />
   <img src="screenshots/queue.png" width="200" alt="Full queue screen, with the current track marked and reorder/remove controls on upcoming tracks" />
@@ -16,87 +21,71 @@ Subsonic-API-compatible server — Gonic, Airsonic, etc.).
 
 ### Library
 
-- Browse by **Albums**, **Artists**, or a flat **Songs** list (every track in the
-  library, not just ones already pulled in via a visited album/playlist/search)
+- Browse by **Albums**, **Artists**, or a flat **Songs** list covering every
+  track in the library
 - **Search** across artists, albums, and tracks
-- **Favorites** — star/unstar artists, albums, and tracks independently (an album
-  favorite doesn't imply its tracks are favorited, or vice versa), synced with the
-  server and queued for retry if the write fails offline
-- **Playlists** — create, rename, delete, and reorder tracks within a playlist, all
-  synced with the server
-- Album art, cached locally after first fetch
-- A local Room cache of the library, favorites, and download index so the
-  last-synced view stays usable offline
+- **Favorites** — star/unstar artists, albums, and tracks independently, synced
+  with the server
+- **Playlists** — create, rename, delete, and reorder tracks
+- **Download for offline use** — albums, playlists, and individual songs, via
+  long-press
+- Album art, cached locally
+- Local library cache so the last-synced view works offline
 
 <p float="left">
   <img src="screenshots/home.png" width="200" alt="Main menu: Albums, Artists, Songs, Playlists, Queue, Favorites, Settings" />
   <img src="screenshots/album-detail.png" width="200" alt="Album detail screen with track list and a favorite star on the title" />
 </p>
 
+### Long-press action menu
+
+Long-press any track, album, or playlist for its actions: favorite, add to
+queue, add to playlist, and download. Available from every list in the app —
+Albums, Artists, Songs, Search, Favorites, and Playlists.
+
+<p float="left">
+  <img src="screenshots/action-menu.png" width="200" alt="Long-press action menu on a track, showing Add to favorites, Add to queue, Add to playlist, and Download" />
+</p>
+
 ### Playback
 
-- Full transport controls — play/pause, ±15s skip, next/previous track — via the
-  SDK's detached audio player, so playback survives navigating away from Now
-  Playing or the phone locking
-- **Shuffle** (reshuffles only the upcoming portion of the queue, restoring the
-  original order exactly when turned back off) and **repeat** (off / repeat queue /
-  repeat one track) — shuffle and repeat-one are mutually exclusive, since
-  repeating a single track forever makes an upcoming shuffled order meaningless;
-  repeat-queue and shuffle can run together
-- A visible loading indicator between tapping a track and playback actually
-  starting, instead of the screen appearing to do nothing
-- **The full queue survives an app restart** — song order, current track,
-  position, and shuffle/repeat mode are all restored, without forcing a network
-  fetch until you actually press play
-- **QueueScreen** — the entire queue (not just "up next"), with per-row reorder
-  (▲/▼) and remove, a "clear queue" action that leaves whatever's currently
-  playing alone, and tap-to-jump: tapping any row plays it immediately
-- **Lyrics** — synced (line-by-line, current line highlighted as it plays) or
-  plain text, fetched from the server on demand
-- Works against a plain `http://` server, not just `https://` — Android blocks
-  cleartext streaming outright, so tracks are downloaded then played from a local
-  cache instead of streamed directly when the configured server isn't HTTPS
-- Download tracks for offline listening, queued through the SDK's background work
-  API so downloads survive leaving the screen
+- Full transport controls — play/pause, ±15s skip, next/previous track
+- Playback continues when you navigate away from Now Playing or the phone locks
+- **Shuffle** reshuffles the whole queue, including already-played tracks —
+  turning it back off restores the exact original order
+- **Repeat** — off, repeat queue, or repeat one track (shuffle and repeat-one
+  are mutually exclusive; repeat-queue and shuffle can run together)
+- A loading indicator shows while a track is loading
+- **The queue survives an app restart** — song order, current track, position,
+  and shuffle/repeat mode are all restored
+- **Queue screen** — the entire queue, with per-row reorder and remove, a
+  "clear queue" action that leaves the current track playing, and tap-to-jump
+  to any track
+- **Lyrics** — synced (current line highlighted as it plays) or plain text
+- Works with plain `http://` servers as well as `https://`
 
 ### Everywhere else
 
-- A persistent mini-player (track title/art, play/pause, skip) on every screen
-  except Now Playing itself, tap-through to Now Playing or the full queue
-- A long-press action menu — favorite, add to queue, download — reachable from
-  track rows, the album list, an artist's own album list, and the album detail
-  screen
-- Scroll position is preserved when navigating into a list item and back
-- Server connection (URL, username, password) is configurable in Settings, with
-  support for saving more than one server profile
-- Preferences: show/hide album artwork, haptic feedback, debug logging (writes a
-  local crash/error log independent of Logcat, pullable via adb for field
-  debugging without a live session)
+- A persistent mini-player on every screen except Now Playing, tapping it opens
+  Now Playing or the full queue
+- Scroll position is preserved when navigating into a list and back
+- Server connection is configurable in Settings, with support for saving more
+  than one server
+- Preferences: show/hide album artwork, haptic feedback, debug logging
 
 ## How it's built
 
-- **Kotlin + Jetpack Compose + Coroutines + MVVM**, per the Light SDK's own
-  conventions — see `SETUP.md` for the SDK's own reference notes gathered while
-  building this.
-- **Networking**: [Ktor](https://ktor.io/) with the **CIO** engine (not OkHttp) —
-  many self-hosted Subsonic servers run plain `http://` on a LAN/tailnet, and
-  OkHttp's Android platform integration enforces Android's default
-  cleartext-traffic block with no override available here; CIO's pure-Kotlin
-  engine isn't subject to that check. Talks directly to the open Subsonic REST
-  API (`src/.../data/Subsonic*.kt`), so this also works against any other
-  Subsonic-compatible server, not just Navidrome.
-- **Persistence**: Room (library cache, favorites, download index, play queue,
-  offline sync queue for failed writes) + DataStore (server connection settings,
-  app preferences, playback resume state), both routed through the SDK's own
-  sandboxed storage primitives rather than raw Android APIs.
-- **Playback**: the SDK's `LightAudio` / detached-audio player — a single shared
-  player instance for the tool's lifetime (see `PlaybackRepository` /
-  `PlaybackRepositoryHolder`), so it keeps playing when you leave the Now Playing
-  screen.
-- **Offline-first writes**: a favorite toggle or playlist edit that fails (no
-  server configured, or a transient network error) queues locally and replays
-  automatically once the server's reachable again, backed by both an immediate
-  reconnect listener and a periodic background job.
+- Kotlin + Jetpack Compose + Coroutines + MVVM, per the Light SDK's own
+  conventions — see `SETUP.md` for build details.
+- Networking via [Ktor](https://ktor.io/) against the open Subsonic REST API
+  (`src/.../data/Subsonic*.kt`) — works against any Subsonic-compatible server,
+  not just Navidrome.
+- Persistence via Room (library cache, favorites, download index, play queue,
+  offline sync queue) and DataStore (server connection, preferences, playback
+  resume state).
+- Playback via the SDK's `LightAudio` detached-audio player — a single shared
+  player instance for the app's lifetime (`PlaybackRepository` /
+  `PlaybackRepositoryHolder`).
 
 ## Project layout
 
@@ -122,12 +111,12 @@ src/main/kotlin/com/musicplus/app/
   data/
     Subsonic{Client,Api,Dtos}.kt  Subsonic/Navidrome REST client
     ServerConfigRepository.kt     server URL/credentials (DataStore-backed)
-    SubsonicApiHolder.kt          lazy API-client resolution (see file for why)
+    SubsonicApiHolder.kt          lazy API-client resolution
     Local{Entities,Daos}.kt,
     MusicPlusDatabase.kt          Room cache
     LibraryRepository.kt          cache-then-network library access
     PlaylistRepository.kt         playlist CRUD
-    DownloadRepository.kt         download queue (SDK background work)
+    DownloadRepository.kt         download queue
     PlaybackRepository.kt         wraps the SDK's audio player
     PlaybackStateRepository.kt    persisted resume state (queue index/position/mode)
     LyricsRepository.kt           synced/plain lyrics fetch

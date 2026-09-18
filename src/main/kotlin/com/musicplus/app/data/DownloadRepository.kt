@@ -66,9 +66,12 @@ class DownloadRepository(
  * top-level declaration, not nested in an `object` (an earlier draft nested it in
  * `object DownloadJobs`, which the processor would not have discovered).
  *
- * The job is self-contained on purpose (builds its own DB/network clients rather
- * than reusing app-process singletons) since WorkManager can run it in a fresh
- * process with none of the app's in-memory state warm.
+ * Builds its own network client rather than reusing `AppGraph`'s `apiHolder` —
+ * WorkManager can run this in a fresh process with none of the app's in-memory
+ * state warm, so it can't assume one exists. The database is the one exception
+ * (see the `AppGraph.from(...)` call below): reusing the app's singleton when
+ * the process IS already alive is what makes download progress actually show
+ * up live instead of only after the screen is reopened.
  */
 @LightJob(DownloadRepository.JOB_KEY)
 val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
@@ -92,7 +95,20 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             return@handler LightJobResult.Error() // not configured — retrying won't help
         }
 
-        val db = MusicPlusDatabase.create(lightContext)
+        // AppGraph.from(...), not MusicPlusDatabase.create(...) directly — the
+        // latter builds a brand-new Room instance every time, and Room's Flow
+        // invalidation is tracked per-*instance*, not per underlying file: a
+        // write through a second instance never notifies Flows the app's own
+        // (already-open) instance is serving, so every download-status row
+        // this job wrote was correct on disk but the in-progress action menu
+        // never advanced past "Downloading" until the screen was reopened and
+        // re-queried fresh. Confirmed on-device, 2026-09-18. AppGraph.from is
+        // the same memoized singleton every screen already calls — reusing it
+        // here means this job shares the app's live instance whenever the
+        // app process is actually alive to observe it, and transparently
+        // builds its own fresh one (same as before) on the rare cold-process
+        // WorkManager run, since AppGraph.from()'s own singleton is per-process.
+        val db = AppGraph.from(lightContext).database
         val track = db.trackDao().getById(songId) ?: run {
             android.util.Log.e(tag, "no track row for songId=$songId")
             AppLogger.e(tag, "no track row for songId=$songId")

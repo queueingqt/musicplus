@@ -225,36 +225,36 @@ class SyncQueueRepository(
 }
 
 /**
- * The actual sync job — self-contained (builds its own DB/network clients rather
- * than reusing app-process singletons), same convention as DownloadRepository's
- * job, since WorkManager can run this in a fresh process with no warm state.
- * Runs on a periodic schedule (see AppGraph) as the background-app/process-killed
- * backstop, plus an opportunistic one-shot enqueue on every observed reconnect —
- * either way it lands here.
+ * The actual sync job. Runs on a periodic schedule (see AppGraph) as the
+ * background-app/process-killed backstop, plus an opportunistic one-shot
+ * enqueue on every observed reconnect — either way it lands here.
+ *
+ * Goes through `AppGraph.from(lightContext)` rather than building its own
+ * `MusicPlusDatabase`/repositories from scratch — same fix, same reason as
+ * `DownloadRepository`'s job (see its doc): a second `Room` instance against
+ * the same file doesn't notify the app's own live Flows when this job writes
+ * through it, so a synced favorite/playlist edit's "still syncing" indicator
+ * only ever cleared after the screen was reopened, never live. `AppGraph.from`
+ * is a memoized per-process singleton, so this transparently reuses the app's
+ * already-open instance when the process is alive to observe it, and builds
+ * a fresh one exactly as before on a cold-process WorkManager run.
  */
 @LightJob(SyncQueueRepository.JOB_KEY)
 val syncPendingMutations: LightJobHandler = handler@{ lightContext, _ ->
     AppLogger.d("SyncQueueJob", "starting")
-    val serverConfigRepository = ServerConfigRepository(lightContext.dataStore)
+    val graph = AppGraph.from(lightContext)
     // Nothing configured at all — not just "unreachable right now" — so there's
     // genuinely nowhere for a queued mutation to ever sync to.
-    if (serverConfigRepository.serverConfig.first() == null) {
+    if (graph.serverConfigRepository.serverConfig.first() == null) {
         AppLogger.d("SyncQueueJob", "no server configured, exiting")
         return@handler LightJobResult.Success()
     }
 
-    val db = MusicPlusDatabase.create(lightContext)
-    val count = db.pendingMutationDao().observeCount().first()
+    val count = graph.database.pendingMutationDao().observeCount().first()
     AppLogger.d("SyncQueueJob", "pending count = $count")
     if (count == 0) return@handler LightJobResult.Success()
 
-    val apiHolder = SubsonicApiHolder(serverConfigRepository)
-    val connectivity = lightContext.connectivity
-    val libraryRepository = LibraryRepository(apiHolder, db.artistDao(), db.albumDao(), db.trackDao(), connectivity)
-    val playlistRepository = PlaylistRepository(apiHolder, db.playlistDao(), db.trackDao(), connectivity)
-    val syncQueueRepository = SyncQueueRepository(db.pendingMutationDao(), libraryRepository, playlistRepository)
-
-    if (syncQueueRepository.drainQueue()) LightJobResult.Success() else LightJobResult.Retry
+    if (graph.syncQueueRepository.drainQueue()) LightJobResult.Success() else LightJobResult.Retry
 }
 
 /** Registers the periodic backstop schedule — see AppGraph.build(). The opportunistic reconnect-triggered one-shot (also wired there) is what makes this feel near-instant in the common case; this is just the floor for when the app isn't in foreground to observe that. */
