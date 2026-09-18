@@ -32,6 +32,7 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightModalManager
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.gridUnitsAsDp
@@ -154,7 +155,17 @@ class PlaylistListScreen(activity: SealedLightActivity) :
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
         ) {
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
+            // Inside, not the default Outside — see ScrollbarGutter.kt's doc
+            // (issue #39): PlaylistRow's maxLines=1/Ellipsis name is
+            // width-dependent, so on Outside it briefly rendered wider (less
+            // truncated) on the first frame, then visibly snapped narrower
+            // once the scrollbar's real gutter was reserved.
+            LightLazyScrollView(
+                modifier = Modifier.fillMaxWidth(),
+                scrollBarPosition = LightScrollBarPosition.Inside,
+                listState = listState,
+                uniformItemHeightGridUnits = 3f,
+            ) {
                 items(playlists, key = { it.id }) { playlist ->
                     PlaylistRow(
                         playlist = playlist,
@@ -237,7 +248,10 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit, onOpenActions: 
         modifier = Modifier
             .fillMaxWidth()
             .lightCombinedClickable(onClick = onClick, onLongClick = onOpenActions)
-            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            // end matches the SDK's own scrollbar track width — see the
+            // LightLazyScrollView call site above for why this is fixed
+            // rather than conditional on whether a scrollbar happens to show.
+            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
     ) {
         LightText(text = playlist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
         LightText(text = "${playlist.songCount} tracks", variant = LightTextVariant.Fine)

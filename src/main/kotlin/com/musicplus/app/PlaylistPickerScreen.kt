@@ -19,6 +19,7 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -114,7 +115,16 @@ class PlaylistPickerScreen(
                     .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
             )
 
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+            // Inside, not the default Outside — see ScrollbarGutter.kt's doc
+            // (issue #39): a wider available width on the first frame (before
+            // the scrollbar's real gutter is reserved) can change how/whether
+            // a long playlist name wraps, then visibly reflow once it's
+            // reserved a frame later.
+            LightLazyScrollView(
+                modifier = Modifier.fillMaxWidth(),
+                scrollBarPosition = LightScrollBarPosition.Inside,
+                uniformItemHeightGridUnits = 3f,
+            ) {
                 items(playlists, key = { it.id }) { playlist ->
                     LightText(
                         text = playlist.name,
@@ -127,7 +137,11 @@ class PlaylistPickerScreen(
                                     goBack()
                                 }
                             }
-                            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+                            // end matches the SDK's own scrollbar track width —
+                            // see the LightLazyScrollView call site above for why
+                            // this is fixed rather than conditional on whether a
+                            // scrollbar happens to show.
+                            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
                     )
                 }
             }

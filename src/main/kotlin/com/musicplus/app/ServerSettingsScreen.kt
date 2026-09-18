@@ -24,6 +24,7 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightModalManager
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -104,7 +105,17 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                     modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp()),
                 )
             } else {
-                LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+                // Inside, not the default Outside — see ScrollbarGutter.kt's
+                // doc (issue #39): ServerRow's maxLines=1/Ellipsis name and
+                // URL are width-dependent, so on Outside they briefly
+                // rendered wider (less truncated) on the first frame, then
+                // visibly snapped narrower once the scrollbar's real gutter
+                // was reserved.
+                LightLazyScrollView(
+                    modifier = Modifier.fillMaxWidth(),
+                    scrollBarPosition = LightScrollBarPosition.Inside,
+                    uniformItemHeightGridUnits = 3f,
+                ) {
                     items(servers, key = { it.id }) { server ->
                         ServerRow(
                             server = server,
@@ -174,7 +185,10 @@ private fun ServerRow(server: ServerProfile, isActive: Boolean, onClick: () -> U
         modifier = Modifier
             .fillMaxWidth()
             .lightCombinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            // end matches the SDK's own scrollbar track width — see the
+            // LightLazyScrollView call site above for why this is fixed
+            // rather than conditional on whether a scrollbar happens to show.
+            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Leading state indicator, not trailing — matches QueueScreen's own
