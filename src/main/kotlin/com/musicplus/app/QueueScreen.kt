@@ -22,6 +22,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -73,8 +74,10 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                     center = LightTopBarCenter.Text("Queue"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
+            // false — this screen already has its own full queue list on
+            // screen; a mini-player row would just duplicate it, and its queue
+            // icon would loop back to this exact screen (reported live).
+            showMiniPlayer = false,
         ) {
             if (state.queue.isEmpty()) {
                 LightText(
@@ -88,6 +91,12 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                 LightLazyScrollView(
                     modifier = Modifier.fillMaxWidth(),
                     uniformItemHeightGridUnits = 3f,
+                    // Inside, not the default Outside — Outside reserves a
+                    // permanent 2-grid-unit gutter on every row for the
+                    // scrollbar track, which pushed the trailing X icon well
+                    // short of the actual right edge. Reported live as "too
+                    // far left."
+                    scrollBarPosition = LightScrollBarPosition.Inside,
                 ) {
                     itemsIndexed(state.queue, key = { _, track -> track.id }) { i, track ->
                         val isCurrent = i == state.currentIndex
