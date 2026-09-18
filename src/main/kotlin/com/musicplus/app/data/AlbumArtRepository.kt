@@ -2,6 +2,7 @@ package com.musicplus.app.data
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -45,7 +46,21 @@ class AlbumArtRepository(
     private val apiHolder: SubsonicApiHolder,
     filesDir: File,
 ) {
-    private val memoryCache = ConcurrentHashMap<String, Bitmap>()
+    // Reported live: after a long session touching many albums/artists/playlists,
+    // scrolling got severely stuttery — "Slow UI thread" dominated the frame
+    // stats (dumpsys gfxinfo), and the GPU texture cache had grown to tens of MB
+    // across only a few dozen cached images. Root cause: this was an unbounded
+    // ConcurrentHashMap that held every full decoded Bitmap ever fetched for the
+    // life of the process, so a long session's worth of art accumulated forever,
+    // driving up GC pressure (which stalls every thread, including Main) with no
+    // ceiling. LruCache with a byte-size-aware sizeOf caps total memory instead —
+    // 1/8th of the app's max heap is the standard Android sizing convention for
+    // an in-memory bitmap cache (matches the guidance in Android's own bitmap
+    // caching docs). Disk cache/network fetch are unaffected; this only bounds
+    // what stays resident in memory.
+    private val memoryCache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 8L).toInt()) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
     private val failedKeys = ConcurrentHashMap.newKeySet<String>()
     private val diskCacheDir = File(filesDir, "albumart").apply { mkdirs() }
 
@@ -60,17 +75,17 @@ class AlbumArtRepository(
     /** Synchronous, memory-cache-only lookup — lets a caller show an already-cached image on its very first composition instead of flashing a placeholder while [getBitmap] re-confirms the same cache hit. */
     fun peekCached(url: String): Bitmap? {
         val (coverArtId, size) = parseCoverArtParams(url) ?: return null
-        return memoryCache[cacheKey(coverArtId, size)]
+        return memoryCache.get(cacheKey(coverArtId, size))
     }
 
     /** Returns the decoded [Bitmap] for [url] (cached after the first successful fetch), or null if it's not fetchable/decodable. */
     suspend fun getBitmap(url: String): Bitmap? {
         val (coverArtId, size) = parseCoverArtParams(url) ?: return null
         val key = cacheKey(coverArtId, size)
-        memoryCache[key]?.let { return it }
+        memoryCache.get(key)?.let { return it }
         if (key in failedKeys) return null
         return fetchMutex.withLock {
-            memoryCache[key]?.let { return@withLock it }
+            memoryCache.get(key)?.let { return@withLock it }
             if (key in failedKeys) return@withLock null
             fetchDecodeAndCache(coverArtId, size, key)
         }
@@ -92,12 +107,12 @@ class AlbumArtRepository(
         withContext(Dispatchers.IO) {
             try {
                 val bytes = readFromDisk(coverArtId, size) ?: fetchFromNetwork(coverArtId, size)
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                val bitmap = decodeSampled(bytes, size)
                 if (bitmap == null) {
                     failedKeys += key
                     null
                 } else {
-                    memoryCache[key] = bitmap
+                    memoryCache.put(key, bitmap)
                     bitmap
                 }
             } catch (e: Exception) {
@@ -106,6 +121,34 @@ class AlbumArtRepository(
                 null
             }
         }
+
+    /**
+     * Decodes at roughly [targetSize] pixels on the larger side instead of
+     * whatever the source bytes actually are. Confirmed live (2026-09-18) that
+     * this server doesn't honor `getCoverArt.view`'s `size` request param at
+     * all — a request for size=300 came back as a 1024x1024 WebP regardless
+     * (pulled a real cached file off-device and checked its pixel dimensions
+     * directly). Decoding that at full resolution is ~4MB per image
+     * (1024*1024*4 bytes, ARGB_8888) for art displayed at a fraction of that
+     * size — confirmed as the dominant cause of severe scroll stutter via
+     * `dumpsys gfxinfo`'s frame stats (UI-thread-bound jank) and GPU texture
+     * cache size (tens of MB across a few dozen images). Two-pass decode: read
+     * bounds only first (`inJustDecodeBounds`, no pixel allocation), compute
+     * the largest power-of-two `inSampleSize` that still comfortably covers
+     * [targetSize], then decode for real at that reduced resolution. This is
+     * a client-side mitigation for a server-side gap, not a workaround for
+     * anything under this app's own control to fix directly.
+     */
+    private fun decodeSampled(bytes: ByteArray, targetSize: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sampleSize = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sampleSize * 2) >= targetSize) {
+            sampleSize *= 2
+        }
+        val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+    }
 
     private fun cacheKey(coverArtId: String, size: Int) = "$coverArtId:$size"
 
