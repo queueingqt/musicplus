@@ -116,7 +116,16 @@ class LyricsScreen(private val sealedActivity: SealedLightActivity) :
                     center = LightTopBarCenter.Text(track?.title ?: "Lyrics"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            // goBack(), not navigateTo(::PlayerScreen) — this screen is only
+            // ever reached by navigating here FROM PlayerScreen (its own
+            // microphone icon, the one navigateTo(::LyricsScreen) call site
+            // in the app), so the screen directly underneath on the stack is
+            // already a PlayerScreen. Pushing a second one on tap meant
+            // repeatedly bouncing between Now Playing and Lyrics built up a
+            // stack of duplicates — tapping back N times didn't leave Now
+            // Playing until every duplicate pair had been popped. Reported
+            // live, 2026-09-18.
+            onMiniPlayerClick = { goBack() },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             // Three real, honestly-distinguished states plus loading/error —
