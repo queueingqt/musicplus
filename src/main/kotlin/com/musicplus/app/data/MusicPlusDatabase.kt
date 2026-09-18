@@ -62,11 +62,13 @@ annotation class DatabaseFactoryAccess
         PendingMutationEntity::class,
     ],
     // v2: adds playlists/playlist_tracks (issue #5). v3: adds pending_mutations
-    // (issue #24, the offline sync queue). See migrateV1ToV2IfNeeded/
-    // migrateV2ToV3IfNeeded below for how an existing install is carried forward
-    // losslessly despite there being no way to register a real Migration object
-    // here.
-    version = 3,
+    // (issue #24, the offline sync queue). v4: adds downloads.attemptCount (a
+    // download that keeps failing now gives up and surfaces FAILED instead of
+    // silently retrying forever with no user-visible signal — reported live).
+    // See migrateV1ToV2IfNeeded/migrateV2ToV3IfNeeded/migrateV3ToV4IfNeeded
+    // below for how an existing install is carried forward losslessly despite
+    // there being no way to register a real Migration object here.
+    version = 4,
     exportSchema = false,
 )
 abstract class MusicPlusDatabase : RoomDatabase() {
@@ -96,6 +98,10 @@ abstract class MusicPlusDatabase : RoomDatabase() {
         // build's generated MusicPlusDatabase_Impl.kt after adding
         // PendingMutationEntity, not invented.
         private const val V3_IDENTITY_HASH = "29d76f40bf75edd9fe9d5139cf3c35d2"
+        // Same provenance as V2_IDENTITY_HASH above — read verbatim off a real
+        // build's generated MusicPlusDatabase_Impl.kt after adding
+        // DownloadEntity.attemptCount, not invented.
+        private const val V4_IDENTITY_HASH = "a73549bac1003f8e97bf4f7dce702bbd"
 
         private const val DB_FILE_NAME = "musicplus.db"
         private const val LEGACY_DB_FILE_NAME = "lightwave.db"
@@ -108,6 +114,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
             renameLegacyDbFileIfNeeded(lightContext)
             migrateV1ToV2IfNeeded(lightContext)
             migrateV2ToV3IfNeeded(lightContext)
+            migrateV3ToV4IfNeeded(lightContext)
             return lightContext.buildDatabase(MusicPlusDatabase::class.java, DB_FILE_NAME)
         }
 
@@ -246,6 +253,33 @@ abstract class MusicPlusDatabase : RoomDatabase() {
             } catch (e: Exception) {
                 android.util.Log.e("MusicPlusDatabase", "v2 -> v3 hand migration failed, falling back to Room's own open", e)
                 AppLogger.e("MusicPlusDatabase", "v2 -> v3 hand migration failed, falling back to Room's own open", e)
+            }
+        }
+
+        /**
+         * Hand-rolled v3 -> v4 migration (adds `downloads.attemptCount`) — same
+         * raw-SQLite pre-flight approach as migrateV1ToV2IfNeeded above, for the
+         * exact same reason (no addMigrations hook exposed by this SDK's
+         * buildDatabase()). See that function's doc for the full rationale.
+         * Unlike the earlier two migrations this adds a column to an existing
+         * table rather than whole new tables, so it's a single ALTER TABLE —
+         * SQLite backfills the DEFAULT 0 onto every existing row automatically.
+         */
+        private fun migrateV3ToV4IfNeeded(lightContext: SealedLightContext) {
+            try {
+                val dbFile = File(lightContext.filesDir.parentFile, "databases/$DB_FILE_NAME")
+                if (!dbFile.exists()) return // fresh install — Room creates everything at v4 itself, nothing to migrate
+
+                val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
+                db.use {
+                    if (it.version != 3) return@use // already migrated, or a version this code doesn't know about — leave it alone
+                    it.execSQL("ALTER TABLE `downloads` ADD COLUMN `attemptCount` INTEGER NOT NULL DEFAULT 0")
+                    it.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '$V4_IDENTITY_HASH')")
+                    it.version = 4
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MusicPlusDatabase", "v3 -> v4 hand migration failed, falling back to Room's own open", e)
+                AppLogger.e("MusicPlusDatabase", "v3 -> v4 hand migration failed, falling back to Room's own open", e)
             }
         }
     }

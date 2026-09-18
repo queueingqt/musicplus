@@ -95,6 +95,14 @@ object AppGraph {
             downloadDao = database.downloadDao(),
             trackDao = database.trackDao(),
         )
+        // One-shot per process start, same "give it a fresh shot on reopen" as the
+        // sync queue's reconnect-observer below (which also fires once immediately
+        // on every launch) — a download that gave up after MAX_DOWNLOAD_ATTEMPTS
+        // shouldn't need the user to notice and manually retry it if whatever
+        // broke (server down, network blip) has since cleared on its own.
+        appScope.launch {
+            downloadRepository.retryFailed(lightContext)
+        }
         val albumArtRepository = AlbumArtRepository(
             apiHolder = apiHolder,
             filesDir = lightContext.filesDir,

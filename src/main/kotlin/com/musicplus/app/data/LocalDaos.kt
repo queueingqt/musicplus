@@ -208,6 +208,10 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE songId = :songId")
     fun observeBySongId(songId: String): Flow<DownloadEntity?>
 
+    /** Used by DownloadRepository.retryFailed() — every download that gave up after MAX_DOWNLOAD_ATTEMPTS, re-armed on the next app start. */
+    @Query("SELECT * FROM downloads WHERE status = :status")
+    suspend fun getByStatus(status: DownloadStatus): List<DownloadEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(download: DownloadEntity)
 

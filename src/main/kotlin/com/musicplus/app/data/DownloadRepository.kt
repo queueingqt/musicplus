@@ -23,6 +23,19 @@ class DownloadRepository(
 ) {
     companion object {
         const val JOB_KEY = "download-track"
+
+        // Reported live: a download that hit a real, non-transient error (e.g. the
+        // server genuinely unreachable) looked identical to one still in progress
+        // forever — downloadTrack's catch block always returned Retry, and nothing
+        // ever wrote DownloadStatus.FAILED, so the UI's already-built "Failed — tap
+        // to retry" state was simply never reached. WorkManager's own Result.retry()
+        // has no built-in attempt ceiling (it backs off, capped at its own max
+        // delay, but keeps trying indefinitely) — giving up is something the job
+        // itself has to decide, tracked here since WorkManager passes no attempt
+        // count into the handler itself. 3 is enough to ride out a brief blip
+        // across a few backoff cycles without leaving something well and truly
+        // stuck look identical to "still trying" for hours.
+        const val MAX_DOWNLOAD_ATTEMPTS = 3
     }
 
     fun observeAll(): Flow<List<DownloadEntity>> = downloadDao.observeAll()
@@ -36,6 +49,7 @@ class DownloadRepository(
                 status = DownloadStatus.QUEUED,
                 queuedAtEpochMs = System.currentTimeMillis(),
                 completedAtEpochMs = null,
+                attemptCount = 0,
             ),
         )
         LightWork.enqueue(
@@ -50,6 +64,28 @@ class DownloadRepository(
         LightWork.cancel(lightContext, jobKeyOrTag = songId)
         localFile(lightContext, songId)?.delete()
         downloadDao.delete(songId)
+    }
+
+    /**
+     * Re-arms every download that gave up after [MAX_DOWNLOAD_ATTEMPTS] — called
+     * once per process start (see AppGraph.build()), same "give it a fresh shot
+     * every time the app reopens" behavior the sync queue already has via its
+     * own reconnect-triggered enqueue. Resets attemptCount back to 0 rather than
+     * continuing to count against the exhausted total, so a download that failed
+     * because of a since-resolved problem (server was down, Tailscale was
+     * disconnected, etc.) gets the same 3 fresh attempts as a brand new one,
+     * not zero.
+     */
+    suspend fun retryFailed(lightContext: SealedLightContext) {
+        for (entity in downloadDao.getByStatus(DownloadStatus.FAILED)) {
+            downloadDao.upsert(entity.copy(status = DownloadStatus.QUEUED, attemptCount = 0))
+            LightWork.enqueue(
+                lightContext = lightContext,
+                jobKey = JOB_KEY,
+                inputData = mapOf("songId" to entity.songId),
+                tag = entity.songId,
+            )
+        }
     }
 
     fun localFile(lightContext: SealedLightContext, songId: String, suffix: String = "mp3"): File? {
@@ -119,6 +155,12 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
         val destination = File(lightContext.filesDir, "downloads").apply { mkdirs() }
             .let { File(it, "$songId.${track.suffix ?: "mp3"}") }
 
+        // Read before the attempt, not in the catch block — a WorkManager retry is a
+        // fresh invocation of this same handler, so attemptCount has to be persisted
+        // between calls rather than tracked in a local var (nothing here survives
+        // across retries except what's written to the DB).
+        val previousAttempts = db.downloadDao().getBySongId(songId)?.attemptCount ?: 0
+
         return@handler try {
             // Ktor/CIO, not java.net.URL(...).openStream() — the latter goes through
             // the platform's default HttpURLConnection, which (like OkHttp) enforces
@@ -147,6 +189,32 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             android.util.Log.e(tag, "download failed for songId=$songId", e)
             AppLogger.e(tag, "download failed for songId=$songId", e)
             destination.delete()
-            LightJobResult.Retry // transient (network) failure — let WorkManager back off and retry
+
+            val attempt = previousAttempts + 1
+            if (attempt >= DownloadRepository.MAX_DOWNLOAD_ATTEMPTS) {
+                db.downloadDao().upsert(
+                    DownloadEntity(
+                        songId = songId,
+                        localFilePath = null,
+                        status = DownloadStatus.FAILED,
+                        queuedAtEpochMs = System.currentTimeMillis(),
+                        completedAtEpochMs = null,
+                        attemptCount = attempt,
+                    ),
+                )
+                LightJobResult.Error() // exhausted — stop WorkManager's own retries too, let the user retry from the UI
+            } else {
+                db.downloadDao().upsert(
+                    DownloadEntity(
+                        songId = songId,
+                        localFilePath = null,
+                        status = DownloadStatus.QUEUED,
+                        queuedAtEpochMs = System.currentTimeMillis(),
+                        completedAtEpochMs = null,
+                        attemptCount = attempt,
+                    ),
+                )
+                LightJobResult.Retry // transient (network) failure — let WorkManager back off and retry
+            }
         }
     }

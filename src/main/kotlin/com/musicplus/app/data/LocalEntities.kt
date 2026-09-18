@@ -78,6 +78,11 @@ data class DownloadEntity(
     val status: DownloadStatus,
     val queuedAtEpochMs: Long,
     val completedAtEpochMs: Long?,
+    // How many times downloadTrack has tried and failed this song since it was
+    // last (re-)queued — see DownloadRepository's MAX_DOWNLOAD_ATTEMPTS. Reset
+    // to 0 on every fresh enqueue (manual retry, or the app-start retryFailed()
+    // sweep), same convention PendingMutationEntity.attemptCount already uses.
+    val attemptCount: Int = 0,
 )
 
 /** The persisted "now playing" queue, so it survives process death / a restart. */
