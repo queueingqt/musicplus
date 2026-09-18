@@ -72,6 +72,15 @@ object AppGraph {
         appScope.launch {
             appSettingsRepository.showAlbumArtwork.collect { AppDisplayPrefs.setShowAlbumArtwork(it) }
         }
+        appScope.launch {
+            appSettingsRepository.streamQualityWifi.collect { AppQualityPrefs.setStreamQualityWifi(it) }
+        }
+        appScope.launch {
+            appSettingsRepository.streamQualityCellular.collect { AppQualityPrefs.setStreamQualityCellular(it) }
+        }
+        appScope.launch {
+            appSettingsRepository.downloadQuality.collect { AppQualityPrefs.setDownloadQuality(it) }
+        }
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         val database = MusicPlusDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible

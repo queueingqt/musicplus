@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppQualityPrefs
 import com.musicplus.app.data.AppSettingsRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -22,9 +23,7 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -47,12 +46,18 @@ class QualitySettingsScreenViewModel(
     private val appSettingsRepository: AppSettingsRepository,
 ) : LightViewModel<Unit>() {
 
-    val wifiQuality: StateFlow<Int?> = appSettingsRepository.streamQualityWifi
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    val cellularQuality: StateFlow<Int?> = appSettingsRepository.streamQualityCellular
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    val downloadQuality: StateFlow<Int?> = appSettingsRepository.downloadQuality
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    // AppQualityPrefs, not appSettingsRepository's raw Flow — this screen gets a
+    // fresh ViewModel (and would get a fresh .stateIn seed) every time it's
+    // navigated to, and the DataStore Flow behind the repository needs a real
+    // disk read before it emits the actual value. Reading the raw Flow directly
+    // meant every fresh open flashed a wrong default (Original/320/192) before
+    // snapping to the real persisted value a frame or two later — reported live
+    // as the settings "glitching" on open. AppQualityPrefs is warmed once at app
+    // start (see AppGraph.build), so by the time this screen mounts it already
+    // reflects the real values — same fix already used for AppDisplayPrefs.
+    val wifiQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityWifi
+    val cellularQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityCellular
+    val downloadQuality: StateFlow<Int?> = AppQualityPrefs.downloadQuality
 
     fun setWifiQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityWifi(maxBitRateKbps) }
     fun setCellularQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityCellular(maxBitRateKbps) }
