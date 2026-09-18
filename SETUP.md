@@ -25,13 +25,13 @@ SDK checkout is a manual step rather than something `git clone` alone gives you.
    git clone https://github.com/lightphone/light-sdk.git
    ```
 2. Replace its placeholder `tool/` module with this repo's contents (or add this as
-   a new sibling module — if you do that instead, add `include(":lightwave")` next
+   a new sibling module — if you do that instead, add `include(":musicplus")` next
    to the existing `include(":tool", ...)` line in the clone's `settings.gradle.kts`,
    and update this repo's `build.gradle.kts` `project(":sdk:...")` paths if the
    module ends up at a different depth than `tool/` was):
    ```
    rm -rf light-sdk/tool
-   cp -r lightwave light-sdk/tool
+   cp -r musicplus light-sdk/tool
    ```
 3. Build:
    ```
