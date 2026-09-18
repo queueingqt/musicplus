@@ -81,11 +81,11 @@ class ArtistDetailScreenViewModel(
         viewModelScope.launch { syncQueueRepository.setArtistFavorite(artistId, !isFavorite) }
     }
 
-    fun albumDownloadState(albumId: String): Flow<AlbumDownloadState> =
-        observeAlbumDownloadState(libraryRepository, downloadRepository, albumId)
+    fun albumDownloadState(albumId: String): Flow<TrackListDownloadState> =
+        observeTrackListDownloadState(libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
 
-    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): AlbumDownloadState =
-        toggleAlbumDownload(lightContext, libraryRepository, downloadRepository, albumId)
+    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): TrackListDownloadState =
+        toggleTrackListDownload(lightContext, libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
 
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
 
@@ -161,7 +161,7 @@ class ArtistDetailScreen(
             ) {
                 items(albums, key = { it.id }) { album ->
                     val downloadState by remember(album.id) { viewModel.albumDownloadState(album.id) }
-                        .collectAsState(initial = AlbumDownloadState.NONE)
+                        .collectAsState(initial = TrackListDownloadState.NONE)
                     AlbumRow(
                         lightContext = lightContext,
                         album = album,
@@ -186,9 +186,9 @@ class ArtistDetailScreen(
                                         favoriteActionItem(album.isFavorite) { favorite ->
                                             viewModel.setAlbumFavorite(album.id, favorite)
                                         },
-                                        albumDownloadActionItem(downloadState) { viewModel.toggleAlbumDownload(lightContext, album.id) }.copy(
+                                        trackListDownloadActionItem("album", downloadState) { viewModel.toggleAlbumDownload(lightContext, album.id) }.copy(
                                             liveUpdates = viewModel.albumDownloadState(album.id).map { s ->
-                                                albumDownloadActionItem(s) { viewModel.toggleAlbumDownload(lightContext, album.id) }
+                                                trackListDownloadActionItem("album", s) { viewModel.toggleAlbumDownload(lightContext, album.id) }
                                             },
                                         ),
                                         addToQueueItem,

@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,11 +20,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
@@ -32,17 +35,20 @@ import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class PlaylistListScreenViewModel(
     private val playlistRepository: PlaylistRepository,
     private val syncQueueRepository: SyncQueueRepository,
+    private val downloadRepository: DownloadRepository,
 ) : LightViewModel<Unit>() {
 
     private val _query = MutableStateFlow("")
@@ -73,6 +79,13 @@ class PlaylistListScreenViewModel(
         return id
     }
 
+    /** See TrackListDownload.kt — shared with the album-level download rows, just sourced from a playlist's own tracks instead. */
+    fun playlistDownloadState(playlistId: String): Flow<TrackListDownloadState> =
+        observeTrackListDownloadState(playlistRepository.observeTracks(playlistId), downloadRepository)
+
+    suspend fun togglePlaylistDownload(lightContext: SealedLightContext, playlistId: String): TrackListDownloadState =
+        toggleTrackListDownload(lightContext, playlistRepository.observeTracks(playlistId), downloadRepository)
+
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     var scrollIndex = 0
     var scrollOffset = 0
@@ -85,7 +98,7 @@ class PlaylistListScreen(activity: SealedLightActivity) :
 
     override fun createViewModel(): PlaylistListScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistListScreenViewModel(graph.playlistRepository, graph.syncQueueRepository)
+        return PlaylistListScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.downloadRepository)
     }
 
     @Composable
@@ -126,9 +139,31 @@ class PlaylistListScreen(activity: SealedLightActivity) :
             }
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 items(playlists, key = { it.id }) { playlist ->
-                    PlaylistRow(playlist) {
-                        navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) })
-                    }
+                    val downloadState by remember(playlist.id) { viewModel.playlistDownloadState(playlist.id) }
+                        .collectAsState(initial = TrackListDownloadState.NONE)
+                    PlaylistRow(
+                        playlist = playlist,
+                        onClick = { navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) }) },
+                        onOpenActions = {
+                            navigateTo({ a ->
+                                ActionsMenuScreen(
+                                    activity = a,
+                                    subtitle = playlist.name,
+                                    items = listOf(
+                                        trackListDownloadActionItem("playlist", downloadState) {
+                                            viewModel.togglePlaylistDownload(lightContext, playlist.id)
+                                        }.copy(
+                                            liveUpdates = viewModel.playlistDownloadState(playlist.id).map { s ->
+                                                trackListDownloadActionItem("playlist", s) {
+                                                    viewModel.togglePlaylistDownload(lightContext, playlist.id)
+                                                }
+                                            },
+                                        ),
+                                    ),
+                                )
+                            })
+                        },
+                    )
                 }
             }
         }
@@ -136,11 +171,11 @@ class PlaylistListScreen(activity: SealedLightActivity) :
 }
 
 @Composable
-private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
+private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit, onOpenActions: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .lightClickable(onClick = onClick)
+            .lightCombinedClickable(onClick = onClick, onLongClick = onOpenActions)
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
     ) {
         LightText(text = playlist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)

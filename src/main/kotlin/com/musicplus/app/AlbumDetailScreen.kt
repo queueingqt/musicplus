@@ -67,11 +67,12 @@ class AlbumDetailScreenViewModel(
         .map { albums -> albums.find { it.id == albumId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialAlbum)
 
-    // See AlbumDownload.kt (shared with AlbumListScreen/ArtistDetailScreen's
-    // own album-level download rows) for why IN_PROGRESS is its own state.
-    val albumDownloadState: StateFlow<AlbumDownloadState> =
-        observeAlbumDownloadState(libraryRepository, downloadRepository, albumId)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlbumDownloadState.NONE)
+    // See TrackListDownload.kt (shared with AlbumListScreen/ArtistDetailScreen's
+    // own album-level download rows, and PlaylistListScreen's playlist ones)
+    // for why IN_PROGRESS is its own state.
+    val albumDownloadState: StateFlow<TrackListDownloadState> =
+        observeTrackListDownloadState(libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrackListDownloadState.NONE)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { libraryRepository.refreshAlbumDetail(albumId) }
@@ -101,9 +102,9 @@ class AlbumDetailScreenViewModel(
             }
         }
 
-    /** See AlbumDownload.kt's [toggleAlbumDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows. */
-    suspend fun toggleAlbumDownload(lightContext: SealedLightContext): AlbumDownloadState =
-        toggleAlbumDownload(lightContext, libraryRepository, downloadRepository, albumId)
+    /** See TrackListDownload.kt's [toggleTrackListDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows, and PlaylistListScreen's playlist ones. */
+    suspend fun toggleAlbumDownload(lightContext: SealedLightContext): TrackListDownloadState =
+        toggleTrackListDownload(lightContext, libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
 }
 
 /**
@@ -202,9 +203,9 @@ class AlbumDetailScreen(
                                             favoriteActionItem(isFavorite) { favorite ->
                                                 AppGraph.from(lightContext).syncQueueRepository.setAlbumFavorite(albumId, favorite)
                                             },
-                                            albumDownloadActionItem(albumDownloadState) { viewModel.toggleAlbumDownload(lightContext) }.copy(
+                                            trackListDownloadActionItem("album", albumDownloadState) { viewModel.toggleAlbumDownload(lightContext) }.copy(
                                                 liveUpdates = viewModel.albumDownloadState.map { s ->
-                                                    albumDownloadActionItem(s) { viewModel.toggleAlbumDownload(lightContext) }
+                                                    trackListDownloadActionItem("album", s) { viewModel.toggleAlbumDownload(lightContext) }
                                                 },
                                             ),
                                             addAlbumToQueueItem,

@@ -59,9 +59,10 @@ class PlaybackRepository(
     private val shuffle = MutableStateFlow(false)
     private val repeatMode = MutableStateFlow(RepeatMode.OFF)
 
-    // The upcoming-track id order captured the moment shuffle turns on, so
-    // turning it back off can restore it — see setShuffle's doc. Null means
-    // "not currently shuffled" (nothing to restore).
+    // The whole queue's id order captured the moment shuffle turns on
+    // (including already-played tracks), so turning it back off can restore
+    // it exactly — see setShuffle's doc. Null means "not currently shuffled"
+    // (nothing to restore).
     private val preShuffleOrder = MutableStateFlow<List<String>?>(null)
 
     // Set synchronously by play()/rebuildQueue() at the same moment as `queue`,
@@ -544,11 +545,19 @@ class PlaybackRepository(
      * pathological source (duration that never resolves) from hanging a queue
      * edit forever; on timeout this falls through to the old (broken-for-that-
      * case) behavior rather than getting stuck.
+     *
+     * [explicitIndex]: for the common case (add/remove/move a track elsewhere
+     * in the queue), the currently playing item's *position* in [newQueue] is
+     * unchanged, so it's fine to re-derive it from the real player's own
+     * current index. [applyShuffle] is the one caller where that's false —
+     * shuffling/unshuffling moves the currently playing track to a different
+     * index in [newQueue] on purpose, so it passes the real new index directly
+     * instead of letting this re-derive the wrong (stale, pre-shuffle) one.
      */
-    private suspend fun rebuildQueue(newQueue: List<Track>) {
+    private suspend fun rebuildQueue(newQueue: List<Track>, explicitIndex: Int? = null) {
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return
-        val currentIndex = player.currentMediaItemIndex.value.coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
+        val currentIndex = explicitIndex ?: player.currentMediaItemIndex.value.coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
         queue.value = newQueue
@@ -622,16 +631,23 @@ class PlaybackRepository(
     }
 
     /**
-     * Shuffle-from-current-track-forward, not reshuffle-the-whole-queue:
-     * whatever's currently playing (and anything already played) stays put,
-     * only the *upcoming* portion gets shuffled — matches how the queue's
-     * own remove/reorder actions already treat the current track as
-     * untouchable. The pre-shuffle order of that upcoming portion is
-     * captured so disabling shuffle restores it exactly, rather than
-     * leaving the queue permanently reshuffled; a track added or removed
-     * while shuffled is handled gracefully on restore (dropped if it's
-     * gone, appended at the end if it's new and wasn't in the captured
-     * order).
+     * Shuffles the *whole* queue — already-played tracks included, not just
+     * upcoming ones — so an already-played track can come back around again
+     * in the new order. Only the track actively playing right now stays put
+     * (it can't retroactively un-play), moving to the front of the shuffled
+     * order with everything else (before and after it alike) reshuffled
+     * behind it. Explicit correction, 2026-09-18: an earlier version only
+     * shuffled the upcoming portion and left already-played tracks locked in
+     * place, which wasn't what was asked for.
+     *
+     * The pre-shuffle order of the *entire* queue is captured so disabling
+     * shuffle restores it exactly — the currently playing track's index is
+     * recalculated to wherever it actually falls in that restored order
+     * (which may once again have tracks "before" it, now that the whole
+     * queue round-trips through shuffle together) rather than staying
+     * pinned to the front. A track added or removed while shuffled is
+     * handled gracefully on restore (dropped if it's gone, appended at the
+     * end if it's new and wasn't in the captured order).
      *
      * Mutually exclusive with REPEAT_TRACK (see [setRepeatMode]'s doc) —
      * turning shuffle on while repeating one track forever drops repeat back
@@ -654,19 +670,21 @@ class PlaybackRepository(
         val current = queue.value
         val currentIndex = player.currentMediaItemIndex.value.coerceIn(0, (current.size - 1).coerceAtLeast(0))
         if (currentIndex !in current.indices) return
-        val upcoming = current.drop(currentIndex + 1)
-        if (upcoming.isEmpty()) return // nothing to shuffle or restore
-        val reordered = if (enabled) {
-            preShuffleOrder.value = upcoming.map { it.id }
-            upcoming.shuffled()
+        val currentTrack = current[currentIndex]
+        val rest = current.filterIndexed { i, _ -> i != currentIndex }
+        if (rest.isEmpty()) return // nothing to shuffle or restore — only one track in the queue
+        if (enabled) {
+            preShuffleOrder.value = current.map { it.id }
+            rebuildQueue(listOf(currentTrack) + rest.shuffled(), explicitIndex = 0)
         } else {
             val order = preShuffleOrder.value
             preShuffleOrder.value = null
             if (order == null) return // shuffle was never really applied (e.g. queue was empty when toggled) — nothing to restore
-            val byId = upcoming.associateBy { it.id }
-            order.mapNotNull { byId[it] } + upcoming.filter { it.id !in order }
+            val byId = current.associateBy { it.id }
+            val restored = order.mapNotNull { byId[it] } + current.filter { it.id !in order }
+            val newIndex = restored.indexOfFirst { it.id == currentTrack.id }.coerceAtLeast(0)
+            rebuildQueue(restored, explicitIndex = newIndex)
         }
-        rebuildQueue(current.take(currentIndex + 1) + reordered)
     }
 
     /**
