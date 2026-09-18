@@ -6,7 +6,7 @@ from a self-hosted [Navidrome](https://www.navidrome.org/) server (or any other
 Subsonic-API-compatible server — Gonic, Airsonic, etc.).
 
 **Fully offline-capable.** Download any song, album, or playlist for offline
-listening — long-press it and choose Download. Favorites, playlist edits, and
+listening. Favorites, playlist edits, and
 everything else made while offline sync automatically the next time you're
 connected.
 
@@ -29,8 +29,7 @@ connected.
 - **Playlists** — create, rename, delete, and reorder tracks
 - **Download for offline use** — albums, playlists, and individual songs, via
   long-press
-- Album art, cached locally
-- Local library cache so the last-synced view works offline
+- Album art and lyrics automatically saved locally for offline use as you load them.
 
 <p float="left">
   <img src="screenshots/home.png" width="200" alt="Main menu: Albums, Artists, Songs, Playlists, Queue, Favorites, Settings" />
@@ -55,23 +54,20 @@ Albums, Artists, Songs, Search, Favorites, and Playlists.
   turning it back off restores the exact original order
 - **Repeat** — off, repeat queue, or repeat one track (shuffle and repeat-one
   are mutually exclusive; repeat-queue and shuffle can run together)
-- A loading indicator shows while a track is loading
 - **The queue survives an app restart** — song order, current track, position,
   and shuffle/repeat mode are all restored
 - **Queue screen** — the entire queue, with per-row reorder and remove, a
   "clear queue" action that leaves the current track playing, and tap-to-jump
   to any track
-- **Lyrics** — synced (current line highlighted as it plays) or plain text
-- Works with plain `http://` servers as well as `https://`
+- **Lyrics** — synced and current line highlighted as it plays - tap on a line to jump to that part of the song
 
 ### Everywhere else
 
-- A persistent mini-player on every screen except Now Playing, tapping it opens
-  Now Playing or the full queue
-- Scroll position is preserved when navigating into a list and back
+- A persistent mini-player
+- Now Playing opens by tapping the mini-player
 - Server connection is configurable in Settings, with support for saving more
   than one server
-- Preferences: show/hide album artwork, haptic feedback, debug logging
+- Preferences: show/hide album artwork, haptic feedback
 
 ## How it's built
 
