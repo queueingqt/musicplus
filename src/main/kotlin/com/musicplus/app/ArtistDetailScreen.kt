@@ -170,17 +170,11 @@ class ArtistDetailScreen(
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
                         onOpenActions = {
                             navigateTo({ a ->
-                                lateinit var addToQueueItem: ActionMenuItem
-                                addToQueueItem = ActionMenuItem(
-                                    icon = LightIcons.ADD,
-                                    label = "Add album to queue",
-                                    onSelect = ActionMenuSelection.Perform {
-                                        val tracks = viewModel.tracksForAlbum(album.id)
-                                        val graph = AppGraph.from(lightContext)
-                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(tracks)
-                                        addToQueueItem
-                                    },
-                                )
+                                val addToQueueItem = addToQueueActionItem("Add album to queue") {
+                                    val tracks = viewModel.tracksForAlbum(album.id)
+                                    val graph = AppGraph.from(lightContext)
+                                    PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(tracks)
+                                }
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = album.name,

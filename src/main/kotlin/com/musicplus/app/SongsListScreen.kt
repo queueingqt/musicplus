@@ -115,29 +115,6 @@ class SongsListScreen(private val activity: SealedLightActivity) :
         val tracks by viewModel.tracks.collectAsState()
         val filter by viewModel.filter.collectAsState()
 
-        fun downloadIcon(status: DownloadStatus?) = when (status) {
-            DownloadStatus.COMPLETE -> LightIcons.DOWNLOADED_ARROW
-            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.REFRESH
-            DownloadStatus.FAILED, null -> LightIcons.DOWNLOAD_ARROW
-        }
-
-        fun downloadLabel(status: DownloadStatus?): String = when (status) {
-            null -> "Download"
-            DownloadStatus.QUEUED -> "Queued — tap to cancel"
-            DownloadStatus.DOWNLOADING -> "Downloading — tap to cancel"
-            DownloadStatus.COMPLETE -> "Downloaded — tap to remove"
-            DownloadStatus.FAILED -> "Failed — tap to retry"
-        }
-
-        fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
-            key = "download",
-            icon = downloadIcon(status),
-            label = downloadLabel(status),
-            onSelect = ActionMenuSelection.Perform {
-                trackDownloadActionItem(track, viewModel.toggleDownload(lightContext, track, status))
-            },
-        )
-
         MusicPlusScaffold(
             topBar = {
                 LightTopBar(
@@ -196,16 +173,10 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                             },
                             onOpenActions = {
                                 navigateTo({ a ->
-                                    lateinit var addToQueueItem: ActionMenuItem
-                                    addToQueueItem = ActionMenuItem(
-                                        icon = LightIcons.ADD,
-                                        label = "Add to queue",
-                                        onSelect = ActionMenuSelection.Perform {
-                                            val graph = AppGraph.from(lightContext)
-                                            PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
-                                            addToQueueItem
-                                        },
-                                    )
+                                    val addToQueueItem = addToQueueActionItem("Add to queue") {
+                                        val graph = AppGraph.from(lightContext)
+                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
+                                    }
                                     ActionsMenuScreen(
                                         activity = a,
                                         subtitle = track.title,
@@ -221,8 +192,14 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                                                     navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
                                                 },
                                             ),
-                                            trackDownloadActionItem(track, status?.status).copy(
-                                                liveUpdates = viewModel.downloadStatus(track.id).map { trackDownloadActionItem(track, it?.status) },
+                                            trackDownloadActionItem(status?.status) { newStatus ->
+                                                viewModel.toggleDownload(lightContext, track, newStatus)
+                                            }.copy(
+                                                liveUpdates = viewModel.downloadStatus(track.id).map { entity ->
+                                                    trackDownloadActionItem(entity?.status) { newStatus ->
+                                                        viewModel.toggleDownload(lightContext, track, newStatus)
+                                                    }
+                                                },
                                             ),
                                         ),
                                     )
@@ -275,11 +252,7 @@ private fun SongRow(
         }
         if (downloadStatus != null) {
             LightIcon(
-                icon = when (downloadStatus) {
-                    DownloadStatus.COMPLETE -> LightIcons.DOWNLOADED_ARROW
-                    DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.REFRESH
-                    DownloadStatus.FAILED -> LightIcons.DOWNLOAD_ARROW
-                },
+                icon = downloadStatusIcon(downloadStatus),
                 size = 1.2f,
                 contentDescription = "Download status",
                 modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),

@@ -149,15 +149,6 @@ class PlaylistDetailScreen(
             }
         }
 
-        fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
-            key = "download",
-            icon = if (status == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
-            label = downloadStatusLabel(status),
-            onSelect = ActionMenuSelection.Perform {
-                trackDownloadActionItem(track, viewModel.toggleDownload(lightContext, track, status))
-            },
-        )
-
         MusicPlusScaffold(
             topBar = {
                 LightTopBar(
@@ -242,8 +233,14 @@ class PlaylistDetailScreen(
                                         favoriteActionItem(track.isFavorite) { favorite ->
                                             AppGraph.from(lightContext).syncQueueRepository.setTrackFavorite(track.id, favorite)
                                         },
-                                        trackDownloadActionItem(track, status?.status).copy(
-                                            liveUpdates = viewModel.downloadStatus(track.id).map { trackDownloadActionItem(track, it?.status) },
+                                        trackDownloadActionItem(status?.status) { newStatus ->
+                                            viewModel.toggleDownload(lightContext, track, newStatus)
+                                        }.copy(
+                                            liveUpdates = viewModel.downloadStatus(track.id).map { entity ->
+                                                trackDownloadActionItem(entity?.status) { newStatus ->
+                                                    viewModel.toggleDownload(lightContext, track, newStatus)
+                                                }
+                                            },
                                         ),
                                         ActionMenuItem(
                                             icon = LightIcons.CLOSE,
@@ -317,9 +314,14 @@ private fun PlaylistTrackRow(
                     modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
                 )
             }
+            // This used to distinguish only COMPLETE vs. everything else, so a
+            // track actively downloading inside a playlist showed the exact same
+            // icon as one not yet started — downloadStatusIcon (TrackActionItems.kt)
+            // is the 3-state version every other screen with a per-track download
+            // glyph (AlbumDetailScreen, SongsListScreen) already used.
             if (downloadStatus != null) {
                 LightIcon(
-                    icon = if (downloadStatus == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
+                    icon = downloadStatusIcon(downloadStatus),
                     size = 1.2f,
                     contentDescription = downloadStatusLabel(downloadStatus),
                     modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
@@ -350,13 +352,4 @@ private fun PlaylistTrackRow(
             }
         }
     }
-}
-
-/** Tap semantics: QUEUED/DOWNLOADING/COMPLETE -> stop or remove; FAILED/null -> start. See AlbumDetailScreen's identical helper. */
-private fun downloadStatusLabel(status: DownloadStatus?): String = when (status) {
-    null -> "Download"
-    DownloadStatus.QUEUED -> "Queued — tap to cancel"
-    DownloadStatus.DOWNLOADING -> "Downloading — tap to cancel"
-    DownloadStatus.COMPLETE -> "Downloaded — tap to remove"
-    DownloadStatus.FAILED -> "Failed — tap to retry"
 }
