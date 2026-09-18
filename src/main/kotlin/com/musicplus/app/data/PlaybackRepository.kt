@@ -603,8 +603,36 @@ class PlaybackRepository(
 
     fun skipBack() = player.skipBack()
     fun skipForward() = player.skipForward()
-    fun skipToNext() = player.skipToNext()
-    fun skipToPrevious() = player.skipToPrevious()
+
+    /**
+     * REPEAT_QUEUE's wrap-to-start only happens automatically today via
+     * [nearEndCompletionWatcher] detecting the last track nearing its own
+     * natural end — `player.skipToNext()` is a plain call into the SDK's
+     * player, which has no idea REPEAT_QUEUE exists at all, so tapping "next"
+     * on the last track did nothing (the underlying player is already at the
+     * end of its real queue). Reported live, 2026-09-18. Every other case
+     * (not on the last track, or repeat isn't REPEAT_QUEUE) still just
+     * defers to the real player's own skip.
+     */
+    fun skipToNext() {
+        val current = queue.value
+        if (repeatMode.value == RepeatMode.REPEAT_QUEUE && player.currentMediaItemIndex.value == current.lastIndex) {
+            scope.launch { play(current, 0) }
+        } else {
+            player.skipToNext()
+        }
+    }
+
+    /** Same fix as [skipToNext], the other direction — tapping "previous" on the first track under REPEAT_QUEUE wraps to the last one instead of doing nothing. */
+    fun skipToPrevious() {
+        val current = queue.value
+        if (repeatMode.value == RepeatMode.REPEAT_QUEUE && player.currentMediaItemIndex.value == 0) {
+            scope.launch { play(current, current.lastIndex) }
+        } else {
+            player.skipToPrevious()
+        }
+    }
+
     fun seekTo(ms: Long) = player.seekTo(ms)
 
     /**
