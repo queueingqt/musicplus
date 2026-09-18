@@ -58,10 +58,17 @@ class PlayerScreenViewModel(
     // instantly for any track whose album has already been viewed, with no
     // fetch at all — falls back to the track's own art only when the album
     // isn't resolvable (e.g. arriving via search with no album cached yet).
+    // Seeded from the same synchronous snapshot `state` uses, not null — every
+    // navigation to PlayerScreen (even replaying the identical track) creates a
+    // fresh ViewModel, and this StateFlow's initial value otherwise has nothing
+    // to do with whether the art was already cached a moment ago. Confirmed
+    // on-device 2026-09-18: even the *same* track played twice in a row still
+    // flashed placeholder-then-art here, purely from this cold start — the
+    // album-art-sharing fix above only helps once this first value resolves.
     val albumArtUrl: StateFlow<String?> = combine(state, libraryRepository.observeAlbums()) { s, albums ->
         val track = s.currentTrack
         albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot().currentTrack?.coverArtUrl)
 
     fun togglePlayPause() = playback.togglePlayPause()
     fun skipBack() = playback.skipBack()
@@ -251,7 +258,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 variant = LightTextVariant.Heading,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.15f.gridUnitsAsDp()),
             )
             if (upcoming.isEmpty()) {
                 LightText(
