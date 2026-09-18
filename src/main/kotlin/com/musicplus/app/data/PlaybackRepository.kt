@@ -122,6 +122,15 @@ class PlaybackRepository(
     // process, restoring old state to overwrite it is never correct again.
     private var hasStartedRealPlay = false
 
+    // Bumped synchronously in beginPlay(), alongside hasStartedRealPlay —
+    // lets play()'s background queue-extension (see extendToFullQueue's doc)
+    // recognize it's been superseded by a newer play()/beginPlay() call and
+    // bail instead of clobbering it. Deliberately not a `queue.value`
+    // identity check: updateTrackFavorite() legitimately replaces `queue`
+    // with a new List (same tracks, one's isFavorite patched) for reasons
+    // that have nothing to do with superseding an in-flight play.
+    private var playGeneration = 0
+
     // Nested combines rather than one wide call — kotlinx.coroutines only has typed
     // `combine` overloads up to 5 flows; this keeps every step on solid ground
     // instead of reaching for the untyped Array<T> vararg overload.
@@ -406,23 +415,33 @@ class PlaybackRepository(
         )
     }
 
-    /** [albumArtUrl]: pass it when the caller already has it (e.g. playing a track from within an album screen) — see [currentAlbumArtUrl]'s doc for why. */
+    /**
+     * [albumArtUrl]: pass it when the caller already has it (e.g. playing a
+     * track from within an album screen) — see [currentAlbumArtUrl]'s doc for
+     * why.
+     *
+     * Issue #7: `setMediaQueue` takes every item's source resolved up front —
+     * there's no lazy/per-item resolution in the confirmed `LightAudioPlayer`
+     * API — so resolving the *whole* queue before this call, as an earlier
+     * version of `play()` did, meant a multi-track "play album" tap on a
+     * cleartext (http://) server (see `toAudioItem`: a full download per
+     * track) blocked audibly starting on downloading the entire album first,
+     * not just the track that was about to play. Loads just the starting
+     * track first instead — one file, so near-instant regardless of server
+     * scheme — and hands the rest of the queue to [extendToFullQueue] to fill
+     * in around it once the audio is already flowing.
+     */
     suspend fun play(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return // not configured — nothing playable
         beginPlay(tracks, startIndex, albumArtUrl)
+        val myGeneration = playGeneration
         isActivelyLoading.value = true
         try {
-            // setMediaQueue takes every item's source resolved up front — there's no
-            // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
-            // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
-            // playback starts, not just the starting track. Correct but not great UX for
-            // a multi-track queue on a cleartext server; tracked as a follow-up rather
-            // than solved here.
-            AppLogger.d("PlaybackRepository", "play(): resolving ${tracks.size} track(s), startIndex=$startIndex")
-            val items = tracks.map { it.toAudioItem(api) }
-            AppLogger.d("PlaybackRepository", "play(): all tracks resolved, calling setMediaQueue")
-            player.setMediaQueue(items, startIndex)
+            AppLogger.d("PlaybackRepository", "play(): resolving starting track (index=$startIndex of ${tracks.size})")
+            val startItem = tracks[startIndex].toAudioItem(api)
+            AppLogger.d("PlaybackRepository", "play(): starting track resolved, calling setMediaQueue")
+            player.setMediaQueue(listOf(startItem), 0)
             playerQueueLoaded.value = true
             player.play()
         } finally {
@@ -432,6 +451,44 @@ class PlaybackRepository(
         // statePersistenceWatcher's interval — cheap, and means a kill right
         // after starting a new track still resumes from roughly the right
         // place instead of wherever the *previous* track was.
+        persistScalarStateIfLoaded()
+
+        if (tracks.size > 1) {
+            scope.launch { extendToFullQueue(tracks, startIndex, api, myGeneration) }
+        }
+    }
+
+    /**
+     * Fills in the rest of [tracks] around the one track [play] already
+     * started audio flowing from — see [play]'s doc for why that's
+     * deliberately narrowed to one track first. Reuses [rebuildQueue]'s exact
+     * position/play-state-preserving swap (capture position + playing state,
+     * `setMediaQueue` the full list, seek back, resume if it was playing), so
+     * this carries the same known tradeoff issue #23 already documents for
+     * any `setMediaQueue` call mid-playback: a brief (~1/4-1/2s) audible
+     * pause when the fuller queue swaps in. Traded here for not blocking on
+     * the *whole* queue's download before any audio starts at all, which is
+     * the actual reported problem.
+     *
+     * [generation] is the [playGeneration] captured at the start of the
+     * [play] call this extends — checked before applying the resolved queue
+     * so a newer play()/beginPlay() that started (and finished) entirely
+     * while this was still resolving tracks doesn't get clobbered by a
+     * now-stale extension landing after it.
+     */
+    private suspend fun extendToFullQueue(tracks: List<Track>, startIndex: Int, api: SubsonicApi, generation: Int) {
+        val items = tracks.map { it.toAudioItem(api) }
+        if (playGeneration != generation) return // superseded while resolving — nothing to extend anymore
+        val savedPositionMs = player.positionMs.value
+        val wasPlaying = player.isPlaying.value
+        queue.value = tracks
+        pendingIndex.value = startIndex
+        player.setMediaQueue(items, startIndex)
+        withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
+            player.durationMs.first { it > 0L }
+        }
+        player.seekTo(savedPositionMs)
+        if (wasPlaying) player.play()
         persistScalarStateIfLoaded()
     }
 
@@ -456,6 +513,7 @@ class PlaybackRepository(
         // restoreFromDisk()'s doc. This has to win any race against it, not
         // just the `queue.value =` write two lines down.
         hasStartedRealPlay = true
+        playGeneration++
         queue.value = tracks
         pendingIndex.value = startIndex
         currentAlbumArtUrl.value = albumArtUrl
