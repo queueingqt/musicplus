@@ -1,24 +1,30 @@
 package com.musicplus.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import com.musicplus.app.data.AppHaptics
 import com.musicplus.app.data.PlaybackRepositoryHolder
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
+import com.thelightphone.sdk.ui.LocalHapticsEnabled
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 
@@ -55,31 +61,44 @@ fun MusicPlusScaffold(
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    MusicPlusTheme {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                // Belt-and-suspenders, not itself the on-device-confirmed fix (see
-                // MusicPlusTheme.kt's doc comment for that — it's the LightTheme
-                // wrap, needed for Surface-based Material3 components like
-                // LightTextInputEditor). A plain Column doesn't pick up
-                // MaterialTheme's colorScheme.background on its own the way
-                // Surface/Scaffold-style components do, so this paints it
-                // explicitly rather than assuming whatever's behind it (the
-                // window/decor background) already matches.
-                .background(LightThemeTokens.colors.background),
-        ) {
-            topBar()
+    // App-local haptics override (issue #21) — authoritative on its own, not
+    // ANDed with the OS-level LightActivity root's own LocalHapticsEnabled
+    // value. An earlier version ANDed the two (app can narrow, never widen
+    // past system), which is the more conservative accessibility-respecting
+    // choice, but confirmed on-device it meant the app's own toggle silently
+    // did nothing whenever the phone's system-wide Haptic Feedback setting
+    // happened to be off (logged: system=false app=true combined=false, zero
+    // vibration) — reported live as broken, not as expected layering. Someone
+    // toggling this on in Music+'s own Preferences expects it to just work.
+    val appHapticsEnabled by AppHaptics.enabled.collectAsState()
+
+    CompositionLocalProvider(LocalHapticsEnabled provides appHapticsEnabled) {
+        MusicPlusTheme {
             Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                content = content,
-            )
-            if (showMiniPlayer) {
-                MiniPlayerBar(onClick = onMiniPlayerClick, onQueueClick = onQueueClick)
+                    .fillMaxSize()
+                    // Belt-and-suspenders, not itself the on-device-confirmed fix (see
+                    // MusicPlusTheme.kt's doc comment for that — it's the LightTheme
+                    // wrap, needed for Surface-based Material3 components like
+                    // LightTextInputEditor). A plain Column doesn't pick up
+                    // MaterialTheme's colorScheme.background on its own the way
+                    // Surface/Scaffold-style components do, so this paints it
+                    // explicitly rather than assuming whatever's behind it (the
+                    // window/decor background) already matches.
+                    .background(LightThemeTokens.colors.background),
+            ) {
+                topBar()
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    content = content,
+                )
+                if (showMiniPlayer) {
+                    MiniPlayerBar(onClick = onMiniPlayerClick, onQueueClick = onQueueClick)
+                }
+                bottomBar()
             }
-            bottomBar()
         }
     }
 }
@@ -108,18 +127,23 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
             .background(LightThemeTokens.colors.contentSecondary.copy(alpha = 0.12f))
             .lightClickable(onClick = onClick)
             .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+        horizontalArrangement = Arrangement.spacedBy(0.5f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LightIcon(
-            icon = LightIcons.LIST,
-            size = 1.5f,
-            contentDescription = "View queue",
-            // Own lightClickable, not the row's onClick — this needs to open
-            // QueueScreen specifically, not PlayerScreen like the rest of the row.
+        Box(
+            // Fixed touch-target size around the icon, not just trailing
+            // padding — the icon glyph alone (1.5 grid units) is a small,
+            // easy-to-miss tap target, and three of these clustered together
+            // with only one-sided padding left too little gap between them.
+            // Reported live: the skip icon read as unresponsive/too close to
+            // play, traced to exactly this.
             modifier = Modifier
-                .lightClickable(onClick = onQueueClick)
-                .padding(end = 0.5f.gridUnitsAsDp()),
-        )
+                .size(2.5f.gridUnitsAsDp())
+                .lightClickable(onClick = onQueueClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightIcon(icon = LightIcons.LIST, size = 1.5f, contentDescription = "View queue")
+        }
         Column(modifier = Modifier.weight(1f)) {
             LightText(
                 text = track.title,
@@ -135,19 +159,25 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        LightIcon(
-            icon = LightIcons.FAST_FORWARD,
-            size = 1.5f,
-            contentDescription = "Next track",
+        Box(
             modifier = Modifier
-                .lightClickable { playback.skipToNext() }
-                .padding(end = 0.5f.gridUnitsAsDp()),
-        )
-        LightIcon(
-            icon = if (state.isPlaying) LightIcons.PAUSE else LightIcons.PLAY,
-            size = 1.5f,
-            contentDescription = if (state.isPlaying) "Pause" else "Play",
-            modifier = Modifier.lightClickable { playback.togglePlayPause() },
-        )
+                .size(2.5f.gridUnitsAsDp())
+                .lightClickable { playback.skipToNext() },
+            contentAlignment = Alignment.Center,
+        ) {
+            LightIcon(icon = LightIcons.FAST_FORWARD, size = 1.5f, contentDescription = "Next track")
+        }
+        Box(
+            modifier = Modifier
+                .size(2.5f.gridUnitsAsDp())
+                .lightClickable { playback.togglePlayPause() },
+            contentAlignment = Alignment.Center,
+        ) {
+            LightIcon(
+                icon = if (state.isPlaying) LightIcons.PAUSE else LightIcons.PLAY,
+                size = 1.5f,
+                contentDescription = if (state.isPlaying) "Pause" else "Play",
+            )
+        }
     }
 }

@@ -53,6 +53,13 @@ class PreferencesScreenViewModel(
     fun toggleDebugLogging() {
         viewModelScope.launch { appSettingsRepository.setDebugLoggingEnabled(!debugLoggingEnabled.value) }
     }
+
+    val hapticFeedbackEnabled: StateFlow<Boolean> = appSettingsRepository.hapticFeedbackEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun toggleHapticFeedback() {
+        viewModelScope.launch { appSettingsRepository.setHapticFeedbackEnabled(!hapticFeedbackEnabled.value) }
+    }
 }
 
 class PreferencesScreen(activity: SealedLightActivity) :
@@ -67,6 +74,7 @@ class PreferencesScreen(activity: SealedLightActivity) :
     override fun Content() {
         val showAlbumArtwork by viewModel.showAlbumArtwork.collectAsState()
         val debugLoggingEnabled by viewModel.debugLoggingEnabled.collectAsState()
+        val hapticFeedbackEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
 
         MusicPlusScaffold(
             topBar = {
@@ -85,43 +93,39 @@ class PreferencesScreen(activity: SealedLightActivity) :
                     onToggle = { viewModel.toggleShowAlbumArtwork() },
                 )
                 ToggleRow(
+                    label = "Haptic feedback",
+                    isOn = hapticFeedbackEnabled,
+                    onToggle = { viewModel.toggleHapticFeedback() },
+                )
+                // Always last — the least likely to be touched day-to-day.
+                ToggleRow(
                     label = "Debug logging",
                     isOn = debugLoggingEnabled,
                     onToggle = { viewModel.toggleDebugLogging() },
-                    caption = "Saves crashes/errors to a log file on the device (files/logs/app.log), pullable later over adb for troubleshooting. Crashes are always captured regardless of this toggle.",
                 )
             }
         }
     }
 }
 
+// Icon on the left, before the label — not trailing. Confirmed against the
+// phone's own LightOS Settings app (General > Haptic Feedback): its toggle
+// icon leads the label the same way Airplane Mode's key icon does.
 @Composable
-private fun ToggleRow(label: String, isOn: Boolean, onToggle: () -> Unit, caption: String? = null) {
-    androidx.compose.foundation.layout.Column(
+private fun ToggleRow(label: String, isOn: Boolean, onToggle: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onToggle)
             .padding(vertical = 1f.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LightText(text = label, variant = LightTextVariant.Copy)
-            LightIcon(
-                icon = if (isOn) LightIcons.TOGGLE_STATE_ON else LightIcons.TOGGLE_STATE_OFF,
-                size = 1.5f,
-                contentDescription = if (isOn) "On" else "Off",
-            )
-        }
-        if (caption != null) {
-            LightText(
-                text = caption,
-                variant = LightTextVariant.Fine,
-                lighten = true,
-                modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
-            )
-        }
+        LightIcon(
+            icon = if (isOn) LightIcons.TOGGLE_STATE_ON else LightIcons.TOGGLE_STATE_OFF,
+            size = 1.5f,
+            contentDescription = if (isOn) "On" else "Off",
+            modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
+        )
+        LightText(text = label, variant = LightTextVariant.Copy, modifier = Modifier.weight(1f))
     }
 }

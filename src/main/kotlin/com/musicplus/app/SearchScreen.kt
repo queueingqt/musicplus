@@ -1,6 +1,5 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -242,7 +241,7 @@ private fun TrackResultRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onPlay, onLongClick = onOpenActions)
+            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {

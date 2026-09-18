@@ -254,13 +254,21 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 }
             }
 
+            // Pushes "Up Next" down to sit just above the transport controls
+            // rather than immediately under the shuffle/repeat/favorite row —
+            // reported live as reading like part of the now-playing track info
+            // instead of a lead-in to the controls below it.
+            Spacer(modifier = Modifier.weight(1f))
+
             // "Up Next:" and the next track's name share one row, justified
             // (label hugs the left edge, title hugs the right) rather than
             // clumped left — just a quick glance at what's coming up, not a
-            // management surface. Full queue (reorder/remove, the whole list)
-            // lives in QueueScreen, reachable via the queue icon on the top bar
-            // (this screen) or the mini-player (every other screen) — no
-            // separate "view queue" link needed here since that icon is
+            // management surface. Small/Fine text, same size as the duration
+            // readout above — this is a secondary hint, not on par with the
+            // current track's own title. Full queue (reorder/remove, the whole
+            // list) lives in QueueScreen, reachable via the queue icon on the
+            // top bar (this screen) or the mini-player (every other screen) —
+            // no separate "view queue" link needed here since that icon is
             // already always visible. Nothing renders at all when the queue is
             // empty — no placeholder text.
             if (upcoming.isNotEmpty()) {
@@ -269,14 +277,14 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     modifier = Modifier
                         .fillMaxWidth()
                         .lightClickable { navigateTo(::QueueScreen) }
-                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
+                        .padding(horizontal = 2f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    LightText(text = "Up Next:", variant = LightTextVariant.Heading)
+                    LightText(text = "Up Next:", variant = LightTextVariant.Fine)
                     LightText(
                         text = nextTrack.title,
-                        variant = LightTextVariant.Copy,
+                        variant = LightTextVariant.Fine,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         align = TextAlign.End,

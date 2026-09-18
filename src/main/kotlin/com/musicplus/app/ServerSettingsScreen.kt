@@ -1,6 +1,5 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -149,7 +148,7 @@ private fun ServerRow(server: ServerProfile, isActive: Boolean, onClick: () -> U
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .lightCombinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
+import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.ui.LightIcon
@@ -25,16 +26,18 @@ import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightThemeTokens
 
 /**
- * Cover art for a track/album/artist, with a placeholder for every non-art state:
- * no [url] (nothing to show), the "Show album artwork" setting is off, or the
- * fetch/decode failed. [AlbumArtRepository] does the actual fetch+decode+cache;
- * this composable's job is just to ask it for a bitmap and render whatever comes
- * back (or the placeholder) at [size].
+ * Cover art for a track/album/artist, with a placeholder for a genuine no-art
+ * state: no [url], or the fetch/decode failed. [AlbumArtRepository] does the
+ * actual fetch+decode+cache; this composable's job is just to ask it for a
+ * bitmap and render whatever comes back (or the placeholder) at [size].
  *
- * The setting is checked here, in the same `LaunchedEffect` that triggers the
- * fetch — not just in what gets rendered — so turning it off actually stops the
- * background fetch/decode work per the issue's amendment, rather than just hiding
- * an image that's still being fetched underneath.
+ * When the "Show album artwork" setting is off, this renders nothing at all —
+ * zero size, not a placeholder box — so screens collapse to text-only instead
+ * of keeping a grid of empty/broken-looking image slots. Reported live: an
+ * empty box with a generic icon still read as "the images failed to load",
+ * not "artwork is intentionally off". The setting is checked before any other
+ * state (including the fetch itself) so turning it off also actually stops
+ * the background fetch/decode work, not just hides an in-flight image.
  */
 @Composable
 fun AlbumArt(
@@ -45,19 +48,23 @@ fun AlbumArt(
     placeholderIconSize: Float = 2f,
 ) {
     val graph = remember(lightContext) { AppGraph.from(lightContext) }
-    val showArtwork by graph.appSettingsRepository.showAlbumArtwork.collectAsState(initial = true)
+    // AppDisplayPrefs.showAlbumArtwork, not appSettingsRepository.showAlbumArtwork
+    // directly — see AppDisplayPrefs's doc for why (a raw collectAsState(initial)
+    // on the cold DataStore Flow flashed real art every time this composable is
+    // freshly composed, which is constantly).
+    val showArtwork by AppDisplayPrefs.showAlbumArtwork.collectAsState()
+
+    if (!showArtwork) return
 
     // Seeded from a synchronous cache peek so a row that's already been loaded once
     // (e.g. scrolled out of view and back) shows its art on the very first frame
     // instead of flashing back to the placeholder while getBitmap() re-confirms a
     // cache hit it's going to return instantly anyway.
-    var bitmap by remember(url, showArtwork) {
-        mutableStateOf(url?.takeIf { showArtwork }?.let { graph.albumArtRepository.peekCached(it) })
-    }
-    var loadFailed by remember(url, showArtwork) { mutableStateOf(false) }
+    var bitmap by remember(url) { mutableStateOf(url?.let { graph.albumArtRepository.peekCached(it) }) }
+    var loadFailed by remember(url) { mutableStateOf(false) }
 
-    LaunchedEffect(url, showArtwork) {
-        if (url == null || !showArtwork) {
+    LaunchedEffect(url) {
+        if (url == null) {
             bitmap = null
             loadFailed = false
             return@LaunchedEffect

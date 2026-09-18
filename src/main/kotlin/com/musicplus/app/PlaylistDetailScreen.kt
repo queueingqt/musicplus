@@ -1,6 +1,5 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -267,7 +266,7 @@ private fun PlaylistTrackRow(
             variant = LightTextVariant.Copy,
             modifier = Modifier
                 .fillMaxWidth()
-                .combinedClickable(onClick = onPlay, onLongClick = onOpenActions),
+                .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

@@ -1,6 +1,5 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -179,7 +178,7 @@ class AlbumDetailScreen(
                         // it isn't text that already has its own reason to exist as plain
                         // copy. Tap is a deliberate no-op: the artwork never had tap behavior
                         // of its own before this change, and this doesn't add one.
-                        .combinedClickable(
+                        .lightCombinedClickable(
                             onClick = {},
                             onLongClick = {
                                 navigateTo({ a ->
@@ -291,7 +290,7 @@ private fun TrackRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onPlay, onLongClick = onOpenActions)
+            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {

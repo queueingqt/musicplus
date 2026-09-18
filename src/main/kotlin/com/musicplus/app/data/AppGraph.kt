@@ -54,6 +54,12 @@ object AppGraph {
         appScope.launch {
             appSettingsRepository.debugLoggingEnabled.collect { AppLogger.setEnabled(it) }
         }
+        appScope.launch {
+            appSettingsRepository.hapticFeedbackEnabled.collect { AppHaptics.setEnabled(it) }
+        }
+        appScope.launch {
+            appSettingsRepository.showAlbumArtwork.collect { AppDisplayPrefs.setShowAlbumArtwork(it) }
+        }
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         val database = MusicPlusDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible
