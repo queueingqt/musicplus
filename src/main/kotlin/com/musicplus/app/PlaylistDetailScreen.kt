@@ -1,7 +1,5 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
@@ -40,8 +39,10 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -60,6 +61,26 @@ class PlaylistDetailScreenViewModel(
 
     val playlist: StateFlow<Playlist?> = playlistRepository.observePlaylist(playlistId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // A plain `remember` inside Content() doesn't survive this screen's own
+    // navigate-away/goBack() round trip when "Edit order" pushes ActionsMenuScreen
+    // on top and pops back — Content() is fully disposed while hidden and
+    // recomposed from scratch when shown again (see ScrollPosition.kt's doc for
+    // the fuller story; same root cause). Reported live: toggling reorder mode
+    // from the action menu had no visible effect at all, because the mutation
+    // landed on a `remember`'d state object whose composition had already been
+    // torn down by the time it ran. Lives on the ViewModel instead, which
+    // (unlike Content()) survives that round trip.
+    private val _reorderMode = MutableStateFlow(false)
+    val reorderMode: StateFlow<Boolean> = _reorderMode.asStateFlow()
+    fun setReorderMode(enabled: Boolean) { _reorderMode.value = enabled }
+
+    /** See TrackListDownload.kt / SelfLoadingTrackList.kt — shared with PlaylistListScreen's own playlist-level download row. */
+    fun playlistDownloadState(): Flow<TrackListDownloadState> =
+        SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).observeDownloadState(downloadRepository)
+
+    suspend fun toggleDownload(lightContext: SealedLightContext): TrackListDownloadState =
+        SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).toggleDownload(lightContext, downloadRepository)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { playlistRepository.refreshPlaylistDetail(playlistId) }
@@ -135,6 +156,13 @@ class PlaylistDetailScreen(
         val playlist by viewModel.playlist.collectAsState()
         val title = playlist?.name ?: "Playlist"
 
+        // Reorder handles are opt-in, entered via the title's long-press menu
+        // ("Edit order") rather than always visible — reported live: previously
+        // shown for every track whether or not the person was actually
+        // reordering anything. Exited via the top bar's Done button while active.
+        // Lives on the ViewModel, not a local `remember` — see its own doc for why.
+        val reorderMode by viewModel.reorderMode.collectAsState()
+
         MusicPlusScaffold(
             topBar = {
                 LightTopBar(
@@ -143,16 +171,39 @@ class PlaylistDetailScreen(
                         onClick = { goBack() },
                     ),
                     center = LightTopBarCenter.Text("Playlist"),
-                    // Replaces the old standalone rename pencil — opens the same
-                    // actions menu every other album/playlist/track-level long-press
-                    // uses, now on a tap since this is a top-bar icon button
-                    // (LightTopBarCenter/LightBarButton have no long-press variant —
-                    // confirmed in the SDK). Rename moved in here as its own row
-                    // instead of keeping a separate icon for it.
-                    rightButton = LightBarButton.LightIcon(
-                        icon = LightIcons.SETTINGS,
-                        contentDescription = "Playlist actions",
-                        onClick = {
+                    rightButton = if (reorderMode) {
+                        LightBarButton.LightIcon(
+                            icon = LightIcons.ACCEPT,
+                            contentDescription = "Done reordering",
+                            onClick = { viewModel.setReorderMode(false) },
+                        )
+                    } else {
+                        null
+                    },
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
+        ) {
+            // The trash icon that used to live here moved into this long-press
+            // menu (issue reported live: wanted delete off a standalone glyph and
+            // onto the same long-press pattern every other album/playlist/
+            // track-level action uses) — rename and "Edit order" moved in
+            // alongside it rather than keeping separate top-bar affordances for
+            // each. Tap is a deliberate no-op, same reasoning as AlbumDetailScreen's
+            // artwork: this text had no tap behavior of its own before.
+            LightText(
+                text = title,
+                variant = LightTextVariant.Heading,
+                align = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp())
+                    .lightCombinedClickable(
+                        onClick = {},
+                        onLongClick = {
                             navigateTo({ a ->
                                 // lateinit self-reference, not a plain `null` return — Perform's
                                 // contract is "null means this row no longer applies at all, drop
@@ -190,17 +241,30 @@ class PlaylistDetailScreen(
                                                 }
                                             },
                                         ),
+                                        ActionMenuItem(
+                                            icon = LightIcons.REVERSE_ORDER,
+                                            label = "Edit order",
+                                            // Navigate, not Perform — this needs to actually return to the
+                                            // track list (where the reorder handles live), not stay on this
+                                            // menu screen. close() pops back to PlaylistDetailScreen first,
+                                            // then this runs, so the flip is visible the instant it lands.
+                                            onSelect = ActionMenuSelection.Navigate { viewModel.setReorderMode(true) },
+                                        ),
+                                        // Same shape as PlaylistListScreen's own playlist-level download
+                                        // row — this screen didn't have a "download the whole playlist"
+                                        // option before, only per-track downloads.
+                                        trackListDownloadActionItem("playlist", TrackListDownloadState.NONE) { viewModel.toggleDownload(lightContext) }.copy(
+                                            liveUpdates = viewModel.playlistDownloadState().map { s ->
+                                                trackListDownloadActionItem("playlist", s) { viewModel.toggleDownload(lightContext) }
+                                            },
+                                        ),
                                         deleteItem,
                                     ),
                                 )
                             })
                         },
                     ),
-                )
-            },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
-        ) {
+            )
 
             // Inside, not Outside — see AlbumDetailScreen's identical call site
             // for why (Outside's gutter width isn't known until after first
@@ -220,6 +284,7 @@ class PlaylistDetailScreen(
                     PlaylistTrackRow(
                         track = track,
                         downloadStatus = status?.status,
+                        reorderMode = reorderMode,
                         canMoveUp = index > 0,
                         canMoveDown = index < tracks.lastIndex,
                         onPlay = {
@@ -274,18 +339,18 @@ class PlaylistDetailScreen(
 /**
  * Tap the title to play (unchanged); long-press it for the action menu
  * (favorite, download, remove from playlist — issue #16). Reorder (up/down)
- * deliberately stays as inline icons rather than moving into that menu: it's
- * a repeated, in-context operation — someone repositioning a track taps it
- * several times in a row — unlike the other three actions here, which are
- * single-shot. Routing every nudge through long-press -> menu -> tap ->
- * auto-return -> long-press again would make the single most repetitive
- * action on this screen also the most expensive one to perform.
+ * only shows once "Edit order" is chosen from the playlist-level long-press
+ * menu — reported live: previously always visible for every track whether or
+ * not the person was actually reordering anything. Left-aligned, leading the
+ * title, matching QueueScreen's own reorder icons exactly (reported live)
+ * rather than the trailing/second-row layout this used before.
  */
 /** Favorite/download glyphs shown only when they have something to say — see AlbumDetailScreen's TrackRow doc for why (issue reported live: moving those actions behind long-press also removed any at-a-glance state). */
 @Composable
 private fun PlaylistTrackRow(
     track: Track,
     downloadStatus: DownloadStatus?,
+    reorderMode: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onPlay: () -> Unit,
@@ -293,71 +358,63 @@ private fun PlaylistTrackRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
+            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
             // end matches the SDK's own scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed
             // rather than conditional on whether a scrollbar happens to show.
             .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = 2f.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LightText(
-                text = track.title,
-                variant = LightTextVariant.Copy,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        if (reorderMode && canMoveUp) {
+            LightIcon(
+                icon = LightIcons.UP,
+                size = 1.5f,
+                contentDescription = "Move up",
+                modifier = Modifier
+                    .lightClickable(onClick = onMoveUp)
+                    .padding(end = 0.5f.gridUnitsAsDp()),
             )
-            if (track.isFavorite) {
-                LightIcon(
-                    icon = LightIcons.STAR,
-                    size = 1.2f,
-                    contentDescription = "Favorited",
-                    modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-                )
-            }
-            // This used to distinguish only COMPLETE vs. everything else, so a
-            // track actively downloading inside a playlist showed the exact same
-            // icon as one not yet started — downloadStatusIcon (TrackActionItems.kt)
-            // is the 3-state version every other screen with a per-track download
-            // glyph (AlbumDetailScreen, SongsListScreen) already used.
-            if (downloadStatus != null) {
-                LightIcon(
-                    icon = downloadStatusIcon(downloadStatus),
-                    size = 1.2f,
-                    contentDescription = downloadStatusLabel(downloadStatus),
-                    modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-                )
-            }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            if (canMoveUp) {
-                LightIcon(
-                    icon = LightIcons.UP,
-                    size = 1.5f,
-                    contentDescription = "Move up",
-                    modifier = Modifier.lightClickable(onClick = onMoveUp),
-                )
-            }
-            if (canMoveDown) {
-                LightIcon(
-                    icon = LightIcons.DOWN,
-                    size = 1.5f,
-                    contentDescription = "Move down",
-                    modifier = Modifier
-                        .lightClickable(onClick = onMoveDown)
-                        .padding(start = 0.5f.gridUnitsAsDp()),
-                )
-            }
+        if (reorderMode && canMoveDown) {
+            LightIcon(
+                icon = LightIcons.DOWN,
+                size = 1.5f,
+                contentDescription = "Move down",
+                modifier = Modifier
+                    .lightClickable(onClick = onMoveDown)
+                    .padding(end = 0.5f.gridUnitsAsDp()),
+            )
+        }
+        LightText(
+            text = track.title,
+            variant = LightTextVariant.Copy,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (track.isFavorite) {
+            LightIcon(
+                icon = LightIcons.STAR,
+                size = 1.2f,
+                contentDescription = "Favorited",
+                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+            )
+        }
+        // This used to distinguish only COMPLETE vs. everything else, so a
+        // track actively downloading inside a playlist showed the exact same
+        // icon as one not yet started — downloadStatusIcon (TrackActionItems.kt)
+        // is the 3-state version every other screen with a per-track download
+        // glyph (AlbumDetailScreen, SongsListScreen) already used.
+        if (downloadStatus != null) {
+            LightIcon(
+                icon = downloadStatusIcon(downloadStatus),
+                size = 1.2f,
+                contentDescription = downloadStatusLabel(downloadStatus),
+                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+            )
         }
     }
 }
