@@ -139,6 +139,7 @@ class SettingsScreen(activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 // Real LightOS pattern: a read-only LightTextField that opens the SDK's

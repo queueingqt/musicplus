@@ -44,6 +44,13 @@ import com.thelightphone.sdk.ui.lightClickable
 fun LightwaveScaffold(
     topBar: @Composable () -> Unit,
     onMiniPlayerClick: () -> Unit = {},
+    // Queue icon on the mini-player itself, so the queue is reachable from
+    // every screen that shows one (i.e. everywhere but PlayerScreen, which has
+    // its own top-bar queue icon since it never shows a mini-player) without
+    // adding a queue icon to every individual screen's own top bar. Defaults
+    // to a no-op rather than being required, matching onMiniPlayerClick's own
+    // convention, but every real call site should pass it.
+    onQueueClick: () -> Unit = {},
     showMiniPlayer: Boolean = true,
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
@@ -70,7 +77,7 @@ fun LightwaveScaffold(
                 content = content,
             )
             if (showMiniPlayer) {
-                MiniPlayerBar(onClick = onMiniPlayerClick)
+                MiniPlayerBar(onClick = onMiniPlayerClick, onQueueClick = onQueueClick)
             }
             bottomBar()
         }
@@ -90,7 +97,7 @@ fun LightwaveScaffold(
  * track has actually been played at least once in this process.
  */
 @Composable
-private fun MiniPlayerBar(onClick: () -> Unit) {
+private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
     val playback = PlaybackRepositoryHolder.peek() ?: return
     val state by playback.state.collectAsState(initial = playback.currentSnapshot())
     val track = state.currentTrack ?: return
@@ -118,6 +125,16 @@ private fun MiniPlayerBar(onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        LightIcon(
+            icon = LightIcons.LIST,
+            size = 1.5f,
+            contentDescription = "View queue",
+            // Own lightClickable, not the row's onClick — this needs to open
+            // QueueScreen specifically, not PlayerScreen like the rest of the row.
+            modifier = Modifier
+                .lightClickable(onClick = onQueueClick)
+                .padding(horizontal = 0.5f.gridUnitsAsDp()),
+        )
         LightIcon(
             icon = if (state.isPlaying) LightIcons.PAUSE else LightIcons.PLAY,
             size = 1.5f,

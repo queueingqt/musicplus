@@ -105,6 +105,7 @@ class ArtistDetailScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightTextField(
                 label = "Search",

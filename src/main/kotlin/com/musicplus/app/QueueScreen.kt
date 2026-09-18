@@ -74,6 +74,7 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             if (state.queue.isEmpty()) {
                 LightText(

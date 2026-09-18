@@ -161,6 +161,7 @@ class PlaylistDetailScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             // Icon-only per this session's UI convention (no visible label next to
             // a self-explanatory icon) — the armed/confirm state is conveyed by

@@ -64,6 +64,7 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
         LightwaveScaffold(
             topBar = { LightTopBar(center = LightTopBarCenter.Text("Music +")) },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             if (!isConfigured) {
                 SetUpServerSplash { navigateTo(::SettingsScreen) }
@@ -73,7 +74,6 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                     MenuRow("Artists") { navigateTo(::ArtistListScreen) }
                     MenuRow("Playlists") { navigateTo(::PlaylistListScreen) }
                     MenuRow("Queue") { navigateTo(::QueueScreen) }
-                    MenuRow("Search") { navigateTo(::SearchScreen) }
                     MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
                     MenuRow("Settings") { navigateTo(::SettingsScreen) }
                 }

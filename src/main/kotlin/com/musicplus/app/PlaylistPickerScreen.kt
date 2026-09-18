@@ -90,6 +90,7 @@ class PlaylistPickerScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightText(
                 text = "New playlist",

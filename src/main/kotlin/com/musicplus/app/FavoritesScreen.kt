@@ -100,6 +100,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightTextField(
                 label = "Search",

@@ -253,52 +253,36 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 }
             }
 
-            // "Up next" and the next track's name share one row — a fixed-
-            // height preview, not a weighted/scrolling list; that version
-            // relied on the outer Column handing it leftover space via
-            // weight(1f), and on-device the header above (art/title/progress/
-            // shuffle row) was already tall enough to leave it none, so
-            // "Up next" was invisible, clipped behind the bottom transport
-            // bar. Confirmed live 2026-09-18. Full queue management (reorder/
-            // remove, the whole list) now lives in QueueScreen, reachable via
-            // the top bar's queue icon above — this row's job is just a quick
-            // glance, not scrolling.
+            // "Up Next:" and the next track's name share one row — just a
+            // quick glance at what's coming up, not a management surface. Full
+            // queue (reorder/remove, the whole list) lives in QueueScreen,
+            // reachable via the queue icon on the top bar (this screen) or the
+            // mini-player (every other screen) — no separate "view queue" link
+            // needed here since that icon is already always visible.
             if (upcoming.isEmpty()) {
                 LightText(
-                    text = "Up next — nothing queued",
+                    text = "Up Next: nothing queued",
                     variant = LightTextVariant.Fine,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
                 )
             } else {
-                val previewCount = 1
-                upcoming.take(previewCount).forEach { queuedTrack ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .lightClickable { navigateTo(::QueueScreen) }
-                            .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        LightText(text = "Up next", variant = LightTextVariant.Heading)
-                        LightText(
-                            text = queuedTrack.title,
-                            variant = LightTextVariant.Copy,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(start = 0.5f.gridUnitsAsDp()),
-                        )
-                    }
-                }
-                if (upcoming.size > previewCount) {
+                val nextTrack = upcoming.first()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable { navigateTo(::QueueScreen) }
+                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LightText(text = "Up Next:", variant = LightTextVariant.Heading)
                     LightText(
-                        text = "+ ${upcoming.size - previewCount} more — view queue",
-                        variant = LightTextVariant.Fine,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .lightClickable { navigateTo(::QueueScreen) }
-                            .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
+                        text = nextTrack.title,
+                        variant = LightTextVariant.Copy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 0.5f.gridUnitsAsDp()),
                     )
                 }
             }
