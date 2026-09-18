@@ -30,14 +30,50 @@ class PlaybackRepository(
     private val shuffle = MutableStateFlow(false)
     private val repeatMode = MutableStateFlow(RepeatMode.OFF)
 
-    // Nested 4-way combines rather than one 8-way call — kotlinx.coroutines only has
-    // typed `combine` overloads up to 5 flows; this keeps every step on solid ground
+    // Set synchronously by play()/rebuildQueue() at the same moment as `queue`,
+    // before the slow `setMediaQueue()`/network step. `player.currentMediaItemIndex`
+    // doesn't update until that slow step actually completes, so right after
+    // starting a new track there's a real window where it's still 0/stale/out of
+    // bounds for the *new* queue — during which `playerCore` below falls back to
+    // this instead. Without it, Now Playing showed the wrong (or no) track's
+    // title/art for that whole window on every single track change, confirmed
+    // on-device 2026-09-18 — a different gap than the StateFlow cold-start one
+    // fixed earlier, and not fixable by caching since the app itself doesn't
+    // know the right answer yet at that moment.
+    private val pendingIndex = MutableStateFlow(0)
+
+    // Nested combines rather than one wide call — kotlinx.coroutines only has typed
+    // `combine` overloads up to 5 flows; this keeps every step on solid ground
     // instead of reaching for the untyped Array<T> vararg overload.
     private data class PlayerCoreState(val index: Int, val isPlaying: Boolean, val positionMs: Long, val durationMs: Long)
 
+    // Carries *whether* the index came from the real player or the pendingIndex
+    // fallback, not just the resolved number — `playerCore` below needs to know,
+    // because `player.isPlaying`/`positionMs`/`durationMs` still describe the
+    // *previous* track for the whole pending window (the real player hasn't
+    // switched over yet). An earlier version of this fix showed the new track's
+    // title/art immediately but left position/isPlaying sourced from the old
+    // track's still-live values — confirmed on-device 2026-09-18: title and
+    // artwork updated instantly, but the audibly-playing audio and the moving
+    // playhead both still belonged to the previous song. Zeroed out below
+    // instead, rather than showing genuinely wrong data borrowed from a
+    // different track.
+    private data class ResolvedIndex(val index: Int, val isPending: Boolean)
+
+    private val resolvedIndex = combine(queue, player.currentMediaItemIndex, pendingIndex) { q, realIndex, pending ->
+        if (realIndex in q.indices) ResolvedIndex(realIndex, isPending = false)
+        else ResolvedIndex(pending.coerceIn(0, (q.size - 1).coerceAtLeast(0)), isPending = true)
+    }
+
     private val playerCore = combine(
-        player.currentMediaItemIndex, player.isPlaying, player.positionMs, player.durationMs,
-    ) { index, isPlaying, positionMs, durationMs -> PlayerCoreState(index, isPlaying, positionMs, durationMs) }
+        resolvedIndex, player.isPlaying, player.positionMs, player.durationMs,
+    ) { resolved, isPlaying, positionMs, durationMs ->
+        if (resolved.isPending) {
+            PlayerCoreState(resolved.index, isPlaying = false, positionMs = 0L, durationMs = 0L)
+        } else {
+            PlayerCoreState(resolved.index, isPlaying, positionMs, durationMs)
+        }
+    }
 
     private data class MiscState(val shuffle: Boolean, val repeatMode: RepeatMode, val errorMessage: String?)
 
@@ -73,21 +109,38 @@ class PlaybackRepository(
      * in hand — same root cause as AlbumDetailScreen's album flash, confirmed
      * on-device 2026-09-18.
      */
-    fun currentSnapshot(): PlaybackState = PlaybackState(
-        queue = queue.value,
-        currentIndex = player.currentMediaItemIndex.value,
-        isPlaying = player.isPlaying.value,
-        positionMs = player.positionMs.value,
-        durationMs = player.durationMs.value,
-        shuffle = shuffle.value,
-        repeatMode = repeatMode.value,
-        errorMessage = player.error.value?.let { "${it.kind}: ${it.diagnostic}" },
-    )
+    fun currentSnapshot(): PlaybackState {
+        val q = queue.value
+        val realIndex = player.currentMediaItemIndex.value
+        // Same fallback as `resolvedIndex` above, and for the same reason: right
+        // after play() is called, this can be read before the player's own index
+        // has caught up to the new queue — confirmed on-device 2026-09-18, this
+        // exact gap was still flashing Now Playing's art/title even after the
+        // live-flow fallback was added, because this snapshot bypassed it entirely.
+        val isPending = realIndex !in q.indices
+        val index = if (isPending) pendingIndex.value.coerceIn(0, (q.size - 1).coerceAtLeast(0)) else realIndex
+        // Same reasoning as playerCore's pending branch: position/isPlaying still
+        // describe the *previous* track during this window, so borrowing them
+        // here would pair the new track's title/art with the old track's real,
+        // actively-moving playhead — confirmed on-device 2026-09-18 as a genuine
+        // "wrong audio shown as playing" bug, not just a cosmetic mismatch.
+        return PlaybackState(
+            queue = q,
+            currentIndex = index,
+            isPlaying = if (isPending) false else player.isPlaying.value,
+            positionMs = if (isPending) 0L else player.positionMs.value,
+            durationMs = if (isPending) 0L else player.durationMs.value,
+            shuffle = shuffle.value,
+            repeatMode = repeatMode.value,
+            errorMessage = player.error.value?.let { "${it.kind}: ${it.diagnostic}" },
+        )
+    }
 
     suspend fun play(tracks: List<Track>, startIndex: Int) {
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return // not configured — nothing playable
         queue.value = tracks
+        pendingIndex.value = startIndex
         // setMediaQueue takes every item's source resolved up front — there's no
         // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
         // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
@@ -158,6 +211,7 @@ class PlaybackRepository(
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
         queue.value = newQueue
+        pendingIndex.value = currentIndex
         player.setMediaQueue(newQueue.map { it.toAudioItem(api) }, currentIndex)
         player.seekTo(savedPositionMs)
         if (wasPlaying) player.play()

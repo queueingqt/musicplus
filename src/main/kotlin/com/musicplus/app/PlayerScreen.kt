@@ -2,9 +2,10 @@ package com.musicplus.app
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -24,7 +25,6 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightProgressBar
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -35,6 +35,7 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -45,6 +46,22 @@ class PlayerScreenViewModel(
 
     val state: StateFlow<PlaybackState> =
         playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
+
+    // Prefers the *album's* art over the current track's own. Navidrome assigns
+    // every individual track its own distinct coverArt id (a "mf-..." id,
+    // separate from the album's "al-..." id) even when it's the exact same
+    // embedded image every other track on the album shares — confirmed live
+    // 2026-09-18 (every track change fetched fresh art, even within an album
+    // already fully browsed). Since AlbumListScreen/AlbumDetailScreen already
+    // warm the album's own art in the shared AlbumArtRepository cache just by
+    // being browsed, using that art here instead means Now Playing shows
+    // instantly for any track whose album has already been viewed, with no
+    // fetch at all — falls back to the track's own art only when the album
+    // isn't resolvable (e.g. arriving via search with no album cached yet).
+    val albumArtUrl: StateFlow<String?> = combine(state, libraryRepository.observeAlbums()) { s, albums ->
+        val track = s.currentTrack
+        albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun togglePlayPause() = playback.togglePlayPause()
     fun skipBack() = playback.skipBack()
@@ -99,6 +116,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
     @Composable
     override fun Content() {
         val state by viewModel.state.collectAsState()
+        val albumArtUrl by viewModel.albumArtUrl.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
 
@@ -109,6 +127,11 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Now Playing"),
+                    rightButton = LightBarButton.LightIcon(
+                        icon = LightIcons.LIST,
+                        onClick = { navigateTo(::QueueScreen) },
+                        contentDescription = "View queue",
+                    ),
                 )
             },
             showMiniPlayer = false,
@@ -131,15 +154,21 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(2f.gridUnitsAsDp()),
+                    .padding(horizontal = 2f.gridUnitsAsDp()),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // Same size/padding as AlbumDetailScreen's header art — was 13f
+                // with its own top-level padding before, which (combined with
+                // title/artist/progress/duration/shuffle-row below it) pushed
+                // "Up next" off the bottom of the screen entirely on-device,
+                // and made the art size visibly jump between these two screens.
+                // Confirmed both problems live 2026-09-18.
                 AlbumArt(
                     lightContext = lightContext,
-                    url = track?.coverArtUrl,
-                    size = 13f.gridUnitsAsDp(),
-                    placeholderIconSize = 6f,
-                    modifier = Modifier.padding(bottom = 1f.gridUnitsAsDp()),
+                    url = albumArtUrl,
+                    size = 9f.gridUnitsAsDp(),
+                    placeholderIconSize = 4f,
+                    modifier = Modifier.padding(vertical = 1f.gridUnitsAsDp()),
                 )
                 LightText(
                     text = track?.title ?: "Nothing playing",
@@ -162,10 +191,11 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     LightText(
                         text = "Playback error: ${state.errorMessage}",
                         variant = LightTextVariant.Fine,
-                        modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
+                        modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp()),
                     )
                 }
 
+                Spacer(modifier = Modifier.height(0.5f.gridUnitsAsDp()))
                 LightProgressBar(
                     colors = LightThemeTokens.colors,
                     progress = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f,
@@ -179,10 +209,10 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 // self-explanatory iconography — a visible label next to each one
                 // defeats the point of using icons at all. contentDescription still
                 // carries the meaning for accessibility.
-                Row(modifier = Modifier.padding(top = 1f.gridUnitsAsDp())) {
+                Row(modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp())) {
                     LightIcon(
                         icon = LightIcons.SHUFFLE,
-                        size = 2f,
+                        size = 1.5f,
                         contentDescription = if (state.shuffle) "Shuffle on" else "Shuffle off",
                         modifier = Modifier
                             .lightClickable { viewModel.toggleShuffle() }
@@ -190,7 +220,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     )
                     LightIcon(
                         icon = LightIcons.LOOP,
-                        size = 2f,
+                        size = 1.5f,
                         contentDescription = "Repeat ${state.repeatMode.name.lowercase()}",
                         modifier = Modifier
                             .lightClickable { viewModel.cycleRepeatMode() }
@@ -198,7 +228,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     )
                     LightIcon(
                         icon = if (track?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                        size = 2f,
+                        size = 1.5f,
                         contentDescription = if (track?.isFavorite == true) "Favorited" else "Favorite",
                         modifier = Modifier
                             .lightClickable { viewModel.toggleFavoriteCurrentTrack() }
@@ -207,6 +237,15 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 }
             }
 
+            // A short, fixed-height preview rather than a weighted/scrolling
+            // list — that version relied on the outer Column handing it
+            // leftover space via weight(1f), and on-device the header above
+            // (art/title/progress/shuffle row) was already tall enough to
+            // leave it none, so "Up next" was invisible, clipped behind the
+            // bottom transport bar. Confirmed live 2026-09-18. Full queue
+            // management (reorder/remove, the whole list) now lives in
+            // QueueScreen, reachable via the top bar's queue icon above —
+            // this preview's job is just a quick glance, not scrolling.
             LightText(
                 text = "Up next",
                 variant = LightTextVariant.Heading,
@@ -223,84 +262,31 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                         .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
                 )
             } else {
-                LightLazyScrollView(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    uniformItemHeightGridUnits = 3f,
-                ) {
-                    itemsIndexed(upcoming, key = { _, queuedTrack -> queuedTrack.id }) { i, queuedTrack ->
-                        val absoluteIndex = state.currentIndex + 1 + i
-                        QueueRow(
-                            track = queuedTrack,
-                            canMoveUp = i > 0,
-                            canMoveDown = i < upcoming.lastIndex,
-                            onMoveUp = { viewModel.moveQueueItemUp(absoluteIndex) },
-                            onMoveDown = { viewModel.moveQueueItemDown(absoluteIndex) },
-                            onRemove = { viewModel.removeFromQueue(absoluteIndex) },
-                        )
-                    }
+                val previewCount = 1
+                upcoming.take(previewCount).forEach { queuedTrack ->
+                    LightText(
+                        text = queuedTrack.title,
+                        variant = LightTextVariant.Copy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .lightClickable { navigateTo(::QueueScreen) }
+                            .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
+                    )
+                }
+                if (upcoming.size > previewCount) {
+                    LightText(
+                        text = "+ ${upcoming.size - previewCount} more — view queue",
+                        variant = LightTextVariant.Fine,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .lightClickable { navigateTo(::QueueScreen) }
+                            .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
+                    )
                 }
             }
         }
-    }
-}
-
-/**
- * One upcoming-queue row: title, then up/down reorder (omitted at either end of
- * the list) and a remove icon. `LightLazyScrollView` has no drag-reorder
- * primitive (checked: `sdk/ui/.../LightScrollView.kt` only offers a plain
- * `LazyColumn` plus its own scrollbar) — up/down icon buttons are the fallback
- * the task background calls out for exactly this case.
- */
-@Composable
-private fun QueueRow(
-    track: Track,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (canMoveUp) {
-            LightIcon(
-                icon = LightIcons.UP,
-                size = 1.5f,
-                contentDescription = "Move up",
-                modifier = Modifier
-                    .lightClickable(onClick = onMoveUp)
-                    .padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        if (canMoveDown) {
-            LightIcon(
-                icon = LightIcons.DOWN,
-                size = 1.5f,
-                contentDescription = "Move down",
-                modifier = Modifier
-                    .lightClickable(onClick = onMoveDown)
-                    .padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        LightIcon(
-            icon = LightIcons.TRASH,
-            size = 1.5f,
-            contentDescription = "Remove from queue",
-            modifier = Modifier
-                .lightClickable(onClick = onRemove)
-                .padding(start = 0.5f.gridUnitsAsDp()),
-        )
     }
 }
 
