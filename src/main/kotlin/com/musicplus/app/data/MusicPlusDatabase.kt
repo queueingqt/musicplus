@@ -57,10 +57,48 @@ abstract class MusicPlusDatabase : RoomDatabase() {
         private const val DB_FILE_NAME = "musicplus.db"
         private const val LEGACY_DB_FILE_NAME = "lightwave.db"
 
+        /**
+         * Gates [create] to its one legitimate caller, `AppGraph.build()`.
+         *
+         * `create()` builds a brand-new Room instance every time it's called —
+         * Room's Flow invalidation tracking is per-*instance*, not per underlying
+         * file, so a write through a second instance never notifies Flow
+         * observers the app's already-open (AppGraph-owned) instance is serving.
+         * Both `@LightJob` handlers this tool ships (DownloadRepository.
+         * downloadTrack, SyncQueueRepository.syncPendingMutations) hit exactly
+         * this bug by calling `create()` directly, before being fixed by hand to
+         * go through `AppGraph.from(lightContext).database` instead — see their
+         * doc comments. Nothing stopped a third `@LightJob` handler from making
+         * the identical mistake as long as `create()` stayed a plain callable
+         * function, since a doc comment only helps a contributor who reads it.
+         *
+         * Plain `internal` visibility wouldn't have closed that gap: this whole
+         * tool ships as a single Gradle module (dropped into light-sdk's `tool/`
+         * slot as-is — see build.gradle.kts's header comment), so every file
+         * under `com.musicplus.app`, including a hypothetical third job handler,
+         * already compiles into the same module `internal` would scope `create()`
+         * to. This opt-in requirement is what actually gates it instead: calling
+         * `create()` from anywhere not explicitly annotated
+         * `@OptIn(DatabaseFactoryAccess::class)` is a compile error, not just an
+         * unread comment. `AppGraph.build()` is the only place that opts in.
+         */
+        @RequiresOptIn(
+            message = "MusicPlusDatabase.create() builds an uncoordinated second Room " +
+                "instance whose Flow invalidation is invisible to the rest of the app " +
+                "(see this annotation's doc). Use AppGraph.from(lightContext).database " +
+                "instead — that's the shared, already-open instance every screen and " +
+                "@LightJob handler is meant to observe and write through.",
+            level = RequiresOptIn.Level.ERROR,
+        )
+        @Retention(AnnotationRetention.BINARY)
+        @Target(AnnotationTarget.FUNCTION)
+        annotation class DatabaseFactoryAccess
+
         // `buildDatabase` is the SDK's Room-builder extension on SealedLightContext
         // (sdk/client/.../LightDb.kt) — routes storage through the sandboxed app
         // context LightOS expects rather than a raw Context.
-        fun create(lightContext: SealedLightContext): MusicPlusDatabase {
+        @DatabaseFactoryAccess
+        internal fun create(lightContext: SealedLightContext): MusicPlusDatabase {
             renameLegacyDbFileIfNeeded(lightContext)
             migrateV1ToV2IfNeeded(lightContext)
             migrateV2ToV3IfNeeded(lightContext)
