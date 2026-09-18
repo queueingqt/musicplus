@@ -3,10 +3,7 @@
 A full-featured music player for the [Light Phone III](https://www.thelightphone.com/) to access your self-hosted [Navidrome](https://www.navidrome.org/) music server (or any other
 Subsonic-API-compatible server — Gonic, Airsonic, etc.).
 
-**Fully offline-capable.** Download any song, album, or playlist for offline
-listening. Favorites, playlist edits, and
-everything else made while offline sync automatically the next time you're
-connected.
+**Fully offline-capable.** Download any song, album, or playlist for offline listening. Favorites, playlist edits, and everything else seemlessly sync automatically the next time you're connected.
 
 <p float="left">
   <img src="screenshots/now-playing.png" width="200" alt="Now Playing screen, showing album art, transport controls, and shuffle/repeat/favorite/lyrics toggles" />
