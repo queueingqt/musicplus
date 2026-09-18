@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -29,6 +30,7 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
         val STREAM_QUALITY_WIFI = intPreferencesKey("stream_quality_wifi_kbps")
         val STREAM_QUALITY_CELLULAR = intPreferencesKey("stream_quality_cellular_kbps")
         val DOWNLOAD_QUALITY = intPreferencesKey("download_quality_kbps")
+        val LAST_VERSION_CHECK_AT_MS = longPreferencesKey("last_version_check_at_ms")
     }
 
     private companion object {
@@ -118,5 +120,12 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setDownloadQuality(maxBitRateKbps: Int?) {
         dataStore.edit { prefs -> prefs[Keys.DOWNLOAD_QUALITY] = maxBitRateKbps ?: ORIGINAL_SENTINEL }
+    }
+
+    /** Null means never checked — VersionCheckRepository's caller (AppGraph.build) treats that the same as "stale, check now." */
+    val lastVersionCheckAtMs: Flow<Long?> = dataStore.data.map { prefs -> prefs[Keys.LAST_VERSION_CHECK_AT_MS] }
+
+    suspend fun setLastVersionCheckAtMs(value: Long) {
+        dataStore.edit { prefs -> prefs[Keys.LAST_VERSION_CHECK_AT_MS] = value }
     }
 }

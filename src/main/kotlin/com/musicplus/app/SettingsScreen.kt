@@ -12,7 +12,9 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.LocalDataRepository
+import com.musicplus.app.data.NewerVersion
 import com.musicplus.app.data.SyncQueueRepository
+import com.musicplus.app.data.VersionCheckRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -76,6 +78,8 @@ class SettingsScreenViewModel(
     fun clearAllLocalData() {
         viewModelScope.launch { localDataRepository.clearAll() }
     }
+
+    val newerVersion: StateFlow<NewerVersion?> = VersionCheckRepository.newerVersion
 }
 
 class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, SettingsScreenViewModel>(activity) {
@@ -93,6 +97,7 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
         val debugLoggingEnabled by viewModel.debugLoggingEnabled.collectAsState()
         val hapticFeedbackEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
         val pendingSyncCount by viewModel.pendingSyncCount.collectAsState()
+        val newerVersion by viewModel.newerVersion.collectAsState()
 
         MusicPlusScaffold(
             topBar = {
@@ -110,11 +115,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                     isOn = showAlbumArtwork,
                     onToggle = { viewModel.toggleShowAlbumArtwork() },
                 )
-                ToggleRow(
-                    label = "Haptic feedback",
-                    isOn = hapticFeedbackEnabled,
-                    onToggle = { viewModel.toggleHapticFeedback() },
-                )
                 LightText(
                     text = "Quality Settings",
                     variant = LightTextVariant.Copy,
@@ -123,6 +123,27 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                         .lightClickable { navigateTo(::QualitySettingsScreen) }
                         .padding(vertical = 1f.gridUnitsAsDp()),
                 )
+                ToggleRow(
+                    label = "Haptic feedback",
+                    isOn = hapticFeedbackEnabled,
+                    onToggle = { viewModel.toggleHapticFeedback() },
+                )
+                // Only shown when VersionCheckRepository actually found a
+                // newer GitHub release — mirrors the "*" on Home's Settings
+                // row. Text-only detail screen, not a tappable link: LightOS
+                // tools can't open a browser (see VersionCheckRepository's doc
+                // — confirmed via the SDK's own compile-time blocked-patterns
+                // check and permission allowlist, not assumed).
+                newerVersion?.let { version ->
+                    LightText(
+                        text = "New Version Available",
+                        variant = LightTextVariant.Copy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .lightClickable { navigateTo({ a -> VersionAvailableScreen(a, version) }) }
+                            .padding(vertical = 1f.gridUnitsAsDp()),
+                    )
+                }
                 // Always last — the least likely to be touched day-to-day.
                 ToggleRow(
                     // Also gates local debug logging (AppLogger), not just
@@ -183,13 +204,16 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
 
 @Composable
 private fun SettingsMenuRow(label: String, onClick: () -> Unit) {
+    // Copy, not Heading — same size as every other row on this screen
+    // (Quality Settings, New Version Available, Clear all local data), per
+    // explicit request; this used to stand out as visually larger/bolder.
     LightText(
         text = label,
-        variant = LightTextVariant.Heading,
+        variant = LightTextVariant.Copy,
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onClick)
-            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            .padding(vertical = 1f.gridUnitsAsDp()),
     )
 }
 

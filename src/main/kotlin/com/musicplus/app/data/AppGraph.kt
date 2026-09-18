@@ -1,5 +1,6 @@
 package com.musicplus.app.data
 
+import com.musicplus.app.BuildConfig
 import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.LightWork
 import com.thelightphone.sdk.SealedLightContext
@@ -7,8 +8,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 
 /**
  * Composition root. A single process-lifetime instance, built synchronously the
@@ -34,6 +37,8 @@ object AppGraph {
     )
 
     @Volatile private var instance: Graph? = null
+
+    private val VERSION_CHECK_INTERVAL_MS = TimeUnit.HOURS.toMillis(24)
 
     // Process-lifetime, not tied to any screen's own viewModelScope — needed so
     // debugLoggingEnabled keeps being observed (and AppLogger kept in sync) no
@@ -113,6 +118,19 @@ object AppGraph {
             downloadDao = database.downloadDao(),
             trackDao = database.trackDao(),
         )
+        // Checked on every app open, but throttled to once per
+        // VERSION_CHECK_INTERVAL_MS — an unauthenticated GitHub API call is
+        // cheap, but someone opening/closing the app dozens of times a day
+        // shouldn't turn into dozens of requests against the same rate limit
+        // every other GitHub call in this app shares.
+        appScope.launch {
+            val lastCheckedAt = appSettingsRepository.lastVersionCheckAtMs.first()
+            val now = System.currentTimeMillis()
+            if (lastCheckedAt == null || now - lastCheckedAt > VERSION_CHECK_INTERVAL_MS) {
+                VersionCheckRepository.checkForUpdate(BuildConfig.VERSION_NAME)
+                appSettingsRepository.setLastVersionCheckAtMs(now)
+            }
+        }
         // One-shot per process start, same "give it a fresh shot on reopen" as the
         // sync queue's reconnect-observer below (which also fires once immediately
         // on every launch) — a download that gave up after MAX_DOWNLOAD_ATTEMPTS

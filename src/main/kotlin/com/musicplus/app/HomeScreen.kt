@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.VersionCheckRepository
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -38,6 +39,12 @@ class HomeScreenViewModel(
         .map { it != null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    // Drives the "*" marker on the Settings row below — VersionCheckRepository
+    // itself decides whether newerVersion is non-null (a real newer release).
+    val hasNewerVersion: StateFlow<Boolean> = VersionCheckRepository.newerVersion
+        .map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     // Note: the old "Now playing: <title>" row that used to live here (via a
     // PlaybackRepositoryHolder.peek() StateFlow) was dropped — the persistent
     // mini-player (MusicPlusScaffold, visible on every screen incl. this one) now
@@ -60,6 +67,7 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
     @Composable
     override fun Content() {
         val isConfigured by viewModel.isConfigured.collectAsState()
+        val hasNewerVersion by viewModel.hasNewerVersion.collectAsState()
 
         // Root screen — no back button (see AlbumListScreen etc. for the
         // leftButton = BACK pattern every non-root screen uses).
@@ -97,7 +105,9 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                     MenuRow("Songs") { navigateTo(::SongsListScreen) }
                     MenuRow("Playlists") { navigateTo(::PlaylistListScreen) }
                     MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
-                    MenuRow("Settings") { navigateTo(::SettingsScreen) }
+                    // "*" mirrors the "New Version Available" row that shows
+                    // inside Settings itself when a newer release exists.
+                    MenuRow(if (hasNewerVersion) "Settings *" else "Settings") { navigateTo(::SettingsScreen) }
                 }
             }
         }
