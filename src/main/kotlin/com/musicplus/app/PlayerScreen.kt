@@ -336,7 +336,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     // live. Only shown once something is actually playing.
                     if (track != null) {
                         LightIcon(
-                            icon = LightIcons.PENCIL,
+                            icon = LightIcons.AUDIO_MESSAGE,
                             size = 1.5f,
                             contentDescription = "Lyrics",
                             modifier = Modifier
