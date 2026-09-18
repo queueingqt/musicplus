@@ -284,8 +284,11 @@ class PlaybackRepository(
         val saved = playbackStateRepository.read()
         queue.value = tracks
         pendingIndex.value = saved.currentIndex.coerceIn(0, tracks.lastIndex)
+        // Guards against resurrecting an invalid combo saved before shuffle/
+        // REPEAT_TRACK became mutually exclusive (see setShuffle/setRepeatMode) —
+        // shuffle wins, same as if the two were toggled in that order live.
         shuffle.value = saved.shuffle
-        repeatMode.value = saved.repeatMode
+        repeatMode.value = if (saved.shuffle && saved.repeatMode == RepeatMode.REPEAT_TRACK) RepeatMode.OFF else saved.repeatMode
         currentAlbumArtUrl.value = saved.albumArtUrl
         restoredPositionMs = saved.positionMs
         AppLogger.d(
@@ -629,10 +632,18 @@ class PlaybackRepository(
      * while shuffled is handled gracefully on restore (dropped if it's
      * gone, appended at the end if it's new and wasn't in the captured
      * order).
+     *
+     * Mutually exclusive with REPEAT_TRACK (see [setRepeatMode]'s doc) —
+     * turning shuffle on while repeating one track forever drops repeat back
+     * to OFF, since "what's shuffled next" is meaningless when nothing ever
+     * advances past the current track.
      */
     fun setShuffle(enabled: Boolean) {
         if (shuffle.value == enabled) return
         shuffle.value = enabled
+        if (enabled && repeatMode.value == RepeatMode.REPEAT_TRACK) {
+            repeatMode.value = RepeatMode.OFF
+        }
         scope.launch {
             applyShuffle(enabled)
             persistScalarStateIfLoaded()
@@ -664,10 +675,23 @@ class PlaybackRepository(
      * fix — light-sdk#218 is the real fix). REPEAT_OFF needs no action here:
      * that's just the ordinary "let ExoPlayer do what it already does"
      * behavior (auto-advance mid-queue, stop at the end).
+     *
+     * Mutually exclusive with shuffle — switching *into* REPEAT_TRACK turns
+     * shuffle off and restores the queue's pre-shuffle order, same reasoning
+     * as [setShuffle]'s doc: repeating one track forever makes an upcoming
+     * shuffled order meaningless, since nothing ever reaches it.
      */
     fun setRepeatMode(mode: RepeatMode) {
         repeatMode.value = mode
-        scope.launch { persistScalarStateIfLoaded() }
+        if (mode == RepeatMode.REPEAT_TRACK && shuffle.value) {
+            shuffle.value = false
+            scope.launch {
+                applyShuffle(false)
+                persistScalarStateIfLoaded()
+            }
+        } else {
+            scope.launch { persistScalarStateIfLoaded() }
+        }
     }
 
     fun release() = player.release()
