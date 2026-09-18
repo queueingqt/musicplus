@@ -67,6 +67,18 @@ data class PlaybackState(
     val repeatMode: RepeatMode = RepeatMode.OFF,
     /** Surfaced from LightAudioPlayer.error — was previously dropped entirely, making a real playback failure indistinguishable from "still loading" in the UI. */
     val errorMessage: String? = null,
+    /**
+     * True for the brief window between [currentTrack] switching to a new
+     * track and playback actually being ready — `currentTrack` itself already
+     * resolves synchronously in that window (see PlaybackRepository's
+     * pendingIndex), but [isPlaying]/[positionMs]/[durationMs] are all zeroed
+     * out rather than showing the *previous* track's still-live values, so
+     * this is the one signal that tells a real "loading" state apart from a
+     * genuinely paused one. Reported live: tapping a track showed a plain
+     * play icon (identical to paused) during this window, reading as "the
+     * tap didn't do anything."
+     */
+    val isLoading: Boolean = false,
 ) {
     val currentTrack: Track? get() = queue.getOrNull(currentIndex)
 

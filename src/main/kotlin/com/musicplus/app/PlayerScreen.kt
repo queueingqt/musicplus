@@ -191,9 +191,20 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                         LightBarButton.LightIcon(LightIcons.REWIND, viewModel::skipToPrevious, contentDescription = "Previous track"),
                         LightBarButton.LightIcon(LightIcons.SKIP_BACKWARD_FIFTEEN, viewModel::skipBack, contentDescription = "Back 15s"),
                         LightBarButton.LightIcon(
-                            if (state.isPlaying) LightIcons.PAUSE else LightIcons.PLAY,
+                            // REFRESH during the loading window — see MusicPlusScaffold's
+                            // identical mini-player treatment for why this can't just
+                            // reuse the plain paused-looking PLAY icon here.
+                            when {
+                                state.isLoading -> LightIcons.REFRESH
+                                state.isPlaying -> LightIcons.PAUSE
+                                else -> LightIcons.PLAY
+                            },
                             viewModel::togglePlayPause,
-                            contentDescription = if (state.isPlaying) "Pause" else "Play",
+                            contentDescription = when {
+                                state.isLoading -> "Loading"
+                                state.isPlaying -> "Pause"
+                                else -> "Play"
+                            },
                         ),
                         LightBarButton.LightIcon(LightIcons.SKIP_FORWARD_FIFTEEN, viewModel::skipForward, contentDescription = "Forward 15s"),
                         LightBarButton.LightIcon(LightIcons.FAST_FORWARD, viewModel::skipToNext, contentDescription = "Next track"),

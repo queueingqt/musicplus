@@ -191,11 +191,13 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                             track = track,
                             downloadStatus = status?.status,
                             onPlay = {
-                                scope.launch {
-                                    val graph = AppGraph.from(lightContext)
-                                    PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
-                                    navigateTo(::PlayerScreen)
-                                }
+                                // beginPlay() + navigate immediately, *then* the
+                                // slow part — see PlaybackRepository.beginPlay's doc.
+                                val graph = AppGraph.from(lightContext)
+                                val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                                playback.beginPlay(listOf(track), 0)
+                                navigateTo(::PlayerScreen)
+                                scope.launch { playback.play(listOf(track), 0) }
                             },
                             onOpenActions = {
                                 navigateTo({ a ->

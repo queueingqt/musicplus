@@ -181,9 +181,22 @@ private fun MiniPlayerBar(onClick: () -> Unit, onQueueClick: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             LightIcon(
-                icon = if (state.isPlaying) LightIcons.PAUSE else LightIcons.PLAY,
+                // REFRESH, same icon already used for "in progress" download
+                // states elsewhere in this app — distinct from PLAY so the
+                // loading window between tapping a track and playback
+                // actually starting doesn't look identical to "paused,
+                // nothing happening." Reported live.
+                icon = when {
+                    state.isLoading -> LightIcons.REFRESH
+                    state.isPlaying -> LightIcons.PAUSE
+                    else -> LightIcons.PLAY
+                },
                 size = 1.5f,
-                contentDescription = if (state.isPlaying) "Pause" else "Play",
+                contentDescription = when {
+                    state.isLoading -> "Loading"
+                    state.isPlaying -> "Pause"
+                    else -> "Play"
+                },
             )
         }
     }

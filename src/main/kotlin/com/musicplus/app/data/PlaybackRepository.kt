@@ -8,11 +8,15 @@ import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayback
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
@@ -30,9 +34,20 @@ class PlaybackRepository(
 ) {
     private val player = audio.newPlayer(playback = LightAudioPlayback.Detached)
 
+    // Process-lifetime, same reasoning as AppGraph's own appScope — this
+    // repository is itself a process-lifetime singleton (see
+    // PlaybackRepositoryHolder), so nothing here needs a narrower scope tied
+    // to any particular screen's composition.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private val queue = MutableStateFlow<List<Track>>(emptyList())
     private val shuffle = MutableStateFlow(false)
     private val repeatMode = MutableStateFlow(RepeatMode.OFF)
+
+    // The upcoming-track id order captured the moment shuffle turns on, so
+    // turning it back off can restore it — see setShuffle's doc. Null means
+    // "not currently shuffled" (nothing to restore).
+    private val preShuffleOrder = MutableStateFlow<List<String>?>(null)
 
     // Set synchronously by play()/rebuildQueue() at the same moment as `queue`,
     // before the slow `setMediaQueue()`/network step. `player.currentMediaItemIndex`
@@ -61,7 +76,7 @@ class PlaybackRepository(
     // Nested combines rather than one wide call — kotlinx.coroutines only has typed
     // `combine` overloads up to 5 flows; this keeps every step on solid ground
     // instead of reaching for the untyped Array<T> vararg overload.
-    private data class PlayerCoreState(val index: Int, val isPlaying: Boolean, val positionMs: Long, val durationMs: Long)
+    private data class PlayerCoreState(val index: Int, val isPlaying: Boolean, val positionMs: Long, val durationMs: Long, val isLoading: Boolean)
 
     // Carries *whether* the index came from the real player or the pendingIndex
     // fallback, not just the resolved number — `playerCore` below needs to know,
@@ -85,9 +100,9 @@ class PlaybackRepository(
         resolvedIndex, player.isPlaying, player.positionMs, player.durationMs,
     ) { resolved, isPlaying, positionMs, durationMs ->
         if (resolved.isPending) {
-            PlayerCoreState(resolved.index, isPlaying = false, positionMs = 0L, durationMs = 0L)
+            PlayerCoreState(resolved.index, isPlaying = false, positionMs = 0L, durationMs = 0L, isLoading = true)
         } else {
-            PlayerCoreState(resolved.index, isPlaying, positionMs, durationMs)
+            PlayerCoreState(resolved.index, isPlaying, positionMs, durationMs, isLoading = false)
         }
     }
 
@@ -112,11 +127,65 @@ class PlaybackRepository(
             shuffle = misc.shuffle,
             repeatMode = misc.repeatMode,
             errorMessage = misc.errorMessage,
+            isLoading = core.isLoading,
         )
     }
 
     /** The explicit album-art hint passed to the current [play] call, if any — see [currentAlbumArtUrl]'s doc. */
     val albumArtUrlHint: StateFlow<String?> = currentAlbumArtUrl.asStateFlow()
+
+    // Position-polling workaround for REPEAT_TRACK/REPEAT_QUEUE, since
+    // LightAudioPlayer's confirmed public surface has no track-completion or
+    // end-of-queue signal to react to instead — filed upstream as
+    // lightphone/light-sdk#218 ("LightAudioPlayer doesn't expose events").
+    // If/when that lands, replace this whole watcher with reacting to the
+    // real event directly, instead of estimating "about to end" from
+    // positionMs/durationMs. Position updates every 250ms (confirmed in the
+    // SDK's own LightAudioPlayer source, POSITION_POLL_MS), so a 500ms
+    // "near end" window gives a couple of ticks of margin to act before the
+    // track would actually finish and (for a multi-track queue) ExoPlayer's
+    // own default auto-advance-to-next-item takes over on its own — the
+    // trade-off is losing the last ~0.5s of a REPEAT_TRACK loop, which reads
+    // as far less jarring than the alternative (letting it actually advance
+    // to the next track first, then snapping back).
+    private val nearEndCompletionWatcher = scope.launch {
+        state.collect { s ->
+            val mode = repeatMode.value
+            if (mode == RepeatMode.OFF || !s.isPlaying || s.durationMs <= 0L) return@collect
+            val remainingMs = s.durationMs - s.positionMs
+            val nearEnd = remainingMs in 0..NEAR_END_THRESHOLD_MS
+            if (!nearEnd) {
+                // Cleared the instant we're not near-end — for a freshly
+                // restarted/wrapped track this won't be true again until it's
+                // played nearly all the way through once more, so this is
+                // never a same-position re-arm race.
+                lastHandledCompletionIndex = -1
+                return@collect
+            }
+            // Edge-detector: without this, every emission still inside the
+            // near-end window would refire the action (repeated seekTo(0)
+            // calls, or repeatedly restarting the queue wrap).
+            if (lastHandledCompletionIndex == s.currentIndex) return@collect
+            when (mode) {
+                RepeatMode.REPEAT_TRACK -> {
+                    lastHandledCompletionIndex = s.currentIndex
+                    player.seekTo(0)
+                    if (!player.isPlaying.value) player.play()
+                }
+                RepeatMode.REPEAT_QUEUE -> {
+                    // Mid-queue, nothing to do — ExoPlayer already auto-advances
+                    // to the next item on its own; this only needs to step in at
+                    // the wrap-around point that behavior doesn't cover.
+                    if (s.currentIndex == s.queue.lastIndex) {
+                        lastHandledCompletionIndex = s.currentIndex
+                        play(s.queue, 0)
+                    }
+                }
+                RepeatMode.OFF -> {}
+            }
+        }
+    }
+    private var lastHandledCompletionIndex = -1
 
     /**
      * Synchronous read of every constituent `.value` — every one of them is
@@ -152,6 +221,7 @@ class PlaybackRepository(
             shuffle = shuffle.value,
             repeatMode = repeatMode.value,
             errorMessage = player.error.value?.let { "${it.kind}: ${it.diagnostic}" },
+            isLoading = isPending,
         )
     }
 
@@ -159,6 +229,34 @@ class PlaybackRepository(
     suspend fun play(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return // not configured — nothing playable
+        beginPlay(tracks, startIndex, albumArtUrl)
+        // setMediaQueue takes every item's source resolved up front — there's no
+        // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
+        // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
+        // playback starts, not just the starting track. Correct but not great UX for
+        // a multi-track queue on a cleartext server; tracked as a follow-up rather
+        // than solved here.
+        player.setMediaQueue(tracks.map { it.toAudioItem(api) }, startIndex)
+        player.play()
+    }
+
+    /**
+     * The synchronous part of [play] — [queue]/[pendingIndex]/[currentAlbumArtUrl]
+     * every screen's own `state.currentTrack` (via the pendingIndex fallback —
+     * see its doc) resolves from, plus pausing whatever was already playing
+     * (see [play]'s own doc for why that happens here and not after the slow
+     * part). Split out so a caller can call this, then navigate to
+     * PlayerScreen immediately, *then* kick off the slow suspend part —
+     * instead of only navigating after [play] fully returns. Reported live:
+     * tapping a track showed no feedback at all — not even a screen change —
+     * until playback was already fully loaded and ready, since navigation
+     * only happened after the whole (potentially multi-second, see
+     * toAudioItem) call completed. Calling this first means PlayerScreen's
+     * own `LaunchedEffect(track) { if (track == null) goBack() }` never sees
+     * a null track to bounce off of, even for the very first play() of a
+     * session — before this split, that gap (however brief) existed for real.
+     */
+    fun beginPlay(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
         queue.value = tracks
         pendingIndex.value = startIndex
         currentAlbumArtUrl.value = albumArtUrl
@@ -171,14 +269,6 @@ class PlaybackRepository(
         // already shows 0:00/paused rather than the old track's real position —
         // this makes the actual audio match that, instead of just the numbers.
         player.pause()
-        // setMediaQueue takes every item's source resolved up front — there's no
-        // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
-        // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
-        // playback starts, not just the starting track. Correct but not great UX for
-        // a multi-track queue on a cleartext server; tracked as a follow-up rather
-        // than solved here.
-        player.setMediaQueue(tracks.map { it.toAudioItem(api) }, startIndex)
-        player.play()
     }
 
     /**
@@ -314,22 +404,52 @@ class PlaybackRepository(
     fun skipToPrevious() = player.skipToPrevious()
     fun seekTo(ms: Long) = player.seekTo(ms)
 
+    /**
+     * Shuffle-from-current-track-forward, not reshuffle-the-whole-queue:
+     * whatever's currently playing (and anything already played) stays put,
+     * only the *upcoming* portion gets shuffled — matches how the queue's
+     * own remove/reorder actions already treat the current track as
+     * untouchable. The pre-shuffle order of that upcoming portion is
+     * captured so disabling shuffle restores it exactly, rather than
+     * leaving the queue permanently reshuffled; a track added or removed
+     * while shuffled is handled gracefully on restore (dropped if it's
+     * gone, appended at the end if it's new and wasn't in the captured
+     * order).
+     */
     fun setShuffle(enabled: Boolean) {
+        if (shuffle.value == enabled) return
         shuffle.value = enabled
-        // TODO: this only flips the flag for the UI toggle state — it doesn't yet
-        // reshuffle the live queue or restore original order on disable. Wire that
-        // up once the queue-reordering UX is decided (reshuffle-in-place vs.
-        // shuffle-from-current-track-forward).
+        scope.launch { applyShuffle(enabled) }
     }
 
+    private suspend fun applyShuffle(enabled: Boolean) {
+        val current = queue.value
+        val currentIndex = player.currentMediaItemIndex.value.coerceIn(0, (current.size - 1).coerceAtLeast(0))
+        if (currentIndex !in current.indices) return
+        val upcoming = current.drop(currentIndex + 1)
+        if (upcoming.isEmpty()) return // nothing to shuffle or restore
+        val reordered = if (enabled) {
+            preShuffleOrder.value = upcoming.map { it.id }
+            upcoming.shuffled()
+        } else {
+            val order = preShuffleOrder.value
+            preShuffleOrder.value = null
+            if (order == null) return // shuffle was never really applied (e.g. queue was empty when toggled) — nothing to restore
+            val byId = upcoming.associateBy { it.id }
+            order.mapNotNull { byId[it] } + upcoming.filter { it.id !in order }
+        }
+        rebuildQueue(current.take(currentIndex + 1) + reordered)
+    }
+
+    /**
+     * Real REPEAT_TRACK/REPEAT_QUEUE behavior — see [nearEndCompletionWatcher]
+     * for how completion is detected (a documented workaround, not the real
+     * fix — light-sdk#218 is the real fix). REPEAT_OFF needs no action here:
+     * that's just the ordinary "let ExoPlayer do what it already does"
+     * behavior (auto-advance mid-queue, stop at the end).
+     */
     fun setRepeatMode(mode: RepeatMode) {
         repeatMode.value = mode
-        // TODO: LightAudioPlayer's confirmed public surface (see SDK reference
-        // notes) has no end-of-queue/track-completed callback — only
-        // currentMediaItemIndex/isPlaying state. REPEAT_TRACK and looping
-        // REPEAT_QUEUE back to index 0 both need that signal to act on; find it
-        // (or poll positionMs vs durationMs near track end) before this does
-        // anything beyond persisting the toggle state.
     }
 
     fun release() = player.release()
@@ -375,6 +495,9 @@ class PlaybackRepository(
     private companion object {
         /** See [rebuildQueue]'s doc — caps how long a queue edit waits for the rebuilt player to resolve a real duration before seeking. */
         const val REBUILD_DURATION_WAIT_MS = 5_000L
+
+        /** See [nearEndCompletionWatcher]'s doc — how close to the end counts as "finished" for the REPEAT_TRACK/REPEAT_QUEUE workaround. */
+        const val NEAR_END_THRESHOLD_MS = 500L
     }
 }
 

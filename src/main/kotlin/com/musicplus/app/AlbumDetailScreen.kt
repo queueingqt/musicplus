@@ -242,12 +242,17 @@ class AlbumDetailScreen(
                         track = track,
                         downloadStatus = status?.status,
                         onPlay = {
-                            scope.launch {
-                                val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
-                                    .play(tracks, index, albumArtUrl = album?.coverArtUrl)
-                                navigateTo(::PlayerScreen)
-                            }
+                            // beginPlay() + navigate immediately, *then* the slow
+                            // part — see PlaybackRepository.beginPlay's doc.
+                            // Reported live: tapping a track showed no feedback
+                            // at all until playback was already fully loaded,
+                            // since navigation used to wait for the whole play()
+                            // call (including the network-bound part) to finish.
+                            val graph = AppGraph.from(lightContext)
+                            val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                            playback.beginPlay(tracks, index, albumArtUrl = album?.coverArtUrl)
+                            navigateTo(::PlayerScreen)
+                            scope.launch { playback.play(tracks, index, albumArtUrl = album?.coverArtUrl) }
                         },
                         onOpenActions = {
                             navigateTo({ a ->
