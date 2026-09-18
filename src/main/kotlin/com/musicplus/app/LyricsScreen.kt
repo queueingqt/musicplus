@@ -1,5 +1,7 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Column
@@ -9,9 +11,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.PlaybackRepository
@@ -22,14 +25,15 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -59,6 +63,8 @@ class LyricsScreenViewModel(
 
     private val _lyrics = MutableStateFlow<LyricsState>(LyricsState.Loading)
     val lyrics: StateFlow<LyricsState> = _lyrics.asStateFlow()
+
+    fun seekTo(ms: Long) = playback.seekTo(ms)
 
     private var lyricsJob: Job? = null
 
@@ -166,6 +172,7 @@ class LyricsScreen(private val sealedActivity: SealedLightActivity) :
                         SyncedLyricsList(
                             lines = (lyrics as LyricsState.Synced).lines,
                             positionMs = state.positionMs,
+                            onLineClick = { ms -> viewModel.seekTo(ms) },
                             modifier = Modifier.fillMaxWidth(),
                         )
                 }
@@ -181,9 +188,22 @@ class LyricsScreen(private val sealedActivity: SealedLightActivity) :
  * whenever [positionMs] or the line list changes; [LaunchedEffect] then animates
  * the shared list scroll state to keep the current line in view, a couple of
  * lines below the top for a little lead-in context.
+ *
+ * Plain Compose `LazyColumn`, not `LightLazyScrollView` — that component's own
+ * scroll-position math (`itemHeightPx` etc., see `LightScrollView.kt`) assumes
+ * every row has the same fixed height, which conflicts with letting a long
+ * lyric line wrap to more than one line instead of truncating. Reported live:
+ * most lines were getting cut off with an ellipsis on a screen that has
+ * plenty of room. Losing the SDK's own scrollbar visual here is an acceptable
+ * tradeoff — this list is mostly watched auto-scroll, not manually navigated.
  */
 @Composable
-private fun SyncedLyricsList(lines: List<LyricLine>, positionMs: Long, modifier: Modifier = Modifier) {
+private fun SyncedLyricsList(
+    lines: List<LyricLine>,
+    positionMs: Long,
+    onLineClick: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     if (lines.isEmpty()) {
         LightText(text = "No lyrics for this track", variant = LightTextVariant.Fine, modifier = modifier)
         return
@@ -194,11 +214,43 @@ private fun SyncedLyricsList(lines: List<LyricLine>, positionMs: Long, modifier:
         lines.indexOfLast { line -> (line.startMs ?: Long.MAX_VALUE) <= positionMs }.coerceAtLeast(0)
     }
 
-    LaunchedEffect(currentIndex) {
-        listState.animateScrollToItem((currentIndex - 2).coerceAtLeast(0))
+    // Auto-scroll follows the current line by default, but a manual drag
+    // means the person wants to read something else, not get yanked back to
+    // "now" on the very next line change. Reported live. Resumes on its own
+    // a few seconds after they let go, rather than requiring them to
+    // explicitly ask for it back.
+    //
+    // One timestamp ("don't auto-scroll again before this instant") is the
+    // single source of truth, not two separately-toggled booleans/effects —
+    // an earlier version used a `followCurrentLine` flag flipped by one
+    // effect and read by another, and during a long musical interlude
+    // (current line unchanged for a while) it would resume to the current
+    // line, then inexplicably jump back to the old manually-scrolled
+    // position, then jump to the current line again once real lyrics
+    // resumed — reported live. Two independently-racing effects updating
+    // shared state is exactly the shape of bug that produces that kind of
+    // "goes back and forth on its own" symptom. A single deterministic timer
+    // that every scroll decision reads doesn't have that race.
+    val isDragged by listState.interactionSource.collectIsDraggedAsState()
+    var resumeAtMs by remember { mutableStateOf(0L) }
+    LaunchedEffect(isDragged) {
+        resumeAtMs = if (isDragged) Long.MAX_VALUE else System.currentTimeMillis() + 3_000
     }
 
-    LightLazyScrollView(modifier = modifier, listState = listState, uniformItemHeightGridUnits = 2.5f) {
+    LaunchedEffect(currentIndex, resumeAtMs) {
+        val waitMs = resumeAtMs - System.currentTimeMillis()
+        if (waitMs > 0) delay(waitMs)
+        // Re-check rather than trust the wait alone: if a fresh drag started
+        // and finished again while this was waiting, resumeAtMs will have
+        // moved further out, and this same effect will already be restarting
+        // for that reason — this just avoids an extra scroll from the old
+        // invocation winning a race against its own restart.
+        if (System.currentTimeMillis() >= resumeAtMs) {
+            listState.animateScrollToItem((currentIndex - 2).coerceAtLeast(0))
+        }
+    }
+
+    LazyColumn(modifier = modifier, state = listState) {
         itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
             LightText(
                 // A blank line is real data (a timed pause in the lyrics, e.g. an
@@ -207,10 +259,13 @@ private fun SyncedLyricsList(lines: List<LyricLine>, positionMs: Long, modifier:
                 text = line.text.ifBlank { " " },
                 variant = LightTextVariant.Copy,
                 lighten = index != currentIndex,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
+                    // Tap a line to jump playback there — every line here has a
+                    // real timestamp (this is the Synced state specifically),
+                    // but startMs is still nullable on the shared LyricLine type,
+                    // so skip the seek rather than jump to 0 on a stray null.
+                    .let { m -> line.startMs?.let { ms -> m.lightClickable { onLineClick(ms) } } ?: m }
                     .padding(vertical = 0.35f.gridUnitsAsDp()),
             )
         }
