@@ -6,7 +6,6 @@ import com.musicplus.app.data.PlaylistRepository
 import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.onStart
 
 /**
  * A track list that refreshes its own backing Room cache before anything gets
@@ -22,12 +21,21 @@ import kotlinx.coroutines.flow.onStart
  * how 3 of 4 call sites shipped without it — each one had to independently
  * rediscover and hand-patch the same bug. Rather than trust every future
  * caller to remember the same tribal knowledge, refresh-then-read is baked
- * into this type instead: there is no way to reach [observeDownloadState],
- * [toggleDownload], or [tracks] here without the refresh happening first, for
- * *both* the observed state and the toggle — an unrefreshed album/playlist
- * previously also reported a flat-out wrong NONE download state (empty track
- * list short-circuits [observeTrackListDownloadState]), not just a
- * toggle that silently enqueued nothing.
+ * into [toggleDownload]/[tracks] — the two places that actually act on the
+ * tracks and where a stale/empty cache silently does the wrong thing.
+ *
+ * [observeDownloadState] deliberately does NOT refresh on every collection.
+ * It used to (`.onStart { refresh() }`), on the reasoning that an unrefreshed
+ * album/playlist otherwise shows a flat-out wrong NONE state instead of its
+ * real one. Reported live as a severe regression instead: every screen that
+ * lists many albums/playlists (AlbumListScreen, ArtistDetailScreen,
+ * PlaylistListScreen) collects this per row via `remember(id) { ... }` inside
+ * a `LazyColumn`, which disposes and recomposes rows as they scroll out of
+ * and back into view — so every row scrolling into view fired a real network
+ * request to refresh that album/playlist, repeatedly, during scrolling.
+ * Showing NONE for a never-visited album until it's actually acted on (which
+ * does refresh first) is the correct tradeoff; a passive glance at a list
+ * should never by itself trigger network traffic.
  */
 class SelfLoadingTrackList private constructor(
     private val tracksFlow: Flow<List<Track>>,
@@ -47,9 +55,9 @@ class SelfLoadingTrackList private constructor(
             )
     }
 
-    /** See TrackListDownload.kt's [observeTrackListDownloadState] — refreshes before the first emission so a list row for an album/playlist whose detail screen was never opened reports its real download state instead of a guaranteed-empty-cache NONE. */
+    /** See TrackListDownload.kt's [observeTrackListDownloadState] — reads the cache as-is, no refresh (see the class doc for why: this is collected per-row in scrolling lists, and a refresh here means a network call on every row scrolled into view). May show NONE for an album/playlist that's never been refreshed, until [toggleDownload] actually runs. */
     fun observeDownloadState(downloadRepository: DownloadRepository): Flow<TrackListDownloadState> =
-        observeTrackListDownloadState(tracksFlow, downloadRepository).onStart { refresh() }
+        observeTrackListDownloadState(tracksFlow, downloadRepository)
 
     /** See TrackListDownload.kt's [toggleTrackListDownload]. */
     suspend fun toggleDownload(lightContext: SealedLightContext, downloadRepository: DownloadRepository): TrackListDownloadState {

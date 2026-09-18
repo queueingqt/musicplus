@@ -162,8 +162,6 @@ class ArtistDetailScreen(
                 uniformItemHeightGridUnits = 3f,
             ) {
                 items(albums, key = { it.id }) { album ->
-                    val downloadState by remember(album.id) { viewModel.albumDownloadState(album.id) }
-                        .collectAsState(initial = TrackListDownloadState.NONE)
                     AlbumRow(
                         lightContext = lightContext,
                         album = album,
@@ -182,7 +180,10 @@ class ArtistDetailScreen(
                                         favoriteActionItem(album.isFavorite) { favorite ->
                                             viewModel.setAlbumFavorite(album.id, favorite)
                                         },
-                                        trackListDownloadActionItem("album", downloadState) { viewModel.toggleAlbumDownload(lightContext, album.id) }.copy(
+                                        // Real state only starts being read once this menu is actually
+                                        // open (via liveUpdates below) — see AlbumListScreen's identical
+                                        // fix for why this used to be collected per-row in the list itself.
+                                        trackListDownloadActionItem("album", TrackListDownloadState.NONE) { viewModel.toggleAlbumDownload(lightContext, album.id) }.copy(
                                             liveUpdates = viewModel.albumDownloadState(album.id).map { s ->
                                                 trackListDownloadActionItem("album", s) { viewModel.toggleAlbumDownload(lightContext, album.id) }
                                             },

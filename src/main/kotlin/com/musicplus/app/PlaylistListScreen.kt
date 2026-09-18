@@ -140,8 +140,6 @@ class PlaylistListScreen(activity: SealedLightActivity) :
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 items(playlists, key = { it.id }) { playlist ->
-                    val downloadState by remember(playlist.id) { viewModel.playlistDownloadState(playlist.id) }
-                        .collectAsState(initial = TrackListDownloadState.NONE)
                     PlaylistRow(
                         playlist = playlist,
                         onClick = { navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) }) },
@@ -151,7 +149,10 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                                     activity = a,
                                     subtitle = playlist.name,
                                     items = listOf(
-                                        trackListDownloadActionItem("playlist", downloadState) {
+                                        // Real state only starts being read once this menu is actually
+                                        // open (via liveUpdates below) — see AlbumListScreen's identical
+                                        // fix for why this used to be collected per-row in the list itself.
+                                        trackListDownloadActionItem("playlist", TrackListDownloadState.NONE) {
                                             viewModel.togglePlaylistDownload(lightContext, playlist.id)
                                         }.copy(
                                             liveUpdates = viewModel.playlistDownloadState(playlist.id).map { s ->
