@@ -89,7 +89,6 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                     MenuRow("Artists") { navigateTo(::ArtistListScreen) }
                     MenuRow("Songs") { navigateTo(::SongsListScreen) }
                     MenuRow("Playlists") { navigateTo(::PlaylistListScreen) }
-                    MenuRow("Queue") { navigateTo(::QueueScreen) }
                     MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
                     MenuRow("Settings") { navigateTo(::SettingsScreen) }
                 }
