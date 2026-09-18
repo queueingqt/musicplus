@@ -76,6 +76,10 @@ class SearchScreenViewModel(
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         // No-op — results are driven by runSearch(), not screen-show.
     }
+
+    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
+    var scrollIndex = 0
+    var scrollOffset = 0
 }
 
 class SearchScreen(private val activity: SealedLightActivity) :
@@ -130,7 +134,11 @@ class SearchScreen(private val activity: SealedLightActivity) :
                     .padding(horizontal = 1f.gridUnitsAsDp()),
             )
 
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
+                viewModel.scrollIndex = i
+                viewModel.scrollOffset = o
+            }
+            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->
                     ResultRow(artist.name) {
@@ -149,11 +157,13 @@ class SearchScreen(private val activity: SealedLightActivity) :
                         lightContext = lightContext,
                         track = track,
                         onPlay = {
-                            scope.launch {
-                                val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
-                                navigateTo(::PlayerScreen)
-                            }
+                            // beginPlay() + navigate immediately, *then* the slow
+                            // part — see PlaybackRepository.beginPlay's doc.
+                            val graph = AppGraph.from(lightContext)
+                            val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                            playback.beginPlay(listOf(track), 0)
+                            navigateTo(::PlayerScreen)
+                            scope.launch { playback.play(listOf(track), 0) }
                         },
                         onOpenActions = {
                             navigateTo({ a ->

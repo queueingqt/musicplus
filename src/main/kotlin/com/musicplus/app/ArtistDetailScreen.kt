@@ -90,6 +90,10 @@ class ArtistDetailScreenViewModel(
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
 
     suspend fun tracksForAlbum(albumId: String): List<Track> = libraryRepository.observeTracksByAlbum(albumId).first()
+
+    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
+    var scrollIndex = 0
+    var scrollOffset = 0
 }
 
 class ArtistDetailScreen(
@@ -145,9 +149,14 @@ class ArtistDetailScreen(
             // layout, so the trailing favorite star briefly rendered full-width
             // then jumped left once it appeared; AlbumRow reserves the same
             // width itself, unconditionally, instead).
+            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
+                viewModel.scrollIndex = i
+                viewModel.scrollOffset = o
+            }
             LightLazyScrollView(
                 modifier = Modifier.fillMaxWidth(),
                 scrollBarPosition = LightScrollBarPosition.Inside,
+                listState = listState,
                 uniformItemHeightGridUnits = 3f,
             ) {
                 items(albums, key = { it.id }) { album ->

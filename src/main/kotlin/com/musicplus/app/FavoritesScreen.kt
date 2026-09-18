@@ -73,6 +73,10 @@ class FavoritesScreenViewModel(
         // current by the various refresh*() calls elsewhere and by setXFavorite's own
         // optimistic write. LibraryRepository has no separate "refresh favorites" call.
     }
+
+    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
+    var scrollIndex = 0
+    var scrollOffset = 0
 }
 
 class FavoritesScreen(private val activity: SealedLightActivity) :
@@ -109,7 +113,11 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
+                viewModel.scrollIndex = i
+                viewModel.scrollOffset = o
+            }
+            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->
                     FavoriteRow(artist.name) {
@@ -127,11 +135,13 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                     FavoriteTrackRow(
                         track = track,
                         onPlay = {
-                            scope.launch {
-                                val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(listOf(track), 0)
-                                navigateTo(::PlayerScreen)
-                            }
+                            // beginPlay() + navigate immediately, *then* the slow
+                            // part — see PlaybackRepository.beginPlay's doc.
+                            val graph = AppGraph.from(lightContext)
+                            val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                            playback.beginPlay(listOf(track), 0)
+                            navigateTo(::PlayerScreen)
+                            scope.launch { playback.play(listOf(track), 0) }
                         },
                         onOpenActions = {
                             navigateTo({ a ->

@@ -72,6 +72,10 @@ class PlaylistListScreenViewModel(
         playlistRepository.refreshPlaylists()
         return id
     }
+
+    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
+    var scrollIndex = 0
+    var scrollOffset = 0
 }
 
 class PlaylistListScreen(activity: SealedLightActivity) :
@@ -116,7 +120,11 @@ class PlaylistListScreen(activity: SealedLightActivity) :
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
+                viewModel.scrollIndex = i
+                viewModel.scrollOffset = o
+            }
+            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 items(playlists, key = { it.id }) { playlist ->
                     PlaylistRow(playlist) {
                         navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) })
@@ -179,16 +187,16 @@ private fun PlaylistListTopBar(onBack: () -> Unit, onSearch: () -> Unit, onNewPl
             )
             Box(modifier = Modifier.weight(1f))
             LightIcon(
-                icon = LightIcons.SEARCH,
-                contentDescription = "Search playlists",
+                icon = LightIcons.ADD,
+                contentDescription = "New playlist",
                 modifier = Modifier
-                    .lightClickable(onClick = onSearch)
+                    .lightClickable(onClick = onNewPlaylist)
                     .padding(end = 0.5f.gridUnitsAsDp()),
             )
             LightIcon(
-                icon = LightIcons.ADD,
-                contentDescription = "New playlist",
-                modifier = Modifier.lightClickable(onClick = onNewPlaylist),
+                icon = LightIcons.SEARCH,
+                contentDescription = "Search playlists",
+                modifier = Modifier.lightClickable(onClick = onSearch),
             )
         }
         Box(

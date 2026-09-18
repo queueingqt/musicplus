@@ -111,6 +111,10 @@ class PlaylistDetailScreenViewModel(
             onDeleted()
         }
     }
+
+    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
+    var scrollIndex = 0
+    var scrollOffset = 0
 }
 
 /**
@@ -207,9 +211,14 @@ class PlaylistDetailScreen(
             // layout, so trailing per-row content briefly renders full-width
             // then jumps left once it appears; PlaylistTrackRow reserves the
             // same width itself, unconditionally, instead).
+            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
+                viewModel.scrollIndex = i
+                viewModel.scrollOffset = o
+            }
             LightLazyScrollView(
                 modifier = Modifier.fillMaxWidth(),
                 scrollBarPosition = LightScrollBarPosition.Inside,
+                listState = listState,
                 uniformItemHeightGridUnits = 4.5f,
             ) {
                 itemsIndexed(tracks, key = { index, track -> "$index-${track.id}" }) { index, track ->
@@ -221,11 +230,13 @@ class PlaylistDetailScreen(
                         canMoveUp = index > 0,
                         canMoveDown = index < tracks.lastIndex,
                         onPlay = {
-                            scope.launch {
-                                val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(tracks, index)
-                                navigateTo(::PlayerScreen)
-                            }
+                            // beginPlay() + navigate immediately, *then* the slow
+                            // part — see PlaybackRepository.beginPlay's doc.
+                            val graph = AppGraph.from(lightContext)
+                            val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                            playback.beginPlay(tracks, index)
+                            navigateTo(::PlayerScreen)
+                            scope.launch { playback.play(tracks, index) }
                         },
                         onOpenActions = {
                             navigateTo({ a ->

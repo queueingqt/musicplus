@@ -96,6 +96,10 @@ class SongsListScreenViewModel(
         }
 
     suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
+
+    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
+    var scrollIndex = 0
+    var scrollOffset = 0
 }
 
 class SongsListScreen(private val activity: SealedLightActivity) :
@@ -170,9 +174,14 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                 // first layout, so trailing per-row content briefly renders
                 // full-width then jumps left once it appears; SongRow reserves
                 // the same width itself, unconditionally, instead).
+                val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
+                    viewModel.scrollIndex = i
+                    viewModel.scrollOffset = o
+                }
                 LightLazyScrollView(
                     modifier = Modifier.fillMaxWidth(),
                     scrollBarPosition = LightScrollBarPosition.Inside,
+                    listState = listState,
                     uniformItemHeightGridUnits = 3f,
                 ) {
                     items(tracks, key = { it.id }) { track ->
