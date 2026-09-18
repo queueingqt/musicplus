@@ -116,6 +116,12 @@ class PlaybackRepository(
     // ever restored, same as a track legitimately starting from 0:00.
     private var restoredPositionMs = 0L
 
+    // Set synchronously at the very top of beginPlay(), i.e. before any real
+    // play() has done a single suspend — see restoreFromDisk()'s doc for why
+    // this exists. Never cleared: once a real play has ever been started this
+    // process, restoring old state to overwrite it is never correct again.
+    private var hasStartedRealPlay = false
+
     // Nested combines rather than one wide call — kotlinx.coroutines only has typed
     // `combine` overloads up to 5 flows; this keeps every step on solid ground
     // instead of reaching for the untyped Array<T> vararg overload.
@@ -301,14 +307,30 @@ class PlaybackRepository(
      * was cleared, or it was never fetched into the local library at all) is
      * silently dropped rather than failing the whole restore — see
      * [LibraryRepository.getTracksByIds]'s doc.
+     *
+     * Checks [hasStartedRealPlay] both before starting and right before
+     * applying its result — reproduced live, 2026-09-18: force-close the app,
+     * relaunch, and tap a track to play as close to immediately as possible.
+     * This function's own DB reads below are genuine suspend I/O (the very
+     * first Room query of the process, including a cold SQLite open plus the
+     * hand-rolled migration checks in `MusicPlusDatabase.create()`), which on
+     * a fresh process can easily take longer than resolving an already-cached
+     * track's stream URL in [play]. Both this function and a fresh play() are
+     * launched on the same [scope] with no ordering guarantee between them —
+     * whichever finishes last wins the write to [queue]/[pendingIndex], and
+     * without this check that was reliably the stale restore, silently
+     * overwriting the track the person had just tapped with whatever was
+     * playing last session.
      */
     private suspend fun restoreFromDisk() {
+        if (hasStartedRealPlay) return // a real play already started before this function even began — nothing to restore over
         val songIds = queueDao.observeQueue().first().map { it.songId }
         if (songIds.isEmpty()) return
         val tracksById = libraryRepository.getTracksByIds(songIds).associateBy { it.id }
         val tracks = songIds.mapNotNull { tracksById[it] }
         if (tracks.isEmpty()) return // none of the persisted tracks are in the local cache anymore
         val saved = playbackStateRepository.read()
+        if (hasStartedRealPlay) return // a real play started while these reads were in flight — don't clobber it
         queue.value = tracks
         pendingIndex.value = saved.currentIndex.coerceIn(0, tracks.lastIndex)
         // Guards against resurrecting an invalid combo saved before shuffle/
@@ -430,6 +452,10 @@ class PlaybackRepository(
      * session — before this split, that gap (however brief) existed for real.
      */
     fun beginPlay(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
+        // Set first, synchronously, before anything else here — see
+        // restoreFromDisk()'s doc. This has to win any race against it, not
+        // just the `queue.value =` write two lines down.
+        hasStartedRealPlay = true
         queue.value = tracks
         pendingIndex.value = startIndex
         currentAlbumArtUrl.value = albumArtUrl
