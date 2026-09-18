@@ -106,13 +106,18 @@ class SearchScreen(private val activity: SealedLightActivity) :
         val albums by viewModel.albumResults.collectAsState()
         val tracks by viewModel.trackResults.collectAsState()
 
-        // Snapshotted once per show (not re-read after), so it answers "was the
-        // editor already auto-opened before *this* appearance of the screen" —
-        // false only on the very first-ever show, true on every recomposition
-        // after returning from the editor. Drives suppressing the body below on
-        // that first show, so the empty field/list never has a frame to flash
-        // in before the editor opens over it — reported live.
-        val alreadyOpenedEditor = remember { viewModel.hasAutoOpenedEditor }
+        // Both snapshotted once per show (not re-read after). hadAlreadyOpened
+        // answers "was the editor already auto-opened before *this* appearance
+        // of the screen" — false only on the very first-ever show. leavingBlank
+        // answers "are we returning from that editor (or a later reopen) with
+        // no query ever having been run" — TextEditScreen's back button cancels
+        // without invoking the result callback (see its doc), so a blank query
+        // here means nothing was ever searched. Both cases skip the body below:
+        // the first because the editor is about to cover it, the second because
+        // LaunchedEffect is about to leave Search entirely — neither should get
+        // a frame to flash before that happens (reported live for both).
+        val hadAlreadyOpened = remember { viewModel.hasAutoOpenedEditor }
+        val leavingBlank = remember { hadAlreadyOpened && viewModel.query.value.isBlank() }
 
         // Open the text editor immediately on arrival, not just on a tap — this
         // screen exists to be typed into right away, and requiring an extra tap
@@ -123,15 +128,19 @@ class SearchScreen(private val activity: SealedLightActivity) :
         // screen — the field's own onClick below still covers wanting to
         // search again afterward.
         LaunchedEffect(Unit) {
-            if (!viewModel.hasAutoOpenedEditor) {
+            if (!hadAlreadyOpened) {
                 viewModel.hasAutoOpenedEditor = true
                 navigateTo({ a -> TextEditScreen(a, "Search", query) }) { result ->
                     viewModel.runSearch(result)
                 }
+            } else if (leavingBlank) {
+                // Leave Search entirely instead of landing on this empty screen
+                // and making the person press back a second time.
+                goBack()
             }
         }
 
-        if (!alreadyOpenedEditor) return
+        if (!hadAlreadyOpened || leavingBlank) return
 
         MusicPlusScaffold(
             topBar = {
