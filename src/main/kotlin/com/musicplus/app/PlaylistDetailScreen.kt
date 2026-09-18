@@ -7,14 +7,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
@@ -34,6 +32,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -41,13 +40,13 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 class PlaylistDetailScreenViewModel(
     private val playlistRepository: PlaylistRepository,
@@ -137,18 +136,6 @@ class PlaylistDetailScreen(
         val playlist by viewModel.playlist.collectAsState()
         val title = playlist?.name ?: "Playlist"
 
-        // Cheap two-tap confirm (no dialog/modal primitive with Confirm+Cancel is
-        // confirmed available in the SDK — LightFullscreenModal is message+single-
-        // button-only) — first tap arms it, a second tap within 3s deletes, anything
-        // else (navigating away, waiting it out) disarms it.
-        var confirmDelete by remember { mutableStateOf(false) }
-        LaunchedEffect(confirmDelete) {
-            if (confirmDelete) {
-                delay(3_000)
-                confirmDelete = false
-            }
-        }
-
         MusicPlusScaffold(
             topBar = {
                 LightTopBar(
@@ -171,28 +158,53 @@ class PlaylistDetailScreen(
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            // Icon-only per this session's UI convention (no visible label next to
-            // a self-explanatory icon) — the armed/confirm state is conveyed by
-            // swapping the icon itself (TRASH -> ACCEPT) plus contentDescription,
-            // not by adding a text label. No confirm/cancel dialog primitive is
-            // confirmed available in the SDK (see the comment on `confirmDelete`
-            // above), hence this two-tap pattern instead.
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-            ) {
-                LightIcon(
-                    icon = if (confirmDelete) LightIcons.ACCEPT else LightIcons.TRASH,
-                    size = 1.5f,
-                    contentDescription = if (confirmDelete) "Tap to confirm delete" else "Delete playlist",
-                    modifier = Modifier.lightClickable {
-                        if (confirmDelete) {
-                            viewModel.delete { goBack() }
-                        } else {
-                            confirmDelete = true
-                        }
-                    },
-                )
-            }
+            // The trash icon that used to live here moved into the long-press
+            // action menu (issue reported live: wanted delete off a standalone
+            // glyph and onto the same long-press pattern every other
+            // album/playlist/track-level action uses). This title is the
+            // long-press target for it — the screen had no long-press target
+            // for playlist-level actions at all before, unlike AlbumDetailScreen's
+            // artwork. Tap is a deliberate no-op, same reasoning as that
+            // screen's artwork: this text had no tap behavior of its own before.
+            LightText(
+                text = title,
+                variant = LightTextVariant.Heading,
+                align = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp())
+                    .lightCombinedClickable(
+                        onClick = {},
+                        onLongClick = {
+                            navigateTo({ a ->
+                                ActionsMenuScreen(
+                                    activity = a,
+                                    subtitle = title,
+                                    items = listOf(
+                                        ActionMenuItem(
+                                            icon = LightIcons.TRASH,
+                                            label = "Delete playlist",
+                                            onSelect = ActionMenuSelection.Perform {
+                                                LightModalManager.show(
+                                                    ConfirmModal(
+                                                        title = "Delete \"$title\"?",
+                                                        message = "This removes the playlist. The tracks themselves aren't affected.",
+                                                        confirmContentDescription = "Delete playlist",
+                                                        onConfirm = { viewModel.delete { goBack() } },
+                                                    ),
+                                                    duration = 30.seconds,
+                                                )
+                                                null
+                                            },
+                                        ),
+                                    ),
+                                )
+                            })
+                        },
+                    ),
+            )
 
             // Inside, not Outside — see AlbumDetailScreen's identical call site
             // for why (Outside's gutter width isn't known until after first
