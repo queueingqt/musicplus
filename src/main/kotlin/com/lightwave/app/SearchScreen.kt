@@ -1,6 +1,6 @@
 package com.lightwave.app
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,7 +22,6 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
-import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
@@ -142,13 +141,31 @@ class SearchScreen(private val activity: SealedLightActivity) :
                                 navigateTo(::PlayerScreen)
                             }
                         },
-                        onAddToQueue = {
-                            scope.launch {
-                                val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
-                            }
+                        onOpenActions = {
+                            navigateTo({ a ->
+                                ActionsMenuScreen(
+                                    activity = a,
+                                    subtitle = track.title,
+                                    items = listOf(
+                                        ActionMenuItem(
+                                            icon = LightIcons.ADD,
+                                            label = "Add to queue",
+                                            onSelect = ActionMenuSelection.Perform {
+                                                val graph = AppGraph.from(lightContext)
+                                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
+                                            },
+                                        ),
+                                        ActionMenuItem(
+                                            icon = LightIcons.LIST,
+                                            label = "Add to playlist",
+                                            onSelect = ActionMenuSelection.Navigate {
+                                                navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
+                                            },
+                                        ),
+                                    ),
+                                )
+                            })
                         },
-                        onAddToPlaylist = { navigateTo({ a -> PlaylistPickerScreen(a, track.id) }) },
                     )
                 }
             }
@@ -199,20 +216,20 @@ private fun ResultRowWithArt(lightContext: SealedLightContext, label: String, co
     }
 }
 
+/** Tap to play (unchanged); long-press for the action menu (add to queue, add to playlist — issue #16). */
 @Composable
 private fun TrackResultRow(
     lightContext: SealedLightContext,
     track: Track,
     onPlay: () -> Unit,
-    onAddToQueue: () -> Unit,
-    onAddToPlaylist: () -> Unit,
+    onOpenActions: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .combinedClickable(onClick = onPlay, onLongClick = onOpenActions)
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         AlbumArt(
             lightContext = lightContext,
@@ -223,26 +240,9 @@ private fun TrackResultRow(
         LightText(
             text = track.title,
             variant = LightTextVariant.Copy,
-            modifier = Modifier
-                .weight(1f)
-                .lightClickable(onClick = onPlay)
-                .padding(vertical = 0.5f.gridUnitsAsDp()),
-        )
-        LightIcon(
-            icon = LightIcons.ADD,
-            size = 1.5f,
-            contentDescription = "Add to queue",
-            modifier = Modifier
-                .lightClickable(onClick = onAddToQueue)
-                .padding(start = 0.5f.gridUnitsAsDp()),
-        )
-        LightIcon(
-            icon = LightIcons.LIST,
-            size = 1.5f,
-            contentDescription = "Add to playlist",
-            modifier = Modifier
-                .lightClickable(onClick = onAddToPlaylist)
-                .padding(start = 0.5f.gridUnitsAsDp()),
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

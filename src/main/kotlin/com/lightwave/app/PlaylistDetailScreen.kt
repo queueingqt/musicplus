@@ -1,5 +1,6 @@
 package com.lightwave.app
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -190,7 +191,6 @@ class PlaylistDetailScreen(
                     val status by statusFlow.collectAsState(initial = null)
                     PlaylistTrackRow(
                         track = track,
-                        status = status,
                         canMoveUp = index > 0,
                         canMoveDown = index < tracks.lastIndex,
                         onPlay = {
@@ -200,9 +200,33 @@ class PlaylistDetailScreen(
                                 navigateTo(::PlayerScreen)
                             }
                         },
-                        onToggleFavorite = { viewModel.toggleFavorite(track) },
-                        onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
-                        onRemove = { viewModel.removeTrack(index) },
+                        onOpenActions = {
+                            navigateTo({ a ->
+                                ActionsMenuScreen(
+                                    activity = a,
+                                    subtitle = track.title,
+                                    items = listOf(
+                                        ActionMenuItem(
+                                            icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                                            label = if (track.isFavorite) "Remove from favorites" else "Add to favorites",
+                                            onSelect = ActionMenuSelection.Perform { viewModel.toggleFavorite(track) },
+                                        ),
+                                        ActionMenuItem(
+                                            icon = if (status?.status == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
+                                            label = downloadStatusLabel(status),
+                                            onSelect = ActionMenuSelection.Perform {
+                                                viewModel.toggleDownload(lightContext, track, status?.status)
+                                            },
+                                        ),
+                                        ActionMenuItem(
+                                            icon = LightIcons.CLOSE,
+                                            label = "Remove from playlist",
+                                            onSelect = ActionMenuSelection.Perform { viewModel.removeTrack(index) },
+                                        ),
+                                    ),
+                                )
+                            })
+                        },
                         onMoveUp = { viewModel.moveUp(index) },
                         onMoveDown = { viewModel.moveDown(index) },
                     )
@@ -212,16 +236,23 @@ class PlaylistDetailScreen(
     }
 }
 
+/**
+ * Tap the title to play (unchanged); long-press it for the action menu
+ * (favorite, download, remove from playlist — issue #16). Reorder (up/down)
+ * deliberately stays as inline icons rather than moving into that menu: it's
+ * a repeated, in-context operation — someone repositioning a track taps it
+ * several times in a row — unlike the other three actions here, which are
+ * single-shot. Routing every nudge through long-press -> menu -> tap ->
+ * auto-return -> long-press again would make the single most repetitive
+ * action on this screen also the most expensive one to perform.
+ */
 @Composable
 private fun PlaylistTrackRow(
     track: Track,
-    status: DownloadEntity?,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onPlay: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onDownload: () -> Unit,
-    onRemove: () -> Unit,
+    onOpenActions: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
@@ -230,36 +261,15 @@ private fun PlaylistTrackRow(
             .fillMaxWidth()
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            LightText(
-                text = track.title,
-                variant = LightTextVariant.Copy,
-                modifier = Modifier
-                    .weight(1f)
-                    .lightClickable(onClick = onPlay),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            LightIcon(
-                icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                size = 1.5f,
-                contentDescription = if (track.isFavorite) "Favorited" else "Favorite",
-                modifier = Modifier
-                    .lightClickable(onClick = onToggleFavorite)
-                    .padding(start = 0.5f.gridUnitsAsDp()),
-            )
-            LightIcon(
-                icon = if (status?.status == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
-                size = 1.5f,
-                contentDescription = downloadStatusLabel(status),
-                modifier = Modifier
-                    .lightClickable(onClick = onDownload)
-                    .padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
+        LightText(
+            text = track.title,
+            variant = LightTextVariant.Copy,
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onPlay, onLongClick = onOpenActions),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
@@ -282,14 +292,6 @@ private fun PlaylistTrackRow(
                         .padding(start = 0.5f.gridUnitsAsDp()),
                 )
             }
-            LightIcon(
-                icon = LightIcons.CLOSE,
-                size = 1.25f,
-                contentDescription = "Remove from playlist",
-                modifier = Modifier
-                    .lightClickable(onClick = onRemove)
-                    .padding(start = 0.5f.gridUnitsAsDp()),
-            )
         }
     }
 }

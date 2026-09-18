@@ -1,12 +1,10 @@
 package com.lightwave.app
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -15,9 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.lightwave.app.data.AppGraph
 import com.lightwave.app.data.DownloadEntity
@@ -30,13 +26,14 @@ import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
-import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightTopBar
+import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -63,7 +60,7 @@ class AlbumDetailScreenViewModel(
         .map { albums -> albums.find { it.id == albumId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    // Drives the album-level download button's icon: NONE (nothing downloaded),
+    // Drives the album-level download action's icon/label: NONE (nothing downloaded),
     // SOME (a mix — shows as the "start" icon, tapping downloads the rest),
     // ALL (every track downloaded — shows as complete, tapping removes all).
     val albumDownloadState: StateFlow<AlbumDownloadState> =
@@ -145,24 +142,16 @@ class AlbumDetailScreen(
         val albumDownloadState by viewModel.albumDownloadState.collectAsState()
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
 
-        // Favorite + album-level download + add-to-queue live in the top bar
-        // itself (not a separate row below the art) to save vertical space —
-        // icon-only, no text labels (self-explanatory iconography).
+        // Plain back + centered title now — the 3 album-level action icons that used to
+        // live here (favorite, download, add-to-queue, added earlier this session) moved
+        // to a long-press on the artwork below instead (issue #16). See the long-press
+        // handler's own comment for why the artwork rather than the title, and why a
+        // long-press at all rather than leaving them in the top bar.
         LightwaveScaffold(
             topBar = {
-                AlbumTopBar(
-                    title = title,
-                    isFavorite = album?.isFavorite == true,
-                    downloadState = albumDownloadState,
-                    onBack = { goBack() },
-                    onToggleFavorite = { viewModel.toggleFavorite() },
-                    onToggleDownload = { viewModel.toggleAlbumDownload(lightContext) },
-                    onAddToQueue = {
-                        scope.launch {
-                            val graph = AppGraph.from(lightContext)
-                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
-                        }
-                    },
+                LightTopBar(
+                    leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
+                    center = LightTopBarCenter.Text(title),
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
@@ -173,7 +162,56 @@ class AlbumDetailScreen(
                     url = album?.coverArtUrl,
                     size = 9f.gridUnitsAsDp(),
                     placeholderIconSize = 4f,
-                    modifier = Modifier.padding(vertical = 1f.gridUnitsAsDp()),
+                    modifier = Modifier
+                        .padding(vertical = 1f.gridUnitsAsDp())
+                        // Long-press opens the album-level actions menu (favorite, download,
+                        // add to queue — the 3 icons that used to sit in the top bar). Chose
+                        // the artwork over the title as the long-press target: it's the
+                        // biggest, most obviously "this is the thing this screen is about"
+                        // element on the screen, matches the long-press-a-photo/icon pattern
+                        // this device otherwise has no equivalent of, and — unlike the title —
+                        // it isn't text that already has its own reason to exist as plain
+                        // copy. Tap is a deliberate no-op: the artwork never had tap behavior
+                        // of its own before this change, and this doesn't add one.
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                navigateTo({ a ->
+                                    val isFavorite = album?.isFavorite == true
+                                    ActionsMenuScreen(
+                                        activity = a,
+                                        subtitle = title,
+                                        items = listOf(
+                                            ActionMenuItem(
+                                                icon = if (isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                                                label = if (isFavorite) "Remove from favorites" else "Add to favorites",
+                                                onSelect = ActionMenuSelection.Perform { viewModel.toggleFavorite() },
+                                            ),
+                                            ActionMenuItem(
+                                                icon = when (albumDownloadState) {
+                                                    AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
+                                                    AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
+                                                },
+                                                label = when (albumDownloadState) {
+                                                    AlbumDownloadState.ALL -> "Downloaded — remove"
+                                                    AlbumDownloadState.SOME -> "Some tracks downloaded — download the rest"
+                                                    AlbumDownloadState.NONE -> "Download album"
+                                                },
+                                                onSelect = ActionMenuSelection.Perform { viewModel.toggleAlbumDownload(lightContext) },
+                                            ),
+                                            ActionMenuItem(
+                                                icon = LightIcons.ADD,
+                                                label = "Add album to queue",
+                                                onSelect = ActionMenuSelection.Perform {
+                                                    val graph = AppGraph.from(lightContext)
+                                                    PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
+                                                },
+                                            ),
+                                        ),
+                                    )
+                                })
+                            },
+                        ),
                 )
             }
 
@@ -183,7 +221,6 @@ class AlbumDetailScreen(
                     val status by statusFlow.collectAsState(initial = null)
                     TrackRow(
                         track = track,
-                        status = status,
                         onPlay = {
                             scope.launch {
                                 val graph = AppGraph.from(lightContext)
@@ -191,17 +228,45 @@ class AlbumDetailScreen(
                                 navigateTo(::PlayerScreen)
                             }
                         },
-                        onToggleFavorite = {
-                            scope.launch { AppGraph.from(lightContext).libraryRepository.setTrackFavorite(track.id, !track.isFavorite) }
+                        onOpenActions = {
+                            navigateTo({ a ->
+                                ActionsMenuScreen(
+                                    activity = a,
+                                    subtitle = track.title,
+                                    items = listOf(
+                                        ActionMenuItem(
+                                            icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+                                            label = if (track.isFavorite) "Remove from favorites" else "Add to favorites",
+                                            onSelect = ActionMenuSelection.Perform {
+                                                AppGraph.from(lightContext).libraryRepository.setTrackFavorite(track.id, !track.isFavorite)
+                                            },
+                                        ),
+                                        ActionMenuItem(
+                                            icon = LightIcons.ADD,
+                                            label = "Add to queue",
+                                            onSelect = ActionMenuSelection.Perform {
+                                                val graph = AppGraph.from(lightContext)
+                                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
+                                            },
+                                        ),
+                                        ActionMenuItem(
+                                            icon = LightIcons.LIST,
+                                            label = "Add to playlist",
+                                            onSelect = ActionMenuSelection.Navigate {
+                                                navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
+                                            },
+                                        ),
+                                        ActionMenuItem(
+                                            icon = downloadIcon(status),
+                                            label = downloadStatusLabel(status),
+                                            onSelect = ActionMenuSelection.Perform {
+                                                viewModel.toggleDownload(lightContext, track, status?.status)
+                                            },
+                                        ),
+                                    ),
+                                )
+                            })
                         },
-                        onAddToQueue = {
-                            scope.launch {
-                                val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
-                            }
-                        },
-                        onDownload = { viewModel.toggleDownload(lightContext, track, status?.status) },
-                        onAddToPlaylist = { navigateTo({ a -> PlaylistPickerScreen(a, track.id) }) },
                     )
                 }
             }
@@ -209,149 +274,26 @@ class AlbumDetailScreen(
     }
 }
 
-/**
- * Custom top bar replicating [com.thelightphone.sdk.ui.LightTopBar]'s layout
- * (same height/padding constants, same overlaid-Box centering trick so the
- * title stays truly centered regardless of how wide the left/right content
- * is) — [com.thelightphone.sdk.ui.LightTopBar] itself only has room for one
- * `rightButton`, and this needs three (favorite, download, add-to-queue), so
- * a plain `rightButton` slot can't fit them without a separate row.
- */
-@Composable
-private fun AlbumTopBar(
-    title: String,
-    isFavorite: Boolean,
-    downloadState: AlbumDownloadState,
-    onBack: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onToggleDownload: () -> Unit,
-    onAddToQueue: () -> Unit,
-) {
-    val barHeight = 3f.gridUnitsAsDp()
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(barHeight)
-            .padding(horizontal = 1f.gridUnitsAsDp()),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(barHeight).zIndex(2f),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LightIcon(
-                icon = LightIcons.BACK,
-                modifier = Modifier.lightClickable(onClick = onBack),
-                contentDescription = "Back",
-            )
-            Box(modifier = Modifier.weight(1f))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                LightIcon(
-                    icon = if (isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                    size = 1.5f,
-                    contentDescription = if (isFavorite) "Favorited" else "Favorite",
-                    modifier = Modifier
-                        .lightClickable(onClick = onToggleFavorite)
-                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
-                )
-                LightIcon(
-                    icon = when (downloadState) {
-                        AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
-                        AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
-                    },
-                    size = 1.5f,
-                    contentDescription = when (downloadState) {
-                        AlbumDownloadState.ALL -> "Album downloaded — tap to remove"
-                        AlbumDownloadState.SOME -> "Some tracks downloaded — tap to download the rest"
-                        AlbumDownloadState.NONE -> "Download album"
-                    },
-                    modifier = Modifier
-                        .lightClickable(onClick = onToggleDownload)
-                        .padding(horizontal = 0.5f.gridUnitsAsDp()),
-                )
-                // Whole-album "add to queue" — appends every track on the album
-                // after whatever's currently playing, same action as each row's
-                // own add-to-queue icon but for the full track list at once.
-                LightIcon(
-                    icon = LightIcons.ADD,
-                    size = 1.5f,
-                    contentDescription = "Add album to queue",
-                    modifier = Modifier.lightClickable(onClick = onAddToQueue),
-                )
-            }
-        }
-        Box(
-            modifier = Modifier.fillMaxWidth().height(barHeight),
-            contentAlignment = Alignment.Center,
-        ) {
-            LightText(
-                text = title,
-                variant = LightTextVariant.Fine,
-                align = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 13f.gridUnitsAsDp()),
-            )
-        }
-    }
-}
-
+/** Tap to play (unchanged); long-press for the full action menu (favorite, queue, playlist, download — issue #16). */
 @Composable
 private fun TrackRow(
     track: Track,
-    status: DownloadEntity?,
     onPlay: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onAddToQueue: () -> Unit,
-    onAddToPlaylist: () -> Unit,
-    onDownload: () -> Unit,
+    onOpenActions: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .combinedClickable(onClick = onPlay, onLongClick = onOpenActions)
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LightText(
             text = track.title,
             variant = LightTextVariant.Copy,
-            modifier = Modifier
-                .weight(1f)
-                .lightClickable(onClick = onPlay),
+            modifier = Modifier.weight(1f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-        )
-        LightIcon(
-            icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-            size = 1.5f,
-            contentDescription = if (track.isFavorite) "Favorited" else "Favorite",
-            modifier = Modifier
-                .lightClickable(onClick = onToggleFavorite)
-                .padding(horizontal = 0.5f.gridUnitsAsDp()),
-        )
-        LightIcon(
-            icon = LightIcons.ADD,
-            size = 1.5f,
-            contentDescription = "Add to queue",
-            modifier = Modifier
-                .lightClickable(onClick = onAddToQueue)
-                .padding(start = 0.5f.gridUnitsAsDp()),
-        )
-        LightIcon(
-            icon = LightIcons.LIST,
-            size = 1.5f,
-            contentDescription = "Add to playlist",
-            modifier = Modifier
-                .lightClickable(onClick = onAddToPlaylist)
-                .padding(start = 0.5f.gridUnitsAsDp()),
-        )
-        LightIcon(
-            icon = downloadIcon(status),
-            size = 1.5f,
-            contentDescription = downloadStatusLabel(status),
-            modifier = Modifier
-                .lightClickable(onClick = onDownload)
-                .padding(start = 0.5f.gridUnitsAsDp()),
         )
     }
 }
