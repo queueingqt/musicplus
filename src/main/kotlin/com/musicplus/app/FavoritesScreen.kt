@@ -73,8 +73,7 @@ class FavoritesScreenViewModel(
     }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    var scrollIndex = 0
-    var scrollOffset = 0
+    val scrollPosition = ScrollPosition()
 }
 
 class FavoritesScreen(private val activity: SealedLightActivity) :
@@ -110,10 +109,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
-                viewModel.scrollIndex = i
-                viewModel.scrollOffset = o
-            }
+            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->

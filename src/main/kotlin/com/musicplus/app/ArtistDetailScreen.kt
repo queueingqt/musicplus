@@ -103,8 +103,7 @@ class ArtistDetailScreenViewModel(
     }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    var scrollIndex = 0
-    var scrollOffset = 0
+    val scrollPosition = ScrollPosition()
 }
 
 class ArtistDetailScreen(
@@ -160,10 +159,7 @@ class ArtistDetailScreen(
             // layout, so the trailing favorite star briefly rendered full-width
             // then jumped left once it appeared; AlbumRow reserves the same
             // width itself, unconditionally, instead).
-            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
-                viewModel.scrollIndex = i
-                viewModel.scrollOffset = o
-            }
+            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(
                 modifier = Modifier.fillMaxWidth(),
                 scrollBarPosition = LightScrollBarPosition.Inside,

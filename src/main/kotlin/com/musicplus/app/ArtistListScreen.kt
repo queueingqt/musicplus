@@ -61,8 +61,7 @@ class ArtistListScreenViewModel(
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    var scrollIndex = 0
-    var scrollOffset = 0
+    val scrollPosition = ScrollPosition()
 }
 
 class ArtistListScreen(activity: SealedLightActivity) :
@@ -99,10 +98,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
-                viewModel.scrollIndex = i
-                viewModel.scrollOffset = o
-            }
+            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 items(artists, key = { it.id }) { artist ->
                     ArtistRow(

@@ -77,8 +77,7 @@ class SearchScreenViewModel(
     }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    var scrollIndex = 0
-    var scrollOffset = 0
+    val scrollPosition = ScrollPosition()
 }
 
 class SearchScreen(private val activity: SealedLightActivity) :
@@ -132,10 +131,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                     .padding(horizontal = 1f.gridUnitsAsDp()),
             )
 
-            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
-                viewModel.scrollIndex = i
-                viewModel.scrollOffset = o
-            }
+            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->
