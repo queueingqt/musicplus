@@ -8,6 +8,9 @@ import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
+/** How many songs [LibraryRepository.refreshAllSongs] asks for per page — large enough that a typical library finishes in a small handful of requests, small enough that each individual request/upsert stays quick. */
+private const val ALL_SONGS_PAGE_SIZE = 500
+
 /**
  * Cache-then-network access to the server's ID3 library. Room is the source of
  * truth for what the UI observes; `refresh*` functions pull from Subsonic and
@@ -46,6 +49,17 @@ class LibraryRepository(
 
     fun observeFavoriteTracks(): Flow<List<Track>> =
         trackDao.observeFavorites().map { entities ->
+            entities.map { it.toDomain(downloaded = false, localFilePath = null) }
+        }
+
+    /**
+     * Every track in the library, not just ones already pulled in via an
+     * album/playlist/search visit — see [refreshAllSongs], which this needs
+     * to have actually run at least once for the flat "Songs" list to be
+     * complete rather than just whatever happened to already be cached.
+     */
+    fun observeAllTracks(): Flow<List<Track>> =
+        trackDao.observeAll().map { entities ->
             entities.map { it.toDomain(downloaded = false, localFilePath = null) }
         }
 
@@ -105,6 +119,34 @@ class LibraryRepository(
         } catch (e: Exception) {
             // Cache left as-is deliberately — see class-level refresh-failure doc above.
             AppLogger.e("LibraryRepository", "refreshAlbumDetail($albumId) failed", e)
+        }
+    }
+
+    /**
+     * Pages through [SubsonicApi.getSongsPage] until a short page confirms
+     * the end, upserting as it goes — needed because [observeAllTracks]'s
+     * flat "Songs" list is otherwise only as complete as whichever albums/
+     * playlists/searches happen to have been visited already, unlike Albums/
+     * Artists (each backed by their own dedicated real "list everything"
+     * refresh). A real library can be a few thousand tracks; upserting page
+     * by page means the list is already populating while later pages are
+     * still loading, rather than one long wait before anything shows.
+     */
+    suspend fun refreshAllSongs() {
+        if (!connectivity.currentStatus.isConnected) return
+        val api = apiHolder.get() ?: return
+        try {
+            var offset = 0
+            while (true) {
+                val page = api.getSongsPage(songCount = ALL_SONGS_PAGE_SIZE, songOffset = offset)
+                if (page.isEmpty()) break
+                trackDao.upsertAll(page.map { it.toEntity() })
+                if (page.size < ALL_SONGS_PAGE_SIZE) break
+                offset += ALL_SONGS_PAGE_SIZE
+            }
+        } catch (e: Exception) {
+            // Cache left as-is deliberately — see class-level refresh-failure doc above.
+            AppLogger.e("LibraryRepository", "refreshAllSongs failed", e)
         }
     }
 

@@ -20,8 +20,10 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -93,7 +95,16 @@ class AlbumListScreen(activity: SealedLightActivity) :
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+            // Inside, not Outside — see AlbumDetailScreen's identical call site
+            // for why (Outside's gutter width isn't known until after first
+            // layout, so the trailing favorite star briefly rendered full-width
+            // then jumped left once it appeared; AlbumRow reserves the same
+            // width itself, unconditionally, instead).
+            LightLazyScrollView(
+                modifier = Modifier.fillMaxWidth(),
+                scrollBarPosition = LightScrollBarPosition.Inside,
+                uniformItemHeightGridUnits = 3f,
+            ) {
                 items(albums, key = { it.id }) { album ->
                     AlbumRow(lightContext, album) {
                         navigateTo({ a -> AlbumDetailScreen(a, album.id, album) })
@@ -110,7 +121,10 @@ private fun AlbumRow(lightContext: SealedLightContext, album: Album, onClick: ()
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onClick)
-            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            // end matches the SDK's own scrollbar track width — see the
+            // LightLazyScrollView call site above for why this is fixed
+            // rather than conditional on whether a scrollbar happens to show.
+            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = 2f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AlbumArt(
@@ -119,9 +133,18 @@ private fun AlbumRow(lightContext: SealedLightContext, album: Album, onClick: ()
             size = 2.5f.gridUnitsAsDp(),
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             LightText(text = album.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
             LightText(text = album.artistName ?: "Unknown artist", variant = LightTextVariant.Fine, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        // Reported live: no way to tell an album was favorited from this list.
+        if (album.isFavorite) {
+            LightIcon(
+                icon = LightIcons.STAR,
+                size = 1.2f,
+                contentDescription = "Favorited",
+                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+            )
         }
     }
 }

@@ -36,6 +36,28 @@ class SubsonicApi(private val client: SubsonicClient) {
             ),
         ).searchResult3 ?: SubsonicSearchResult()
 
+    /**
+     * One page of the *entire* song library, for the flat "Songs" browse list
+     * — there's no dedicated "getAllSongs" Subsonic endpoint, so this is the
+     * documented way every real client gets one: `search3` with an empty
+     * query matches every song (confirmed against Navidrome's own search
+     * behavior, not guessed), `artistCount`/`albumCount` zeroed out since
+     * only songs are wanted here, and `songOffset` for paging through a
+     * library too large for one call. See [LibraryRepository.refreshAllSongs]
+     * for the paging loop.
+     */
+    suspend fun getSongsPage(songCount: Int, songOffset: Int): List<SubsonicSong> =
+        client.call(
+            "search3.view",
+            listOf(
+                "query" to "",
+                "artistCount" to "0",
+                "albumCount" to "0",
+                "songCount" to songCount.toString(),
+                "songOffset" to songOffset.toString(),
+            ),
+        ).searchResult3?.song ?: emptyList()
+
     suspend fun getStarred(): SubsonicStarred =
         client.call("getStarred2.view").starred2 ?: SubsonicStarred()
 

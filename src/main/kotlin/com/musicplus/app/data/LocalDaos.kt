@@ -48,6 +48,9 @@ interface AlbumDao {
 
 @Dao
 interface TrackDao {
+    @Query("SELECT * FROM tracks ORDER BY title COLLATE NOCASE")
+    fun observeAll(): Flow<List<TrackEntity>>
+
     @Query("SELECT * FROM tracks WHERE albumId = :albumId ORDER BY trackNumber IS NULL, trackNumber")
     fun observeByAlbum(albumId: String): Flow<List<TrackEntity>>
 

@@ -27,8 +27,10 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
+import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -38,6 +40,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -66,15 +69,23 @@ class AlbumDetailScreenViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialAlbum)
 
     // Drives the album-level download action's icon/label: NONE (nothing downloaded),
-    // SOME (a mix — shows as the "start" icon, tapping downloads the rest),
-    // ALL (every track downloaded — shows as complete, tapping removes all).
+    // SOME (a mix, all quiet/settled — shows as the "start" icon, tapping downloads
+    // the rest), IN_PROGRESS (at least one track actively queued/downloading right
+    // now), ALL (every track downloaded — shows as complete, tapping removes all).
+    // IN_PROGRESS is checked before SOME/ALL are even considered — reported live:
+    // tapping "Download album" instantly showed "Downloaded — remove" because the
+    // original 3-state version only ever looked at COMPLETE counts, so "just
+    // enqueued, zero actually done yet" and "fully downloaded" were indistinguishable.
     val albumDownloadState: StateFlow<AlbumDownloadState> =
         combine(tracks, downloadRepository.observeAll()) { trackList, downloads ->
             if (trackList.isEmpty()) return@combine AlbumDownloadState.NONE
-            val downloadedIds = downloads.filter { it.status == DownloadStatus.COMPLETE }.map { it.songId }.toSet()
+            val statusById = downloads.associateBy { it.songId }
+            val completeCount = trackList.count { statusById[it.id]?.status == DownloadStatus.COMPLETE }
+            val anyInProgress = trackList.any { statusById[it.id]?.status in IN_PROGRESS_STATUSES }
             when {
-                downloadedIds.containsAll(trackList.map { it.id }) -> AlbumDownloadState.ALL
-                trackList.any { it.id in downloadedIds } -> AlbumDownloadState.SOME
+                anyInProgress -> AlbumDownloadState.IN_PROGRESS
+                completeCount == trackList.size -> AlbumDownloadState.ALL
+                completeCount > 0 -> AlbumDownloadState.SOME
                 else -> AlbumDownloadState.NONE
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlbumDownloadState.NONE)
@@ -107,23 +118,39 @@ class AlbumDetailScreenViewModel(
             }
         }
 
-    /** ALL -> remove every downloaded track; NONE/SOME -> download whatever isn't already complete. Suspend, same reasoning as [toggleDownload]. */
+    /**
+     * ALL/IN_PROGRESS -> cancel every track's download (matches
+     * [toggleDownload]'s own "cancel doubles as remove" semantics); NONE/SOME
+     * -> download whatever isn't already COMPLETE (previously enqueued every
+     * track unconditionally, silently re-downloading already-complete ones —
+     * the doc here already said "whatever isn't already complete," the code
+     * just didn't do that). Suspend, same reasoning as [toggleDownload]: the
+     * returned state is what just started, not a guess at what will
+     * eventually finish, so the action menu row can show real "in progress"
+     * feedback instead of claiming instant completion.
+     */
     suspend fun toggleAlbumDownload(lightContext: SealedLightContext): AlbumDownloadState {
         val currentTracks = tracks.value
         return when (albumDownloadState.value) {
-            AlbumDownloadState.ALL -> {
+            AlbumDownloadState.ALL, AlbumDownloadState.IN_PROGRESS -> {
                 currentTracks.forEach { downloadRepository.cancel(lightContext, it.id) }
                 AlbumDownloadState.NONE
             }
             AlbumDownloadState.NONE, AlbumDownloadState.SOME -> {
-                currentTracks.forEach { downloadRepository.enqueue(lightContext, it) }
-                AlbumDownloadState.ALL
+                val completeIds = downloadRepository.observeAll().first()
+                    .filter { it.status == DownloadStatus.COMPLETE }
+                    .map { it.songId }
+                    .toSet()
+                currentTracks.filter { it.id !in completeIds }.forEach { downloadRepository.enqueue(lightContext, it) }
+                AlbumDownloadState.IN_PROGRESS
             }
         }
     }
 }
 
-enum class AlbumDownloadState { NONE, SOME, ALL }
+enum class AlbumDownloadState { NONE, SOME, IN_PROGRESS, ALL }
+
+private val IN_PROGRESS_STATUSES = setOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING)
 
 /**
  * `activity` is retained as a property (same reasoning as PlayerScreen's
@@ -150,14 +177,25 @@ class AlbumDetailScreen(
         val album by viewModel.album.collectAsState()
         val albumDownloadState by viewModel.albumDownloadState.collectAsState()
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
+        // Reported live: favoriting an album showed no indication anywhere on
+        // this screen. LightTopBarCenter only supports plain text (no
+        // icon-in-title slot — checked the SDK directly), so this prefixes a
+        // real star character rather than duplicating the title as its own
+        // body row just to attach a LightIcon; [title] itself (star-free)
+        // still feeds the actions menu's subtitle below, which shouldn't
+        // repeat state that's already the option being offered there.
+        val topBarTitle = if (album?.isFavorite == true) "★ $title" else title
 
         fun albumDownloadActionItem(state: AlbumDownloadState): ActionMenuItem = ActionMenuItem(
+            key = "download",
             icon = when (state) {
                 AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
+                AlbumDownloadState.IN_PROGRESS -> LightIcons.REFRESH
                 AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
             },
             label = when (state) {
                 AlbumDownloadState.ALL -> "Downloaded — remove"
+                AlbumDownloadState.IN_PROGRESS -> "Downloading — tap to cancel"
                 AlbumDownloadState.SOME -> "Some tracks downloaded — download the rest"
                 AlbumDownloadState.NONE -> "Download album"
             },
@@ -167,6 +205,7 @@ class AlbumDetailScreen(
         )
 
         fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
+            key = "download",
             icon = downloadIcon(status),
             label = downloadStatusLabel(status),
             onSelect = ActionMenuSelection.Perform {
@@ -183,7 +222,7 @@ class AlbumDetailScreen(
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
-                    center = LightTopBarCenter.Text(title),
+                    center = LightTopBarCenter.Text(topBarTitle),
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
@@ -228,7 +267,9 @@ class AlbumDetailScreen(
                                             favoriteActionItem(isFavorite) { favorite ->
                                                 AppGraph.from(lightContext).syncQueueRepository.setAlbumFavorite(albumId, favorite)
                                             },
-                                            albumDownloadActionItem(albumDownloadState),
+                                            albumDownloadActionItem(albumDownloadState).copy(
+                                                liveUpdates = viewModel.albumDownloadState.map { albumDownloadActionItem(it) },
+                                            ),
                                             addAlbumToQueueItem,
                                         ),
                                     )
@@ -238,12 +279,29 @@ class AlbumDetailScreen(
                 )
             }
 
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
+            // Inside, not the default Outside — Outside computes its gutter width
+            // from listState.layoutInfo, which isn't valid until after the first
+            // layout pass, so trailing per-row content (the favorite/download
+            // glyphs below) briefly rendered flush against the far edge and then
+            // visibly jumped left once the gutter appeared. Reported live.
+            // Inside's LazyColumn is always full-width (its scrollbar draws as an
+            // overlay, not a reserved gutter), so there's nothing to reflow — but
+            // its overlay track would then sit on top of trailing row content
+            // instead, which is exactly what got Inside reverted for QueueScreen's
+            // own trailing icon earlier. TrackRow below reserves that same width
+            // itself as fixed end padding, unconditionally, so there's no
+            // dynamically-appearing gutter to glitch *and* no overlap either.
+            LightLazyScrollView(
+                modifier = Modifier.fillMaxWidth(),
+                scrollBarPosition = LightScrollBarPosition.Inside,
+                uniformItemHeightGridUnits = 3f,
+            ) {
                 itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
                     val statusFlow = remember(track.id) { viewModel.downloadStatus(track.id) }
                     val status by statusFlow.collectAsState(initial = null)
                     TrackRow(
                         track = track,
+                        downloadStatus = status?.status,
                         onPlay = {
                             scope.launch {
                                 val graph = AppGraph.from(lightContext)
@@ -279,7 +337,9 @@ class AlbumDetailScreen(
                                                 navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
                                             },
                                         ),
-                                        trackDownloadActionItem(track, status?.status),
+                                        trackDownloadActionItem(track, status?.status).copy(
+                                            liveUpdates = viewModel.downloadStatus(track.id).map { trackDownloadActionItem(track, it?.status) },
+                                        ),
                                     ),
                                 )
                             })
@@ -291,10 +351,22 @@ class AlbumDetailScreen(
     }
 }
 
-/** Tap to play (unchanged); long-press for the full action menu (favorite, queue, playlist, download — issue #16). */
+/**
+ * Tap to play (unchanged); long-press for the full action menu (favorite,
+ * queue, playlist, download — issue #16). The actions themselves moved
+ * behind that long-press, but their *state* stays visible at a glance as
+ * small trailing glyphs — reported live: moving favorite/download to the
+ * long-press menu also silently removed any way to tell a track was already
+ * favorited or downloaded without opening that menu. Each glyph only
+ * renders when it has something to say (favorited, or any known download
+ * history) — never a default/empty-state icon, same reasoning as the
+ * artwork-off case elsewhere in this app: an icon that's always there reads
+ * as chrome, not information.
+ */
 @Composable
 private fun TrackRow(
     track: Track,
+    downloadStatus: DownloadStatus?,
     onPlay: () -> Unit,
     onOpenActions: () -> Unit,
 ) {
@@ -302,7 +374,19 @@ private fun TrackRow(
         modifier = Modifier
             .fillMaxWidth()
             .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
-            .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            .padding(
+                top = 0.5f.gridUnitsAsDp(),
+                bottom = 0.5f.gridUnitsAsDp(),
+                start = 1f.gridUnitsAsDp(),
+                // Matches the SDK's own SCROLLBAR_WIDTH_UNITS (2f) — the Inside
+                // scrollbar draws as an overlay in exactly that much space at the
+                // far right, so this keeps the trailing glyphs clear of it
+                // unconditionally, rather than only once a list happens to be
+                // long enough to actually show a scrollbar (which is exactly the
+                // "not known until after first layout" timing this is working
+                // around — see the LightLazyScrollView call site's own doc).
+                end = 2f.gridUnitsAsDp(),
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LightText(
@@ -312,6 +396,22 @@ private fun TrackRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (track.isFavorite) {
+            LightIcon(
+                icon = LightIcons.STAR,
+                size = 1.2f,
+                contentDescription = "Favorited",
+                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+            )
+        }
+        if (downloadStatus != null) {
+            LightIcon(
+                icon = downloadIcon(downloadStatus),
+                size = 1.2f,
+                contentDescription = downloadStatusLabel(downloadStatus),
+                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+            )
+        }
     }
 }
 

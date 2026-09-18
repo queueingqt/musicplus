@@ -27,6 +27,8 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
 /**
@@ -55,6 +57,27 @@ data class ActionMenuItem(
     val icon: LightIconConfiguration,
     val label: String,
     val onSelect: ActionMenuSelection,
+    /**
+     * Optional live source for this row, independent of taps — reported
+     * live: a download in progress when the menu opened just sat there
+     * still saying "Downloading" long after it had actually finished,
+     * because (unlike a favorite toggle, which completes instantly) a
+     * download is a real multi-second background process the person might
+     * watch this same open menu through. Most rows have nothing that
+     * changes without a tap and leave this null; [ActionsMenuScreen]
+     * collects it for the ones that do and replaces the row every time it
+     * emits, the same as it would after a [ActionMenuSelection.Perform].
+     */
+    val liveUpdates: Flow<ActionMenuItem>? = null,
+    /**
+     * Stable identity for matching a live update back to its row —
+     * deliberately separate from [label], which is exactly what a live
+     * update (or a tap) usually changes. Defaults to [label] for a row whose
+     * label genuinely never changes over its lifetime in one menu; a row
+     * built by a self-updating helper (see [favoriteActionItem]) passes its
+     * own fixed key instead.
+     */
+    val key: String = label,
 )
 
 /**
@@ -65,6 +88,7 @@ data class ActionMenuItem(
  */
 fun favoriteActionItem(isFavorite: Boolean, toggle: suspend (Boolean) -> Unit): ActionMenuItem =
     ActionMenuItem(
+        key = "favorite",
         icon = if (isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
         label = if (isFavorite) "Remove from favorites" else "Add to favorites",
         onSelect = ActionMenuSelection.Perform {
@@ -153,6 +177,21 @@ class ActionsMenuScreen(
         var closing by remember { mutableStateOf(false) }
         var busy by remember { mutableStateOf(false) }
 
+        // Subscribed once, off the *original* items list — not `visibleItems`,
+        // which mutates — so this survives any number of tap- or live-driven
+        // replacements of the row it's watching. Matched back by `key`, never
+        // `label`: label is exactly what a live update (or a tap) changes.
+        LaunchedEffect(Unit) {
+            items.forEach { original ->
+                val live = original.liveUpdates ?: return@forEach
+                launch {
+                    live.collect { updated ->
+                        visibleItems = visibleItems.map { if (it.key == original.key) updated else it }
+                    }
+                }
+            }
+        }
+
         fun close() {
             if (closing) return
             closing = true
@@ -197,7 +236,7 @@ class ActionsMenuScreen(
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
-                items(visibleItems, key = { it.label }) { item ->
+                items(visibleItems, key = { it.key }) { item ->
                     ActionRow(item) { handleSelection(item) }
                 }
             }

@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
@@ -34,6 +35,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -44,6 +46,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -146,6 +149,7 @@ class PlaylistDetailScreen(
         }
 
         fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
+            key = "download",
             icon = if (status == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
             label = downloadStatusLabel(status),
             onSelect = ActionMenuSelection.Perform {
@@ -198,12 +202,22 @@ class PlaylistDetailScreen(
                 )
             }
 
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 4.5f) {
+            // Inside, not Outside — see AlbumDetailScreen's identical call site
+            // for why (Outside's gutter width isn't known until after first
+            // layout, so trailing per-row content briefly renders full-width
+            // then jumps left once it appears; PlaylistTrackRow reserves the
+            // same width itself, unconditionally, instead).
+            LightLazyScrollView(
+                modifier = Modifier.fillMaxWidth(),
+                scrollBarPosition = LightScrollBarPosition.Inside,
+                uniformItemHeightGridUnits = 4.5f,
+            ) {
                 itemsIndexed(tracks, key = { index, track -> "$index-${track.id}" }) { index, track ->
                     val statusFlow = remember(track.id) { viewModel.downloadStatus(track.id) }
                     val status by statusFlow.collectAsState(initial = null)
                     PlaylistTrackRow(
                         track = track,
+                        downloadStatus = status?.status,
                         canMoveUp = index > 0,
                         canMoveDown = index < tracks.lastIndex,
                         onPlay = {
@@ -222,7 +236,9 @@ class PlaylistDetailScreen(
                                         favoriteActionItem(track.isFavorite) { favorite ->
                                             AppGraph.from(lightContext).syncQueueRepository.setTrackFavorite(track.id, favorite)
                                         },
-                                        trackDownloadActionItem(track, status?.status),
+                                        trackDownloadActionItem(track, status?.status).copy(
+                                            liveUpdates = viewModel.downloadStatus(track.id).map { trackDownloadActionItem(track, it?.status) },
+                                        ),
                                         ActionMenuItem(
                                             icon = LightIcons.CLOSE,
                                             label = "Remove from playlist",
@@ -254,9 +270,11 @@ class PlaylistDetailScreen(
  * auto-return -> long-press again would make the single most repetitive
  * action on this screen also the most expensive one to perform.
  */
+/** Favorite/download glyphs shown only when they have something to say — see AlbumDetailScreen's TrackRow doc for why (issue reported live: moving those actions behind long-press also removed any at-a-glance state). */
 @Composable
 private fun PlaylistTrackRow(
     track: Track,
+    downloadStatus: DownloadStatus?,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onPlay: () -> Unit,
@@ -267,17 +285,41 @@ private fun PlaylistTrackRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            // end matches the SDK's own scrollbar track width — see the
+            // LightLazyScrollView call site above for why this is fixed
+            // rather than conditional on whether a scrollbar happens to show.
+            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = 2f.gridUnitsAsDp()),
     ) {
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LightText(
+                text = track.title,
+                variant = LightTextVariant.Copy,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (track.isFavorite) {
+                LightIcon(
+                    icon = LightIcons.STAR,
+                    size = 1.2f,
+                    contentDescription = "Favorited",
+                    modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+                )
+            }
+            if (downloadStatus != null) {
+                LightIcon(
+                    icon = if (downloadStatus == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
+                    size = 1.2f,
+                    contentDescription = downloadStatusLabel(downloadStatus),
+                    modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+                )
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,

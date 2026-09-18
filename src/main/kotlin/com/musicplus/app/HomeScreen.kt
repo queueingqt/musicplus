@@ -88,6 +88,7 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                 LightScrollView(modifier = Modifier.fillMaxWidth()) {
                     MenuRow("Albums") { navigateTo(::AlbumListScreen) }
                     MenuRow("Artists") { navigateTo(::ArtistListScreen) }
+                    MenuRow("Songs") { navigateTo(::SongsListScreen) }
                     MenuRow("Playlists") { navigateTo(::PlaylistListScreen) }
                     MenuRow("Queue") { navigateTo(::QueueScreen) }
                     MenuRow("Favorites") { navigateTo(::FavoritesScreen) }
