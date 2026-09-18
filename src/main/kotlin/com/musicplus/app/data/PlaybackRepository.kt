@@ -134,9 +134,35 @@ class PlaybackRepository(
     // different track.
     private data class ResolvedIndex(val index: Int, val isPending: Boolean)
 
+    /**
+     * The shared "is the real player's current index trustworthy for the
+     * current queue, or do we still need `pendingIndex`" branch — needed
+     * identically by the live `resolvedIndex` flow below and by
+     * [currentSnapshot], its synchronous twin used to seed a fresh screen's
+     * `StateFlow` before any emission can land. These two used to each
+     * reimplement this by hand: a fix for the restored-but-never-loaded-queue
+     * case (see `playerQueueLoaded`'s doc) landed in the live `resolvedIndex`
+     * flow first, and [currentSnapshot] kept flashing stale Now Playing art/
+     * title on navigation until the same gap was found and patched there
+     * separately — confirmed on-device 2026-09-18. Pulled out here so the two
+     * call sites structurally cannot drift apart like that again.
+     *
+     * Not loaded yet, or `realIndex` outside `[0, queueSize)` (the real
+     * player hasn't caught up to a just-started queue/index yet, or never
+     * loaded one at all — see `playerQueueLoaded`'s doc), falls back to
+     * `pendingIndex` coerced into the queue's valid range; otherwise the real
+     * player's index is trustworthy as-is.
+     */
+    private fun resolveIndex(queueSize: Int, realIndex: Int, pendingIndex: Int, playerQueueLoaded: Boolean): ResolvedIndex {
+        return if (playerQueueLoaded && realIndex in 0 until queueSize) {
+            ResolvedIndex(realIndex, isPending = false)
+        } else {
+            ResolvedIndex(pendingIndex.coerceIn(0, (queueSize - 1).coerceAtLeast(0)), isPending = true)
+        }
+    }
+
     private val resolvedIndex = combine(queue, player.currentMediaItemIndex, pendingIndex, playerQueueLoaded) { q, realIndex, pending, loaded ->
-        if (loaded && realIndex in q.indices) ResolvedIndex(realIndex, isPending = false)
-        else ResolvedIndex(pending.coerceIn(0, (q.size - 1).coerceAtLeast(0)), isPending = true)
+        resolveIndex(queueSize = q.size, realIndex = realIndex, pendingIndex = pending, playerQueueLoaded = loaded)
     }
 
     private val playerCore = combine(
@@ -327,17 +353,19 @@ class PlaybackRepository(
      */
     fun currentSnapshot(): PlaybackState {
         val q = queue.value
-        val realIndex = player.currentMediaItemIndex.value
-        // Same fallback as `resolvedIndex` above, and for the same reason: right
-        // after play() is called, this can be read before the player's own index
-        // has caught up to the new queue — confirmed on-device 2026-09-18, this
-        // exact gap was still flashing Now Playing's art/title even after the
-        // live-flow fallback was added, because this snapshot bypassed it entirely.
-        // `!playerQueueLoaded.value` also catches a restored-but-never-loaded
-        // queue, where `realIndex` (likely the player's untouched default, 0)
-        // could otherwise coincidentally fall inside `q`'s bounds by pure luck.
-        val isPending = !playerQueueLoaded.value || realIndex !in q.indices
-        val index = if (isPending) pendingIndex.value.coerceIn(0, (q.size - 1).coerceAtLeast(0)) else realIndex
+        // Same branch `resolvedIndex` resolves live, via the shared
+        // [resolveIndex] — see its doc for why this can't go back to being a
+        // hand-rolled copy: it already drifted from the live flow once, and
+        // this snapshot kept flashing stale Now Playing art/title until that
+        // was caught, confirmed on-device 2026-09-18.
+        val resolved = resolveIndex(
+            queueSize = q.size,
+            realIndex = player.currentMediaItemIndex.value,
+            pendingIndex = pendingIndex.value,
+            playerQueueLoaded = playerQueueLoaded.value,
+        )
+        val isPending = resolved.isPending
+        val index = resolved.index
         // Same reasoning as playerCore's pending branch: position/isPlaying still
         // describe the *previous* track during this window, so borrowing them
         // here would pair the new track's title/art with the old track's real,
