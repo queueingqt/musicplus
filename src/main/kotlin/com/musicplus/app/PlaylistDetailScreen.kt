@@ -166,22 +166,18 @@ class PlaylistDetailScreen(
         MusicPlusScaffold(
             topBar = {
                 LightTopBar(
-                    // CLOSE, not BACK, while reordering — this is exiting a mode on
-                    // this same screen, not leaving it, and each move is already
+                    // Same BACK glyph either way — only what it does changes. While
+                    // reordering it exits the mode (stays on this same screen)
+                    // instead of leaving the screen entirely; each move is already
                     // applied immediately (moveUp/moveDown persist right away), so
                     // there's nothing to confirm on the way out. Reported live.
-                    leftButton = if (reorderMode) {
-                        LightBarButton.LightIcon(
-                            icon = LightIcons.CLOSE,
-                            contentDescription = "Done reordering",
-                            onClick = { viewModel.setReorderMode(false) },
-                        )
-                    } else {
-                        LightBarButton.LightIcon(
-                            icon = LightIcons.BACK,
-                            onClick = { goBack() },
-                        )
-                    },
+                    leftButton = LightBarButton.LightIcon(
+                        icon = LightIcons.BACK,
+                        contentDescription = if (reorderMode) "Done reordering" else "Back",
+                        onClick = {
+                            if (reorderMode) viewModel.setReorderMode(false) else goBack()
+                        },
+                    ),
                     center = LightTopBarCenter.Text("Playlist"),
                 )
             },
