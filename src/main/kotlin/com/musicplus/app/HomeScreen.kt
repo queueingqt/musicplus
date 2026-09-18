@@ -71,12 +71,19 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                     // SearchScreen (server-side search3 across all categories)
                     // — every other list screen's search icon just filters that
                     // screen's own already-cached items instead. See
-                    // AlbumListScreen etc.
-                    rightButton = LightBarButton.LightIcon(
-                        icon = LightIcons.SEARCH,
-                        onClick = { navigateTo(::SearchScreen) },
-                        contentDescription = "Search",
-                    ),
+                    // AlbumListScreen etc. Omitted entirely (not just disabled)
+                    // when no server is configured yet — there's nothing to
+                    // search, and the setup splash below has its own single
+                    // "Set up your server" action as the only thing to do here.
+                    rightButton = if (isConfigured) {
+                        LightBarButton.LightIcon(
+                            icon = LightIcons.SEARCH,
+                            onClick = { navigateTo(::SearchScreen) },
+                            contentDescription = "Search",
+                        )
+                    } else {
+                        null
+                    },
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },

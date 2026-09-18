@@ -36,7 +36,11 @@ import kotlinx.serialization.json.Json
  * rather than broken.
  *
  * Never touches [ServerConfigRepository] — the payload is exception
- * type/message/stack trace, app version, OS version, and device model only.
+ * type/message/stack trace, app version, OS version, device model, and (since
+ * this toggle also gates [AppLogger]) a tail of the local debug log for
+ * context. A failed report is logged via [AppLogger] itself rather than
+ * swallowed silently — this toggle being on means logging is on, so a report
+ * failure is exactly the kind of thing that should show up there.
  */
 object CrashReporter {
     private const val REPO_OWNER = "queueingqt"
@@ -44,18 +48,24 @@ object CrashReporter {
     private const val CONNECT_TIMEOUT_MS = 4000
     private const val READ_TIMEOUT_MS = 4000
     private const val MAX_REPORTED_SIGNATURES = 200
+    private const val MAX_LOG_LINES_ATTACHED = 150
 
     private val lock = ReentrantLock()
 
     @Volatile private var enabled = false
     @Volatile private var installed = false
     @Volatile private var reportedSignaturesFile: File? = null
+    @Volatile private var localLogFile: File? = null
 
     fun init(filesDir: File) {
         if (installed) return
         installed = true
 
         reportedSignaturesFile = File(filesDir, "logs/reported_crash_signatures.txt")
+        // Same path AppLogger.kt itself writes to — deliberately not read
+        // through AppLogger (which exposes no read API), just the same
+        // filesDir/logs/app.log convention both objects already share.
+        localLogFile = File(filesDir, "logs/app.log")
 
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -75,8 +85,12 @@ object CrashReporter {
         val signature = signatureFor(throwable)
         if (alreadyReported(signature)) return
 
-        val success = runCatching { createIssue(throwable, signature) }.getOrDefault(false)
-        if (success) markReported(signature)
+        // Log our own failures via AppLogger rather than swallowing them —
+        // debug logging is on whenever this is (same toggle), so a failed
+        // report should be visible the same way any other error is.
+        runCatching { createIssue(throwable, signature) }
+            .onSuccess { markReported(signature) }
+            .onFailure { e -> AppLogger.e("CrashReporter", "Failed to report crash $signature", e) }
     }
 
     /** Exception class + top app-frame (class, method, line) — stable across repeat launches of the same bug, distinct across different bugs. */
@@ -114,9 +128,22 @@ object CrashReporter {
         }
     }
 
-    private fun createIssue(throwable: Throwable, signature: String): Boolean {
+    // Recent debug-log context, not just the stack trace — the toggle that
+    // gates crash reporting also gates AppLogger, so if we got this far
+    // there's real log content to attach. Best-effort: a missing/unreadable
+    // log file just means this section is omitted, never a failed report.
+    private fun recentLogTail(): String? {
+        val file = localLogFile ?: return null
+        return runCatching { file.readLines().takeLast(MAX_LOG_LINES_ATTACHED) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?.joinToString("\n")
+    }
+
+    private fun createIssue(throwable: Throwable, signature: String) {
         val stackTrace = StringWriter().also { throwable.printStackTrace(PrintWriter(it)) }.toString()
         val title = "Auto-reported crash: ${exceptionTypeName(throwable)} ($signature)"
+        val logTail = recentLogTail()
         val body = buildString {
             appendLine("Automatically reported by CrashReporter.kt — a real user hit this.")
             appendLine()
@@ -127,13 +154,22 @@ object CrashReporter {
             appendLine("```")
             append(stackTrace)
             appendLine("```")
+            if (logTail != null) {
+                appendLine()
+                appendLine("<details><summary>Recent log (last $MAX_LOG_LINES_ATTACHED lines)</summary>")
+                appendLine()
+                appendLine("```")
+                appendLine(logTail)
+                appendLine("```")
+                appendLine("</details>")
+            }
         }
 
         val payload = Json.encodeToString(GithubIssuePayload(title = title, body = body, labels = listOf("auto-crash-report")))
 
         val url = URL("https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/issues")
         val connection = url.openConnection() as HttpURLConnection
-        return try {
+        try {
             connection.apply {
                 requestMethod = "POST"
                 connectTimeout = CONNECT_TIMEOUT_MS
@@ -145,7 +181,11 @@ object CrashReporter {
                 setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
             }
             OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(payload) }
-            connection.responseCode in 200..299
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                val errorBody = runCatching { connection.errorStream?.bufferedReader()?.readText() }.getOrNull()
+                error("GitHub API returned $responseCode: $errorBody")
+            }
         } finally {
             connection.disconnect()
         }

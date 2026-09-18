@@ -3,9 +3,12 @@ package com.musicplus.app.data
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -17,13 +20,16 @@ import kotlin.concurrent.withLock
  * AppSettingsRepository.debugLoggingEnabled for routine [e]/[d] calls, but a
  * crash is always captured regardless of that toggle — a disabled toggle means
  * "don't clutter the log with routine errors," not "don't capture the one thing
- * this whole feature exists for."
+ * this whole feature exists for." Rotates (keeping one prior generation as
+ * app.log.1) past MAX_LOG_BYTES or MAX_LOG_AGE_MS, whichever comes first, so
+ * the log can't grow unbounded or go stale.
  *
  * [init] must run once, as early as possible in the process — see
  * AppGraph.build(), the first thing any screen touches.
  */
 object AppLogger {
     private const val MAX_LOG_BYTES = 1_000_000L
+    private val MAX_LOG_AGE_MS = TimeUnit.DAYS.toMillis(7)
     private val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     private val lock = ReentrantLock()
 
@@ -76,10 +82,21 @@ object AppLogger {
     }
 
     private fun rotateIfNeeded(file: File) {
-        if (file.exists() && file.length() > MAX_LOG_BYTES) {
+        if (!file.exists()) return
+        if (file.length() > MAX_LOG_BYTES || isStale(file)) {
             val previous = File(file.parentFile, "app.log.1")
             previous.delete()
             file.renameTo(previous)
         }
+    }
+
+    // Logs from a device that's been sitting unopened for a while aren't
+    // useful context for a fresh crash — rotate them out the same as an
+    // oversized log, rather than letting old content linger indefinitely.
+    private fun isStale(file: File): Boolean {
+        val createdAtMs = runCatching {
+            Files.readAttributes(file.toPath(), BasicFileAttributes::class.java).creationTime().toMillis()
+        }.getOrNull() ?: return false
+        return System.currentTimeMillis() - createdAtMs > MAX_LOG_AGE_MS
     }
 }
