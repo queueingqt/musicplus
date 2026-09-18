@@ -32,59 +32,94 @@ class PlaylistRepository(
             entities.map { it.toDomain(downloaded = false, localFilePath = null) }
         }
 
-    /** No-op (leaves the cache as-is) when offline or not yet configured — same convention as LibraryRepository. */
+    /**
+     * No-op (leaves the cache as-is) when offline, not yet configured, or the
+     * network call itself fails — same convention as LibraryRepository (see its
+     * class-level refresh-failure doc for why the connectivity check alone
+     * isn't sufficient).
+     */
     suspend fun refreshPlaylists() {
         if (!connectivity.currentStatus.isConnected) return
         val api = apiHolder.get() ?: return
-        playlistDao.upsertAll(api.getPlaylists().map { it.toEntity() })
+        try {
+            playlistDao.upsertAll(api.getPlaylists().map { it.toEntity() })
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     suspend fun refreshPlaylistDetail(playlistId: String) {
         if (!connectivity.currentStatus.isConnected) return
         val api = apiHolder.get() ?: return
-        val detail = api.getPlaylist(playlistId) ?: return
-        playlistDao.upsert(detail.toEntity())
-        trackDao.upsertAll(detail.entry.map { it.toEntity() })
-        playlistDao.replaceTracks(
-            playlistId,
-            detail.entry.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
-        )
+        try {
+            val detail = api.getPlaylist(playlistId) ?: return
+            playlistDao.upsert(detail.toEntity())
+            trackDao.upsertAll(detail.entry.map { it.toEntity() })
+            playlistDao.replaceTracks(
+                playlistId,
+                detail.entry.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
+            )
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
-    /** Returns the new playlist's server id, or null if offline/not configured. */
+    /** Returns the new playlist's server id, or null if offline/not configured/the call fails. */
     suspend fun createPlaylist(name: String): String? {
         val api = apiHolder.get() ?: return null
-        val created = api.createPlaylist(name) ?: return null
-        playlistDao.upsert(created.toEntity())
-        return created.id
+        return try {
+            val created = api.createPlaylist(name) ?: return null
+            playlistDao.upsert(created.toEntity())
+            created.id
+        } catch (e: Exception) {
+            null
+        }
     }
 
     suspend fun renamePlaylist(playlistId: String, name: String) {
         val api = apiHolder.get() ?: return
-        api.renamePlaylist(playlistId, name)
         // Optimistic local rename so the title updates immediately even if the
-        // follow-up refresh is slow/offline; refreshPlaylistDetail reconciles it.
+        // network call below is slow/offline/fails; refreshPlaylistDetail
+        // reconciles it on the next successful refresh either way.
         playlistDao.getById(playlistId)?.let { playlistDao.upsert(it.copy(name = name)) }
-        refreshPlaylistDetail(playlistId)
+        try {
+            api.renamePlaylist(playlistId, name)
+            refreshPlaylistDetail(playlistId)
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     suspend fun deletePlaylist(playlistId: String) {
         val api = apiHolder.get()
-        if (api != null) api.deletePlaylist(playlistId)
+        try {
+            if (api != null) api.deletePlaylist(playlistId)
+        } catch (e: Exception) {
+            // Swallowed deliberately — still remove the local copy below even if
+            // the server call failed, matching this function's own local-delete intent.
+        }
         playlistDao.delete(playlistId)
     }
 
     suspend fun addTrack(playlistId: String, songId: String) {
         val api = apiHolder.get() ?: return
-        api.addSongToPlaylist(playlistId, songId)
-        refreshPlaylistDetail(playlistId)
+        try {
+            api.addSongToPlaylist(playlistId, songId)
+            refreshPlaylistDetail(playlistId)
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     /** [position] is the track's current zero-based index within the playlist. */
     suspend fun removeTrack(playlistId: String, position: Int) {
         val api = apiHolder.get() ?: return
-        api.removeSongFromPlaylist(playlistId, position)
-        refreshPlaylistDetail(playlistId)
+        try {
+            api.removeSongFromPlaylist(playlistId, position)
+            refreshPlaylistDetail(playlistId)
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     suspend fun moveTrackUp(playlistId: String, position: Int) {
@@ -111,8 +146,12 @@ class PlaylistRepository(
         if (fromPosition !in songIds.indices || toPosition !in songIds.indices) return
         val moved = songIds.removeAt(fromPosition)
         songIds.add(toPosition, moved)
-        api.reorderPlaylist(playlistId, playlist.name, songIds)
-        refreshPlaylistDetail(playlistId)
+        try {
+            api.reorderPlaylist(playlistId, playlist.name, songIds)
+            refreshPlaylistDetail(playlistId)
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     private fun SubsonicPlaylist.toEntity() = PlaylistEntity(id, name, songCount, duration)

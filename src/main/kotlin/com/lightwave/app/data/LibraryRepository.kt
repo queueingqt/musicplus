@@ -48,31 +48,59 @@ class LibraryRepository(
             entities.map { it.toDomain(downloaded = false, localFilePath = null) }
         }
 
-    /** No-ops (leaves the cache as-is) when offline or not yet configured — callers just keep showing cached data. */
+    /**
+     * No-ops (leaves the cache as-is) when offline, not yet configured, or the
+     * network call itself fails — callers just keep showing cached data.
+     *
+     * The `connectivity.currentStatus.isConnected` check alone isn't enough to
+     * guarantee this is safe to call unguarded: it only reports whether *some*
+     * network is up, not whether the configured server is actually reachable
+     * (e.g. a Tailscale-hosted server when Tailscale isn't currently connected
+     * resolves as "online" generally but fails DNS for that one host). A crash
+     * here previously took down the whole app on launch — confirmed on-device,
+     * `UnresolvedAddressException` from `HomeScreenViewModel.onScreenShow`'s
+     * unguarded `refreshAlbumList()`/`refreshArtists()` calls, 2026-09-17.
+     */
     suspend fun refreshArtists() {
         if (!connectivity.currentStatus.isConnected) return
         val api = apiHolder.get() ?: return
-        artistDao.upsertAll(api.getArtists().map { it.toEntity() })
+        try {
+            artistDao.upsertAll(api.getArtists().map { it.toEntity() })
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     suspend fun refreshAlbumList(type: String = "alphabeticalByName") {
         if (!connectivity.currentStatus.isConnected) return
         val api = apiHolder.get() ?: return
-        albumDao.upsertAll(api.getAlbumList(type).map { it.toEntity() })
+        try {
+            albumDao.upsertAll(api.getAlbumList(type).map { it.toEntity() })
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     suspend fun refreshArtistDetail(artistId: String) {
         if (!connectivity.currentStatus.isConnected) return
         val api = apiHolder.get() ?: return
-        val detail = api.getArtist(artistId) ?: return
-        albumDao.upsertAll(detail.album.map { it.toEntity() })
+        try {
+            val detail = api.getArtist(artistId) ?: return
+            albumDao.upsertAll(detail.album.map { it.toEntity() })
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     suspend fun refreshAlbumDetail(albumId: String) {
         if (!connectivity.currentStatus.isConnected) return
         val api = apiHolder.get() ?: return
-        val detail = api.getAlbum(albumId) ?: return
-        trackDao.upsertAll(detail.song.map { it.toEntity() })
+        try {
+            val detail = api.getAlbum(albumId) ?: return
+            trackDao.upsertAll(detail.song.map { it.toEntity() })
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+        }
     }
 
     suspend fun search(query: String): Triple<List<Artist>, List<Album>, List<Track>> {
@@ -80,12 +108,16 @@ class LibraryRepository(
         if (!connectivity.currentStatus.isConnected || query.isBlank() || api == null) {
             return Triple(emptyList(), emptyList(), emptyList())
         }
-        val result = api.search(query)
-        return Triple(
-            result.artist.map { it.toEntity().toDomain() },
-            result.album.map { it.toEntity().toDomain() },
-            result.song.map { it.toEntity().toDomain(downloaded = false, localFilePath = null) },
-        )
+        return try {
+            val result = api.search(query)
+            Triple(
+                result.artist.map { it.toEntity().toDomain() },
+                result.album.map { it.toEntity().toDomain() },
+                result.song.map { it.toEntity().toDomain(downloaded = false, localFilePath = null) },
+            )
+        } catch (e: Exception) {
+            Triple(emptyList(), emptyList(), emptyList())
+        }
     }
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { artistDao.setStarred(id, favorite) }
@@ -95,7 +127,12 @@ class LibraryRepository(
     private suspend inline fun setFavorite(id: String, favorite: Boolean, updateLocal: () -> Unit) {
         updateLocal() // optimistic — reflect it immediately, reconcile on next refresh if this fails
         val api = apiHolder.get() ?: return
-        if (favorite) api.star(id) else api.unstar(id)
+        try {
+            if (favorite) api.star(id) else api.unstar(id)
+        } catch (e: Exception) {
+            // Swallowed deliberately — see class-level refresh-failure doc above.
+            // Local state already reflects the tap; a later refresh reconciles.
+        }
     }
 
     private fun SubsonicArtist.toEntity() = ArtistEntity(id, name, coverArt, albumCount, starred != null)

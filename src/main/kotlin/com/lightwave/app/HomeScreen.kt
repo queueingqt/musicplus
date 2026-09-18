@@ -62,7 +62,7 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
         // Root screen — no back button (see AlbumListScreen etc. for the
         // leftButton = BACK pattern every non-root screen uses).
         LightwaveScaffold(
-            topBar = { LightTopBar(center = LightTopBarCenter.Text("Lightwave")) },
+            topBar = { LightTopBar(center = LightTopBarCenter.Text("music +")) },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
         ) {
             if (!isConfigured) {
