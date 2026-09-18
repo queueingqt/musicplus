@@ -166,20 +166,23 @@ class PlaylistDetailScreen(
         MusicPlusScaffold(
             topBar = {
                 LightTopBar(
-                    leftButton = LightBarButton.LightIcon(
-                        icon = LightIcons.BACK,
-                        onClick = { goBack() },
-                    ),
-                    center = LightTopBarCenter.Text("Playlist"),
-                    rightButton = if (reorderMode) {
+                    // CLOSE, not BACK, while reordering — this is exiting a mode on
+                    // this same screen, not leaving it, and each move is already
+                    // applied immediately (moveUp/moveDown persist right away), so
+                    // there's nothing to confirm on the way out. Reported live.
+                    leftButton = if (reorderMode) {
                         LightBarButton.LightIcon(
-                            icon = LightIcons.ACCEPT,
+                            icon = LightIcons.CLOSE,
                             contentDescription = "Done reordering",
                             onClick = { viewModel.setReorderMode(false) },
                         )
                     } else {
-                        null
+                        LightBarButton.LightIcon(
+                            icon = LightIcons.BACK,
+                            onClick = { goBack() },
+                        )
                     },
+                    center = LightTopBarCenter.Text("Playlist"),
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
