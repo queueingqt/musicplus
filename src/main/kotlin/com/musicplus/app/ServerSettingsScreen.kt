@@ -119,7 +119,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                                             if (server.id != activeServerId) {
                                                 add(
                                                     ActionMenuItem(
-                                                        icon = LightIcons.ACCEPT,
+                                                        icon = LightIcons.SELECT_ON,
                                                         label = "Set active",
                                                         onSelect = ActionMenuSelection.Perform { viewModel.setActive(server.id) },
                                                     ),
@@ -158,7 +158,7 @@ private fun ServerRow(server: ServerProfile, isActive: Boolean, onClick: () -> U
             LightText(text = server.baseUrl, variant = LightTextVariant.Fine, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (isActive) {
-            LightIcon(icon = LightIcons.ACCEPT, size = 1.5f, contentDescription = "Active server")
+            LightIcon(icon = LightIcons.SELECT_ON, size = 1.5f, contentDescription = "Active server")
         }
     }
 }
