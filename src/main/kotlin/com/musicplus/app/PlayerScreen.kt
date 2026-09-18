@@ -228,10 +228,10 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     variant = LightTextVariant.Fine,
                 )
 
-                // Icon-only, no text labels: shuffle/repeat/favorite are all standard,
-                // self-explanatory iconography — a visible label next to each one
-                // defeats the point of using icons at all. contentDescription still
-                // carries the meaning for accessibility.
+                // Icon-only, no text labels: shuffle/repeat/favorite/lyrics are all
+                // standard, self-explanatory iconography — a visible label next to
+                // each one defeats the point of using icons at all.
+                // contentDescription still carries the meaning for accessibility.
                 Row(modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp())) {
                     LightIcon(
                         icon = LightIcons.SHUFFLE,
@@ -257,6 +257,22 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                             .lightClickable { viewModel.toggleFavoriteCurrentTrack() }
                             .padding(horizontal = 1f.gridUnitsAsDp()),
                     )
+                    // Opens LyricsScreen (issue #14) — a separate full screen, not
+                    // an inline pane here: this screen is already full (art, title,
+                    // artist, progress, duration, this icon row, Up Next, transport
+                    // controls) and a lyrics pane squeezed into whatever was left
+                    // rendered as a couple of clipped pixels on-device, confirmed
+                    // live. Only shown once something is actually playing.
+                    if (track != null) {
+                        LightIcon(
+                            icon = LightIcons.MICROPHONE,
+                            size = 1.5f,
+                            contentDescription = "Lyrics",
+                            modifier = Modifier
+                                .lightClickable { navigateTo(::LyricsScreen) }
+                                .padding(horizontal = 1f.gridUnitsAsDp()),
+                        )
+                    }
                 }
             }
 

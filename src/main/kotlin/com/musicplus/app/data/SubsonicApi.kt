@@ -135,4 +135,21 @@ class SubsonicApi(private val client: SubsonicClient) {
     /** Same content as [coverArtUrl], fetched through Ktor/CIO — same shape as [downloadBytes]/[streamBytes], and for the same reason (cleartext http:// servers). */
     suspend fun coverArtBytes(coverArtId: String, size: Int = 300): ByteArray =
         client.getBytes("getCoverArt.view", listOf("id" to coverArtId, "size" to size.toString()))
+
+    /**
+     * OpenSubsonic `getLyricsBySongId` (songLyrics extension) — structured lyrics,
+     * timestamped when the server has synced data. Confirmed supported by this
+     * project's real Navidrome instance (`getOpenSubsonicExtensions.view` lists
+     * `songLyrics` versions [1, 2]) and confirmed the endpoint alone covers all
+     * three real states this app needs (synced / plain-text-only / no lyrics) —
+     * see SubsonicDtos.kt's SubsonicLyricsList doc. No fallback to the older
+     * base-Subsonic `getLyrics.view` (artist+title lookup) is implemented: it's
+     * strictly older/narrower than what this returns and wasn't needed against
+     * the real server.
+     *
+     * Returns an empty list, never throws, when a track genuinely has no lyrics —
+     * the server responds "ok" with an empty `lyricsList`, not an error.
+     */
+    suspend fun getLyricsBySongId(songId: String): List<SubsonicStructuredLyrics> =
+        client.call("getLyricsBySongId.view", listOf("id" to songId)).lyricsList?.structuredLyrics ?: emptyList()
 }

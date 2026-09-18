@@ -27,6 +27,11 @@ data class SubsonicResponse(
     val starred2: SubsonicStarred? = null,
     val playlists: SubsonicPlaylists? = null,
     val playlist: SubsonicPlaylistDetail? = null,
+    // OpenSubsonic `getLyricsBySongId` (songLyrics extension) — absent entirely
+    // (not merely an empty list) when the server has no lyrics data at all for a
+    // track; confirmed directly against this project's real Navidrome instance
+    // (2026-09-17), not assumed from the spec doc alone.
+    val lyricsList: SubsonicLyricsList? = null,
 ) {
     val isOk: Boolean get() = status == "ok"
 }
@@ -162,4 +167,41 @@ data class SubsonicPlaylistDetail(
     val duration: Int = 0,
     val coverArt: String? = null,
     val entry: List<SubsonicSong> = emptyList(),
+)
+
+/**
+ * OpenSubsonic `getLyricsBySongId` response (songLyrics extension v1/v2 —
+ * https://opensubsonic.netlify.app/docs/endpoints/getlyricsbysongid/). Verified
+ * directly against this project's real Navidrome 0.63.2 instance, not just the
+ * spec doc: `getOpenSubsonicExtensions.view` lists `songLyrics` versions [1, 2],
+ * and real probes against `/rest/getLyricsBySongId.view` confirmed all three
+ * shapes this app needs to handle —
+ *  - synced: `structuredLyrics: [{ synced: true, line: [{start, value}, ...] }]`
+ *  - unsynced-only: `structuredLyrics: [{ synced: false, line: [{value}, ...] }]`
+ *    (lines have no `start` in this case — seen for real on an instrumental
+ *    track, whose single line was literally `{"value":"Instrumental"}`)
+ *  - no lyrics at all: `lyricsList: {}` — `structuredLyrics` is missing
+ *    entirely (status is still "ok", not an error), hence the `= emptyList()` default.
+ */
+@Serializable
+data class SubsonicLyricsList(
+    val structuredLyrics: List<SubsonicStructuredLyrics> = emptyList(),
+)
+
+@Serializable
+data class SubsonicStructuredLyrics(
+    /** "main" | "translation" | "pronunciation" per spec — not observed set on this server's real responses, kept optional. */
+    val kind: String? = null,
+    val lang: String? = null,
+    val synced: Boolean = false,
+    val displayArtist: String? = null,
+    val displayTitle: String? = null,
+    val line: List<SubsonicLyricLine> = emptyList(),
+)
+
+@Serializable
+data class SubsonicLyricLine(
+    /** Milliseconds from track start. Only present when the parent entry is `synced`. */
+    val start: Long? = null,
+    val value: String = "",
 )

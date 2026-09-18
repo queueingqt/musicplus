@@ -63,3 +63,20 @@ data class PlaybackState(
     /** Tracks after [currentTrack] in [queue] — what the queue view shows as "up next". */
     val upcomingTracks: List<Track> get() = if (currentIndex in queue.indices) queue.drop(currentIndex + 1) else emptyList()
 }
+
+/** One lyric line. [startMs] is null for unsynced (plain-text-only) lyrics. */
+data class LyricLine(val startMs: Long?, val text: String)
+
+/**
+ * Now Playing's lyrics pane state for the current track — fetched fresh per
+ * track (not cached in Room; lyrics are cheap to refetch and don't need to
+ * survive offline like the library does). See PlayerScreenViewModel.
+ */
+sealed class LyricsState {
+    data object Loading : LyricsState()
+    /** The server genuinely has no lyrics for this track (confirmed "ok" + empty response, not an error). */
+    data object NoLyrics : LyricsState()
+    data class Synced(val lines: List<LyricLine>) : LyricsState()
+    data class Plain(val text: String) : LyricsState()
+    data class Error(val message: String) : LyricsState()
+}
