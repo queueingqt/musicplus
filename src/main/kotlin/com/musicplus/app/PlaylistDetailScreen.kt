@@ -277,7 +277,7 @@ private fun PlaylistTrackRow(
             if (canMoveUp) {
                 LightIcon(
                     icon = LightIcons.UP,
-                    size = 1.25f,
+                    size = 1.5f,
                     contentDescription = "Move up",
                     modifier = Modifier.lightClickable(onClick = onMoveUp),
                 )
@@ -285,7 +285,7 @@ private fun PlaylistTrackRow(
             if (canMoveDown) {
                 LightIcon(
                     icon = LightIcons.DOWN,
-                    size = 1.25f,
+                    size = 1.5f,
                     contentDescription = "Move down",
                     modifier = Modifier
                         .lightClickable(onClick = onMoveDown)

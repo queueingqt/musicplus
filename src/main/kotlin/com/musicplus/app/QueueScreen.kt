@@ -137,13 +137,8 @@ private fun QueueScreenRow(
                 modifier = Modifier.padding(end = 0.5f.gridUnitsAsDp()),
             )
         }
-        LightText(
-            text = track.title,
-            variant = if (isCurrent) LightTextVariant.Heading else LightTextVariant.Copy,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        // Reorder icons lead the row, before the title, not trail it — reported
+        // live as the requested layout.
         if (canMoveUp) {
             LightIcon(
                 icon = LightIcons.UP,
@@ -151,7 +146,7 @@ private fun QueueScreenRow(
                 contentDescription = "Move up",
                 modifier = Modifier
                     .lightClickable(onClick = onMoveUp)
-                    .padding(start = 0.5f.gridUnitsAsDp()),
+                    .padding(end = 0.5f.gridUnitsAsDp()),
             )
         }
         if (canMoveDown) {
@@ -161,12 +156,21 @@ private fun QueueScreenRow(
                 contentDescription = "Move down",
                 modifier = Modifier
                     .lightClickable(onClick = onMoveDown)
-                    .padding(start = 0.5f.gridUnitsAsDp()),
+                    .padding(end = 0.5f.gridUnitsAsDp()),
             )
         }
+        LightText(
+            text = track.title,
+            variant = if (isCurrent) LightTextVariant.Heading else LightTextVariant.Copy,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         if (canRemove) {
+            // CLOSE (X), not TRASH — matches the LightOS convention of a plain
+            // X for "remove/dismiss this" rather than a trash-can metaphor.
             LightIcon(
-                icon = LightIcons.TRASH,
+                icon = LightIcons.CLOSE,
                 size = 1.5f,
                 contentDescription = "Remove from queue",
                 modifier = Modifier
