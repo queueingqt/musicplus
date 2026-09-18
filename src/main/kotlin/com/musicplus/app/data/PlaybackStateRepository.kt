@@ -60,4 +60,15 @@ class PlaybackStateRepository(private val dataStore: DataStore<Preferences>) {
             if (saved.albumArtUrl != null) prefs[Keys.ALBUM_ART_URL] = saved.albumArtUrl else prefs.remove(Keys.ALBUM_ART_URL)
         }
     }
+
+    /** Used by LocalDataRepository.clearAll() — the persisted queue this resume state points at is being wiped too, so there's nothing left for it to meaningfully resume. */
+    suspend fun clear() {
+        dataStore.edit { prefs ->
+            prefs.remove(Keys.CURRENT_INDEX)
+            prefs.remove(Keys.POSITION_MS)
+            prefs.remove(Keys.SHUFFLE)
+            prefs.remove(Keys.REPEAT_MODE)
+            prefs.remove(Keys.ALBUM_ART_URL)
+        }
+    }
 }

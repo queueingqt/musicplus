@@ -743,6 +743,28 @@ class PlaybackRepository(
     fun release() = player.release()
 
     /**
+     * Resets every in-memory playback field to empty — used by
+     * LocalDataRepository.clearAll() once it's wiped the persisted queue,
+     * cached audio, and cached art out from under whatever this repository
+     * still has loaded. Stops playback first: the currently playing track's
+     * underlying file (a cleartext-server cache entry, or a download) may
+     * have just been deleted, so continuing to play it would either error out
+     * or keep going from an already-buffered chunk that can never be
+     * seeked/replayed correctly again.
+     */
+    fun resetInMemoryState() {
+        player.pause()
+        queue.value = emptyList()
+        pendingIndex.value = 0
+        shuffle.value = false
+        repeatMode.value = RepeatMode.OFF
+        preShuffleOrder.value = null
+        currentAlbumArtUrl.value = null
+        playerQueueLoaded.value = false
+        restoredPositionMs = 0L
+    }
+
+    /**
      * media3/ExoPlayer inside the SDK's own `LightAudioPlayer` enforces Android's
      * cleartext-traffic block independently of SubsonicClient's engine choice —
      * confirmed on-device via `LightAudioError.diagnostic` =

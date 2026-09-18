@@ -29,6 +29,7 @@ object AppGraph {
         val albumArtRepository: AlbumArtRepository,
         val lyricsRepository: LyricsRepository,
         val syncQueueRepository: SyncQueueRepository,
+        val localDataRepository: LocalDataRepository,
         val connectivity: LightConnectivity,
     )
 
@@ -103,6 +104,11 @@ object AppGraph {
             libraryRepository = libraryRepository,
             playlistRepository = playlistRepository,
         )
+        val localDataRepository = LocalDataRepository(
+            database = database,
+            playbackStateRepository = playbackStateRepository,
+            filesDir = lightContext.filesDir,
+        )
 
         // Periodic backstop (WorkManager's own 15-minute floor — see
         // scheduleSyncQueueJob) for when the app isn't in the foreground to
@@ -151,6 +157,7 @@ object AppGraph {
             albumArtRepository = albumArtRepository,
             lyricsRepository = lyricsRepository,
             syncQueueRepository = syncQueueRepository,
+            localDataRepository = localDataRepository,
             connectivity = connectivity,
         )
     }

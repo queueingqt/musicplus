@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppSettingsRepository
+import com.musicplus.app.data.LocalDataRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -19,6 +20,7 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
+import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * App-wide display/debug toggles, split out of the main SettingsScreen — see
@@ -39,6 +42,7 @@ import kotlinx.coroutines.launch
  */
 class PreferencesScreenViewModel(
     private val appSettingsRepository: AppSettingsRepository,
+    private val localDataRepository: LocalDataRepository,
     syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
@@ -66,6 +70,10 @@ class PreferencesScreenViewModel(
     fun toggleHapticFeedback() {
         viewModelScope.launch { appSettingsRepository.setHapticFeedbackEnabled(!hapticFeedbackEnabled.value) }
     }
+
+    fun clearAllLocalData() {
+        viewModelScope.launch { localDataRepository.clearAll() }
+    }
 }
 
 class PreferencesScreen(activity: SealedLightActivity) :
@@ -75,7 +83,7 @@ class PreferencesScreen(activity: SealedLightActivity) :
 
     override fun createViewModel(): PreferencesScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PreferencesScreenViewModel(graph.appSettingsRepository, graph.syncQueueRepository)
+        return PreferencesScreenViewModel(graph.appSettingsRepository, graph.localDataRepository, graph.syncQueueRepository)
     }
 
     @Composable
@@ -123,6 +131,38 @@ class PreferencesScreen(activity: SealedLightActivity) :
                         modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
                     )
                 }
+                LightText(
+                    text = "Clear all local data",
+                    variant = LightTextVariant.Copy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .lightClickable {
+                            LightModalManager.show(
+                                ConfirmModal(
+                                    title = "Clear all local data?",
+                                    message = buildString {
+                                        append(
+                                            "Removes downloaded music, cached artwork and lyrics, and the library " +
+                                                "cache. Your server login stays saved.",
+                                        )
+                                        if (pendingSyncCount > 0) {
+                                            append(
+                                                if (pendingSyncCount == 1) {
+                                                    " 1 change waiting to sync will be lost."
+                                                } else {
+                                                    " $pendingSyncCount changes waiting to sync will be lost."
+                                                },
+                                            )
+                                        }
+                                    },
+                                    confirmContentDescription = "Clear all local data",
+                                    onConfirm = { viewModel.clearAllLocalData() },
+                                ),
+                                duration = 30.seconds,
+                            )
+                        }
+                        .padding(top = 2f.gridUnitsAsDp()),
+                )
             }
         }
     }

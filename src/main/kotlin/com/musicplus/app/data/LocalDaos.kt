@@ -23,6 +23,9 @@ interface ArtistDao {
 
     @Query("UPDATE artists SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
+
+    @Query("DELETE FROM artists")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -44,6 +47,9 @@ interface AlbumDao {
 
     @Query("UPDATE albums SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
+
+    @Query("DELETE FROM albums")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -71,6 +77,9 @@ interface TrackDao {
 
     @Query("UPDATE tracks SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
+
+    @Query("DELETE FROM tracks")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -138,6 +147,18 @@ interface PlaylistDao {
         reassignTracksPlaylistId(oldId, newId)
         reassignId(oldId, newId)
     }
+
+    @Query("DELETE FROM playlists")
+    suspend fun deleteAllPlaylists()
+
+    @Query("DELETE FROM playlist_tracks")
+    suspend fun deleteAllPlaylistTracks()
+
+    @Transaction
+    suspend fun deleteAll() {
+        deleteAllPlaylistTracks()
+        deleteAllPlaylists()
+    }
 }
 
 @Dao
@@ -170,6 +191,10 @@ interface PendingMutationDao {
 
     @Query("UPDATE pending_mutations SET attemptCount = attemptCount + 1, lastError = :error WHERE id = :id")
     suspend fun recordFailure(id: Long, error: String?)
+
+    /** Discards every still-pending mutation, synced or not — see LocalDataRepository's doc for why callers must warn about this first. */
+    @Query("DELETE FROM pending_mutations")
+    suspend fun deleteAll()
 }
 
 @Dao
@@ -188,6 +213,9 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE songId = :songId")
     suspend fun delete(songId: String)
+
+    @Query("DELETE FROM downloads")
+    suspend fun deleteAll()
 }
 
 @Dao

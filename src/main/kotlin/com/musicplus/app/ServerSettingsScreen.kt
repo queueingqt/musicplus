@@ -23,6 +23,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * List of every saved server (multi-server support) — split out of what used to
@@ -132,7 +134,15 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                                                     icon = LightIcons.TRASH,
                                                     label = "Delete",
                                                     onSelect = ActionMenuSelection.Perform {
-                                                        viewModel.remove(server.id)
+                                                        LightModalManager.show(
+                                                            ConfirmModal(
+                                                                title = "Delete \"${server.name}\"?",
+                                                                message = "Removes access to this server's library. Downloaded music and cached data stay on the device.",
+                                                                confirmContentDescription = "Delete server",
+                                                                onConfirm = { viewModel.remove(server.id) },
+                                                            ),
+                                                            duration = 30.seconds,
+                                                        )
                                                         null
                                                     },
                                                 ),
