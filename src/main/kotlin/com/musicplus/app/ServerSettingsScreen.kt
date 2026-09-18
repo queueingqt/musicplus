@@ -153,12 +153,21 @@ private fun ServerRow(server: ServerProfile, isActive: Boolean, onClick: () -> U
             .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Leading state indicator, not trailing — matches QueueScreen's own
+        // "now playing" marker (LightIcons.PLAY before the title), the
+        // established pattern in this app for "which one of these is the
+        // current one" on a list row.
+        if (isActive) {
+            LightIcon(
+                icon = LightIcons.SELECT_ON,
+                size = 1.5f,
+                contentDescription = "Active server",
+                modifier = Modifier.padding(end = 0.5f.gridUnitsAsDp()),
+            )
+        }
         Column(modifier = Modifier.weight(1f)) {
             LightText(text = server.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
             LightText(text = server.baseUrl, variant = LightTextVariant.Fine, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        if (isActive) {
-            LightIcon(icon = LightIcons.SELECT_ON, size = 1.5f, contentDescription = "Active server")
         }
     }
 }
