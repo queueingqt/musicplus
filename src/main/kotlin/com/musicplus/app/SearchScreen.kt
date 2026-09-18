@@ -78,6 +78,17 @@ class SearchScreenViewModel(
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
+
+    // Gates the auto-open LaunchedEffect in Content() below to firing only
+    // once per ViewModel lifetime (i.e. only the first time this screen is
+    // ever shown), not once per Content() composition. Reported live: pushing
+    // TextEditScreen on top of SearchScreen hides it, and per ScrollPosition.kt's
+    // documented navigation behavior, Content() is fully disposed and
+    // recomposed from scratch on every hide/show — so both backing out of the
+    // editor AND submitting a search popped back to a freshly recomposed
+    // Content(), whose LaunchedEffect(Unit) fired again and immediately
+    // reopened the editor, making the screen look stuck in a loop.
+    var hasAutoOpenedEditor = false
 }
 
 class SearchScreen(private val activity: SealedLightActivity) :
@@ -96,14 +107,18 @@ class SearchScreen(private val activity: SealedLightActivity) :
 
         // Open the text editor immediately on arrival, not just on a tap — this
         // screen exists to be typed into right away, and requiring an extra tap
-        // on the field first was a real friction point reported live. Runs once
-        // per SearchScreen instance (LaunchedEffect(Unit) survives recomposition,
-        // not screen navigation), so backing out of the editor without submitting
-        // doesn't re-trigger it — the field's own onClick below still covers
-        // wanting to search again afterward.
+        // on the field first was a real friction point reported live. Gated on
+        // the ViewModel-backed hasAutoOpenedEditor (see its doc) rather than
+        // just LaunchedEffect(Unit), since Content() itself is recomposed from
+        // scratch every time TextEditScreen is pushed/popped on top of this
+        // screen — the field's own onClick below still covers wanting to
+        // search again afterward.
         LaunchedEffect(Unit) {
-            navigateTo({ a -> TextEditScreen(a, "Search", query) }) { result ->
-                viewModel.runSearch(result)
+            if (!viewModel.hasAutoOpenedEditor) {
+                viewModel.hasAutoOpenedEditor = true
+                navigateTo({ a -> TextEditScreen(a, "Search", query) }) { result ->
+                    viewModel.runSearch(result)
+                }
             }
         }
 
