@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -105,6 +106,14 @@ class SearchScreen(private val activity: SealedLightActivity) :
         val albums by viewModel.albumResults.collectAsState()
         val tracks by viewModel.trackResults.collectAsState()
 
+        // Snapshotted once per show (not re-read after), so it answers "was the
+        // editor already auto-opened before *this* appearance of the screen" —
+        // false only on the very first-ever show, true on every recomposition
+        // after returning from the editor. Drives suppressing the body below on
+        // that first show, so the empty field/list never has a frame to flash
+        // in before the editor opens over it — reported live.
+        val alreadyOpenedEditor = remember { viewModel.hasAutoOpenedEditor }
+
         // Open the text editor immediately on arrival, not just on a tap — this
         // screen exists to be typed into right away, and requiring an extra tap
         // on the field first was a real friction point reported live. Gated on
@@ -121,6 +130,8 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 }
             }
         }
+
+        if (!alreadyOpenedEditor) return
 
         MusicPlusScaffold(
             topBar = {
