@@ -1,18 +1,23 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
@@ -26,6 +31,7 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
 import com.thelightphone.sdk.ui.LightIcon
+import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightProgressBar
 import com.thelightphone.sdk.ui.LightText
@@ -146,7 +152,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
 
     override fun createViewModel(): PlayerScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder, lightContext.filesDir)
+        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph, lightContext.filesDir)
         return PlayerScreenViewModel(playback, graph.libraryRepository, graph.syncQueueRepository)
     }
 
@@ -271,21 +277,24 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 // each one defeats the point of using icons at all.
                 // contentDescription still carries the meaning for accessibility.
                 Row(modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp())) {
-                    LightIcon(
+                    ToggleableIcon(
                         icon = LightIcons.SHUFFLE,
-                        size = 1.5f,
+                        active = state.shuffle,
                         contentDescription = if (state.shuffle) "Shuffle on" else "Shuffle off",
-                        modifier = Modifier
-                            .lightClickable { viewModel.toggleShuffle() }
-                            .padding(horizontal = 1f.gridUnitsAsDp()),
+                        onClick = { viewModel.toggleShuffle() },
+                        modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
                     )
-                    LightIcon(
+                    ToggleableIcon(
                         icon = LightIcons.LOOP,
-                        size = 1.5f,
+                        active = state.repeatMode != RepeatMode.OFF,
+                        // "1" badge distinguishes REPEAT_TRACK from REPEAT_QUEUE —
+                        // both use the same LOOP glyph and active-pill treatment,
+                        // and there's no dedicated "repeat one" icon in LightIcons
+                        // (confirmed via source) to tell them apart otherwise.
+                        badge = if (state.repeatMode == RepeatMode.REPEAT_TRACK) "1" else null,
                         contentDescription = "Repeat ${state.repeatMode.name.lowercase()}",
-                        modifier = Modifier
-                            .lightClickable { viewModel.cycleRepeatMode() }
-                            .padding(horizontal = 1f.gridUnitsAsDp()),
+                        onClick = { viewModel.cycleRepeatMode() },
+                        modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
                     )
                     LightIcon(
                         icon = if (track?.isFavorite == true) LightIcons.STAR else LightIcons.STAR_OUTLINE,
@@ -373,4 +382,54 @@ private fun formatDuration(ms: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return "%d:%02d".format(minutes, seconds)
+}
+
+/**
+ * A shuffle/repeat-style icon that shows whether it's currently active — the
+ * plain glyph alone looked identical whether on or off, which is exactly what
+ * was reported live: nothing in Now Playing showed shuffle/repeat's current
+ * state at all. [active] draws a soft circular pill behind the glyph, same
+ * tint MiniPlayerBar already uses for its own background treatment
+ * ([LightThemeTokens.colors.contentSecondary]) so this reads as "the app's
+ * existing active/highlighted look," not a new one-off style. [badge] (used
+ * only for REPEAT_TRACK, to distinguish it from REPEAT_QUEUE) overlays a tiny
+ * label in the corner — there's no dedicated "repeat one" icon to reach for
+ * instead (confirmed via LightIcons source).
+ */
+@Composable
+private fun ToggleableIcon(
+    icon: LightIconConfiguration,
+    active: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    badge: String? = null,
+) {
+    Box(
+        modifier = modifier
+            .background(
+                if (active) LightThemeTokens.colors.contentSecondary.copy(alpha = 0.2f) else Color.Transparent,
+                CircleShape,
+            )
+            .lightClickable(onClick = onClick)
+            .padding(0.35f.gridUnitsAsDp()),
+        contentAlignment = Alignment.Center,
+    ) {
+        LightIcon(icon = icon, size = 1.5f, contentDescription = contentDescription)
+        if (badge != null) {
+            // Micro (8sp) was illegible sitting directly on the icon's own
+            // strokes — reported live. Superfine (16sp) plus a small solid
+            // backing chip, offset outside the circle instead of centered on
+            // it, keeps the badge from blending into the glyph underneath it.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 0.3f.gridUnitsAsDp(), y = 0.3f.gridUnitsAsDp())
+                    .background(LightThemeTokens.colors.background, CircleShape)
+                    .padding(horizontal = 0.15f.gridUnitsAsDp()),
+            ) {
+                LightText(text = badge, variant = LightTextVariant.Superfine)
+            }
+        }
+    }
 }

@@ -233,7 +233,7 @@ class PlaylistDetailScreen(
                             // so navigating away immediately after is safe — see
                             // PlaybackRepository.playAsync's doc.
                             val graph = AppGraph.from(lightContext)
-                            val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                            val playback = PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir)
                             playback.playAsync(tracks, index)
                             navigateTo(::PlayerScreen)
                         },

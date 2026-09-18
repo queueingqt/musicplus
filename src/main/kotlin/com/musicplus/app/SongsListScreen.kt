@@ -194,7 +194,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                                 // scope, so navigating away immediately after is
                                 // safe — see PlaybackRepository.playAsync's doc.
                                 val graph = AppGraph.from(lightContext)
-                                val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                                val playback = PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir)
                                 playback.playAsync(listOf(track), 0)
                                 navigateTo(::PlayerScreen)
                             },
@@ -206,7 +206,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                                         label = "Add to queue",
                                         onSelect = ActionMenuSelection.Perform {
                                             val graph = AppGraph.from(lightContext)
-                                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
+                                            PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
                                             addToQueueItem
                                         },
                                     )

@@ -20,6 +20,7 @@ object AppGraph {
     class Graph(
         val serverConfigRepository: ServerConfigRepository,
         val appSettingsRepository: AppSettingsRepository,
+        val playbackStateRepository: PlaybackStateRepository,
         val apiHolder: SubsonicApiHolder,
         val database: MusicPlusDatabase,
         val libraryRepository: LibraryRepository,
@@ -56,6 +57,7 @@ object AppGraph {
 
         val serverConfigRepository = ServerConfigRepository(lightContext.dataStore)
         val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
+        val playbackStateRepository = PlaybackStateRepository(lightContext.dataStore)
         appScope.launch {
             appSettingsRepository.debugLoggingEnabled.collect { AppLogger.setEnabled(it) }
         }
@@ -140,6 +142,7 @@ object AppGraph {
         return Graph(
             serverConfigRepository = serverConfigRepository,
             appSettingsRepository = appSettingsRepository,
+            playbackStateRepository = playbackStateRepository,
             apiHolder = apiHolder,
             database = database,
             libraryRepository = libraryRepository,

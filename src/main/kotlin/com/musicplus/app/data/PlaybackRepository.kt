@@ -11,6 +11,7 @@ import com.thelightphone.sdk.audio.LightMediaMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,6 +32,9 @@ class PlaybackRepository(
     audio: LightAudio,
     private val apiHolder: SubsonicApiHolder,
     private val filesDir: File,
+    private val libraryRepository: LibraryRepository,
+    private val queueDao: QueueDao,
+    private val playbackStateRepository: PlaybackStateRepository,
 ) {
     private val player = audio.newPlayer(playback = LightAudioPlayback.Detached)
 
@@ -84,6 +88,33 @@ class PlaybackRepository(
     // StateFlow cold-start case fixed earlier for a repeated track.
     private val currentAlbumArtUrl = MutableStateFlow<String?>(null)
 
+    // True once `player.setMediaQueue(...)` has actually been called for the
+    // *current* `queue`/`pendingIndex` pair — reset to false at the start of
+    // every `beginPlay()`, set true at the end of `play()`. Restoring a
+    // persisted queue on process start (see [restoreFromDisk]) populates
+    // `queue`/`pendingIndex` directly without ever touching the real player,
+    // so `player.currentMediaItemIndex.value` (very plausibly still its
+    // default, 0) can coincidentally fall inside the restored queue's bounds
+    // by pure luck — `resolvedIndex` below used to trust that as "the real
+    // player caught up," which would show whatever the player's stale
+    // default state happened to be instead of the actually-restored track.
+    // This flag disambiguates "index 0 happens to be in range" from "the
+    // player has genuinely loaded this queue."
+    private val playerQueueLoaded = MutableStateFlow(false)
+
+    // True only for the real network-bound window inside `play()` — distinct
+    // from `resolvedIndex.isPending` below, which is also true for the
+    // (non-loading) "restored from disk, waiting for the user to press play"
+    // state. Conflating the two would show a permanent loading spinner after
+    // every restore instead of a plain paused/ready state.
+    private val isActivelyLoading = MutableStateFlow(false)
+
+    // Set once by restoreFromDisk() from the last persisted position, consumed
+    // (and cleared) the first time togglePlayPause() actually resumes a
+    // restored queue — see its doc. Zero once consumed or if nothing was
+    // ever restored, same as a track legitimately starting from 0:00.
+    private var restoredPositionMs = 0L
+
     // Nested combines rather than one wide call — kotlinx.coroutines only has typed
     // `combine` overloads up to 5 flows; this keeps every step on solid ground
     // instead of reaching for the untyped Array<T> vararg overload.
@@ -102,16 +133,16 @@ class PlaybackRepository(
     // different track.
     private data class ResolvedIndex(val index: Int, val isPending: Boolean)
 
-    private val resolvedIndex = combine(queue, player.currentMediaItemIndex, pendingIndex) { q, realIndex, pending ->
-        if (realIndex in q.indices) ResolvedIndex(realIndex, isPending = false)
+    private val resolvedIndex = combine(queue, player.currentMediaItemIndex, pendingIndex, playerQueueLoaded) { q, realIndex, pending, loaded ->
+        if (loaded && realIndex in q.indices) ResolvedIndex(realIndex, isPending = false)
         else ResolvedIndex(pending.coerceIn(0, (q.size - 1).coerceAtLeast(0)), isPending = true)
     }
 
     private val playerCore = combine(
-        resolvedIndex, player.isPlaying, player.positionMs, player.durationMs,
-    ) { resolved, isPlaying, positionMs, durationMs ->
+        resolvedIndex, player.isPlaying, player.positionMs, player.durationMs, isActivelyLoading,
+    ) { resolved, isPlaying, positionMs, durationMs, activelyLoading ->
         if (resolved.isPending) {
-            PlayerCoreState(resolved.index, isPlaying = false, positionMs = 0L, durationMs = 0L, isLoading = true)
+            PlayerCoreState(resolved.index, isPlaying = false, positionMs = 0L, durationMs = 0L, isLoading = activelyLoading)
         } else {
             PlayerCoreState(resolved.index, isPlaying, positionMs, durationMs, isLoading = false)
         }
@@ -198,6 +229,88 @@ class PlaybackRepository(
     }
     private var lastHandledCompletionIndex = -1
 
+    // Restore must finish (including its Room/DataStore reads) before the
+    // queue-persistence collector below starts — both run in one coroutine,
+    // sequentially, specifically so the collector's first emission is never
+    // the class's own empty initial `queue` value racing ahead of
+    // restoreFromDisk() and overwriting the very row it's about to read. See
+    // restoreFromDisk's doc for the restore itself.
+    init {
+        scope.launch {
+            restoreFromDisk()
+            queue.collect { tracks -> queueDao.replaceQueue(tracks.map { it.id }) }
+        }
+    }
+
+    // Coarse periodic snapshot, not a full `state` collector — position
+    // updates every ~250ms (see nearEndCompletionWatcher's doc) and a
+    // DataStore write is real disk I/O; issue #27 only needs "close enough"
+    // position to resume from, not per-tick accuracy. Also triggered
+    // immediately at a few specific moments (end of play(), pause, shuffle/
+    // repeat changes) so those don't wait out the interval.
+    private val statePersistenceWatcher = scope.launch {
+        while (true) {
+            delay(STATE_PERSIST_INTERVAL_MS)
+            persistScalarStateIfLoaded()
+        }
+    }
+
+    /**
+     * Issue #27 — restores the persisted queue (song ids, in order, from
+     * [queueDao]) and the scalar state that goes with it ([playbackStateRepository])
+     * on process start, so the queue survives an app restart instead of
+     * starting empty every time.
+     *
+     * Deliberately does NOT touch [player] at all — no `setMediaQueue`, no
+     * network fetch — just populates [queue]/[pendingIndex]/[shuffle]/
+     * [repeatMode]/[currentAlbumArtUrl] directly, the same synchronous fields
+     * [beginPlay] sets, so every screen's title/art/mode indicators show the
+     * restored state immediately without forcing a cold-start network fetch
+     * nobody asked for yet. The real player only loads it once the user
+     * actually presses play — see [togglePlayPause]'s resume branch, which is
+     * what [restoredPositionMs] is for.
+     *
+     * Any persisted song id no longer in the local Room cache (e.g. app data
+     * was cleared, or it was never fetched into the local library at all) is
+     * silently dropped rather than failing the whole restore — see
+     * [LibraryRepository.getTracksByIds]'s doc.
+     */
+    private suspend fun restoreFromDisk() {
+        val songIds = queueDao.observeQueue().first().map { it.songId }
+        if (songIds.isEmpty()) return
+        val tracksById = libraryRepository.getTracksByIds(songIds).associateBy { it.id }
+        val tracks = songIds.mapNotNull { tracksById[it] }
+        if (tracks.isEmpty()) return // none of the persisted tracks are in the local cache anymore
+        val saved = playbackStateRepository.read()
+        queue.value = tracks
+        pendingIndex.value = saved.currentIndex.coerceIn(0, tracks.lastIndex)
+        shuffle.value = saved.shuffle
+        repeatMode.value = saved.repeatMode
+        currentAlbumArtUrl.value = saved.albumArtUrl
+        restoredPositionMs = saved.positionMs
+        AppLogger.d(
+            "PlaybackRepository",
+            "restoreFromDisk(): restored ${tracks.size}/${songIds.size} track(s), index=${pendingIndex.value}, positionMs=${saved.positionMs}",
+        )
+    }
+
+    /** No-ops until [playerQueueLoaded] — nothing new to persist while still restoring/mid-load, and [player]'s own index/position aren't trustworthy yet either (see [resolvedIndex]). */
+    private suspend fun persistScalarStateIfLoaded() {
+        if (!playerQueueLoaded.value) return
+        val tracks = queue.value
+        if (tracks.isEmpty()) return
+        val index = player.currentMediaItemIndex.value.coerceIn(0, tracks.lastIndex)
+        playbackStateRepository.save(
+            PlaybackStateRepository.Saved(
+                currentIndex = index,
+                positionMs = player.positionMs.value,
+                shuffle = shuffle.value,
+                repeatMode = repeatMode.value,
+                albumArtUrl = currentAlbumArtUrl.value,
+            ),
+        )
+    }
+
     /**
      * Synchronous read of every constituent `.value` — every one of them is
      * genuinely `StateFlow`-backed (confirmed in `LightAudioPlayer`), so this is
@@ -216,7 +329,10 @@ class PlaybackRepository(
         // has caught up to the new queue — confirmed on-device 2026-09-18, this
         // exact gap was still flashing Now Playing's art/title even after the
         // live-flow fallback was added, because this snapshot bypassed it entirely.
-        val isPending = realIndex !in q.indices
+        // `!playerQueueLoaded.value` also catches a restored-but-never-loaded
+        // queue, where `realIndex` (likely the player's untouched default, 0)
+        // could otherwise coincidentally fall inside `q`'s bounds by pure luck.
+        val isPending = !playerQueueLoaded.value || realIndex !in q.indices
         val index = if (isPending) pendingIndex.value.coerceIn(0, (q.size - 1).coerceAtLeast(0)) else realIndex
         // Same reasoning as playerCore's pending branch: position/isPlaying still
         // describe the *previous* track during this window, so borrowing them
@@ -241,17 +357,28 @@ class PlaybackRepository(
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return // not configured — nothing playable
         beginPlay(tracks, startIndex, albumArtUrl)
-        // setMediaQueue takes every item's source resolved up front — there's no
-        // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
-        // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
-        // playback starts, not just the starting track. Correct but not great UX for
-        // a multi-track queue on a cleartext server; tracked as a follow-up rather
-        // than solved here.
-        AppLogger.d("PlaybackRepository", "play(): resolving ${tracks.size} track(s), startIndex=$startIndex")
-        val items = tracks.map { it.toAudioItem(api) }
-        AppLogger.d("PlaybackRepository", "play(): all tracks resolved, calling setMediaQueue")
-        player.setMediaQueue(items, startIndex)
-        player.play()
+        isActivelyLoading.value = true
+        try {
+            // setMediaQueue takes every item's source resolved up front — there's no
+            // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
+            // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
+            // playback starts, not just the starting track. Correct but not great UX for
+            // a multi-track queue on a cleartext server; tracked as a follow-up rather
+            // than solved here.
+            AppLogger.d("PlaybackRepository", "play(): resolving ${tracks.size} track(s), startIndex=$startIndex")
+            val items = tracks.map { it.toAudioItem(api) }
+            AppLogger.d("PlaybackRepository", "play(): all tracks resolved, calling setMediaQueue")
+            player.setMediaQueue(items, startIndex)
+            playerQueueLoaded.value = true
+            player.play()
+        } finally {
+            isActivelyLoading.value = false
+        }
+        // Persist the new position right away rather than waiting out
+        // statePersistenceWatcher's interval — cheap, and means a kill right
+        // after starting a new track still resumes from roughly the right
+        // place instead of wherever the *previous* track was.
+        persistScalarStateIfLoaded()
     }
 
     /**
@@ -274,6 +401,11 @@ class PlaybackRepository(
         queue.value = tracks
         pendingIndex.value = startIndex
         currentAlbumArtUrl.value = albumArtUrl
+        // A new queue/position is about to load — whatever the player was
+        // previously loaded with (if anything) no longer matches `queue`, so
+        // `resolvedIndex` must fall back to `pendingIndex` again until `play()`
+        // finishes and sets this back to true.
+        playerQueueLoaded.value = false
         // Pause whatever was already playing the instant the UI switches to the
         // new track's title/art (just above) — setMediaQueue below can take a
         // real, visible amount of time to resolve (see toAudioItem: a cleartext
@@ -426,8 +558,35 @@ class PlaybackRepository(
         if (wasPlaying) player.play()
     }
 
+    /**
+     * Ordinary pause/play toggle, except right after a restore (issue #27):
+     * [restoreFromDisk] populates [queue]/[pendingIndex] without ever loading
+     * the real player (see its doc), so the first press needs to actually
+     * call [play] — with [restoredPositionMs] applied afterward — rather than
+     * pause/play-ing a player that has nothing loaded. [playerQueueLoaded]
+     * is what distinguishes the two cases, same signal [resolvedIndex] uses.
+     */
     fun togglePlayPause() {
-        if (player.isPlaying.value) player.pause() else player.play()
+        val current = queue.value
+        if (current.isNotEmpty() && !playerQueueLoaded.value) {
+            val startIndex = pendingIndex.value.coerceIn(0, current.lastIndex)
+            val resumePositionMs = restoredPositionMs
+            restoredPositionMs = 0L
+            scope.launch {
+                play(current, startIndex, currentAlbumArtUrl.value)
+                if (resumePositionMs > 0L) {
+                    withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) { player.durationMs.first { it > 0L } }
+                    player.seekTo(resumePositionMs)
+                }
+            }
+            return
+        }
+        if (player.isPlaying.value) {
+            player.pause()
+            scope.launch { persistScalarStateIfLoaded() }
+        } else {
+            player.play()
+        }
     }
 
     fun skipBack() = player.skipBack()
@@ -435,6 +594,29 @@ class PlaybackRepository(
     fun skipToNext() = player.skipToNext()
     fun skipToPrevious() = player.skipToPrevious()
     fun seekTo(ms: Long) = player.seekTo(ms)
+
+    /**
+     * Jumps directly to the track at [index] in the current queue — e.g.
+     * tapping an arbitrary row in QueueScreen, not just skip±1 via the
+     * transport controls (issue #28). LightAudioPlayer's confirmed public
+     * surface has no incremental "jump to queue position N" primitive (see
+     * [toAudioItem]'s doc / the tracked light-sdk#217 gap) — setMediaQueue
+     * always re-resolves and replaces the whole queue, so this is really just
+     * [play] again with the same track list and a new startIndex, starting
+     * that track fresh from 0:00 rather than resuming any old position.
+     */
+    suspend fun jumpTo(index: Int) {
+        val current = queue.value
+        if (index !in current.indices) return
+        play(current, index, currentAlbumArtUrl.value)
+    }
+
+    /** [jumpTo], launched on this repository's own [scope] — see [playAsync]'s doc for why a caller shouldn't use its own composable scope for this. */
+    fun jumpToAsync(index: Int) {
+        val current = queue.value
+        if (index !in current.indices) return
+        playAsync(current, index, currentAlbumArtUrl.value)
+    }
 
     /**
      * Shuffle-from-current-track-forward, not reshuffle-the-whole-queue:
@@ -451,7 +633,10 @@ class PlaybackRepository(
     fun setShuffle(enabled: Boolean) {
         if (shuffle.value == enabled) return
         shuffle.value = enabled
-        scope.launch { applyShuffle(enabled) }
+        scope.launch {
+            applyShuffle(enabled)
+            persistScalarStateIfLoaded()
+        }
     }
 
     private suspend fun applyShuffle(enabled: Boolean) {
@@ -482,6 +667,7 @@ class PlaybackRepository(
      */
     fun setRepeatMode(mode: RepeatMode) {
         repeatMode.value = mode
+        scope.launch { persistScalarStateIfLoaded() }
     }
 
     fun release() = player.release()
@@ -536,6 +722,9 @@ class PlaybackRepository(
 
         /** See [nearEndCompletionWatcher]'s doc — how close to the end counts as "finished" for the REPEAT_TRACK/REPEAT_QUEUE workaround. */
         const val NEAR_END_THRESHOLD_MS = 500L
+
+        /** See [statePersistenceWatcher]'s doc — how often the resume position is checkpointed to disk during ordinary playback. */
+        const val STATE_PERSIST_INTERVAL_MS = 5_000L
     }
 }
 
@@ -549,16 +738,20 @@ class PlaybackRepository(
 object PlaybackRepositoryHolder {
     @Volatile private var instance: PlaybackRepository? = null
 
+    /** [graph]: the whole composition root rather than threading each of the repositories/DAOs this needs individually through every call site — see AppGraph.Graph. */
     fun get(
         sealedActivity: com.thelightphone.sdk.SealedLightActivity,
-        apiHolder: SubsonicApiHolder,
+        graph: AppGraph.Graph,
         filesDir: File,
     ): PlaybackRepository =
         instance ?: synchronized(this) {
             instance ?: PlaybackRepository(
                 audio = com.thelightphone.sdk.audio.DefaultLightAudio(sealedActivity),
-                apiHolder = apiHolder,
+                apiHolder = graph.apiHolder,
                 filesDir = filesDir,
+                libraryRepository = graph.libraryRepository,
+                queueDao = graph.database.queueDao(),
+                playbackStateRepository = graph.playbackStateRepository,
             ).also { instance = it }
         }
 

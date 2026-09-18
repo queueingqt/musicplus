@@ -51,6 +51,9 @@ class QueueScreenViewModel(private val playback: PlaybackRepository) : LightView
     fun moveQueueItemUp(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, -1) }
     fun moveQueueItemDown(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, 1) }
     fun clearQueue() = viewModelScope.launch { playback.clearQueue() }
+
+    /** Tapping any row jumps straight to it (issue #28) — see [PlaybackRepository.jumpToAsync]'s doc. */
+    fun jumpTo(index: Int) = playback.jumpToAsync(index)
 }
 
 /**
@@ -69,7 +72,7 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
 
     override fun createViewModel(): QueueScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder, lightContext.filesDir)
+        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph, lightContext.filesDir)
         return QueueScreenViewModel(playback)
     }
 
@@ -134,6 +137,11 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                             onMoveUp = { viewModel.moveQueueItemUp(i) },
                             onMoveDown = { viewModel.moveQueueItemDown(i) },
                             onRemove = { viewModel.removeFromQueue(i) },
+                            // Any row, including the current one — tapping the
+                            // current track restarts it from 0:00, a reasonable,
+                            // consistent reading of "jumps ... in the queue"
+                            // rather than special-casing it to a no-op.
+                            onTap = { viewModel.jumpTo(i) },
                         )
                     }
                 }
@@ -152,10 +160,16 @@ private fun QueueScreenRow(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onRemove: () -> Unit,
+    onTap: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Reorder/remove/tap-to-jump are each their own lightClickable
+            // region (this one and the icons' own, below) — Compose consumes
+            // a tap at the innermost clickable it lands on, so tapping an
+            // icon triggers that icon's own action, never both.
+            .lightClickable(onClick = onTap)
             .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {

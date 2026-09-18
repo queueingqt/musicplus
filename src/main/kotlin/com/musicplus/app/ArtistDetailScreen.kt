@@ -175,7 +175,7 @@ class ArtistDetailScreen(
                                     onSelect = ActionMenuSelection.Perform {
                                         val tracks = viewModel.tracksForAlbum(album.id)
                                         val graph = AppGraph.from(lightContext)
-                                        PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
+                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(tracks)
                                         addToQueueItem
                                     },
                                 )

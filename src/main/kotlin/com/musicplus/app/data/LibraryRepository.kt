@@ -63,6 +63,10 @@ class LibraryRepository(
             entities.map { it.toDomain(downloaded = false, localFilePath = null) }
         }
 
+    /** Batch lookup by id, e.g. restoring a persisted queue (issue #27) — order isn't preserved, callers reorder against their own id list. Silently drops any id no longer in the local cache. */
+    suspend fun getTracksByIds(ids: List<String>): List<Track> =
+        trackDao.getByIds(ids).map { it.toDomain(downloaded = false, localFilePath = null) }
+
     /**
      * No-ops (leaves the cache as-is) when offline, not yet configured, or the
      * network call itself fails — callers just keep showing cached data.

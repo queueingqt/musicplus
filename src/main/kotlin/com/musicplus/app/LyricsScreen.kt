@@ -99,7 +99,7 @@ class LyricsScreen(private val sealedActivity: SealedLightActivity) :
 
     override fun createViewModel(): LyricsScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder, lightContext.filesDir)
+        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph, lightContext.filesDir)
         return LyricsScreenViewModel(playback, graph.lyricsRepository)
     }
 
