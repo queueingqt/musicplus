@@ -105,6 +105,10 @@ class AlbumDetailScreenViewModel(
     /** See TrackListDownload.kt's [toggleTrackListDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows, and PlaylistListScreen's playlist ones. */
     suspend fun toggleAlbumDownload(lightContext: SealedLightContext): TrackListDownloadState =
         toggleTrackListDownload(lightContext, libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
+
+    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
+    var scrollIndex = 0
+    var scrollOffset = 0
 }
 
 /**
@@ -229,9 +233,14 @@ class AlbumDetailScreen(
             // own trailing icon earlier. TrackRow below reserves that same width
             // itself as fixed end padding, unconditionally, so there's no
             // dynamically-appearing gutter to glitch *and* no overlap either.
+            val listState = rememberPersistedLazyListState(viewModel.scrollIndex, viewModel.scrollOffset) { i, o ->
+                viewModel.scrollIndex = i
+                viewModel.scrollOffset = o
+            }
             LightLazyScrollView(
                 modifier = Modifier.fillMaxWidth(),
                 scrollBarPosition = LightScrollBarPosition.Inside,
+                listState = listState,
                 uniformItemHeightGridUnits = 3f,
             ) {
                 itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
