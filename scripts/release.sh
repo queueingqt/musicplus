@@ -72,8 +72,11 @@ unset MUSICPLUS_RELEASE_KEYSTORE_PASSWORD
 
 echo "Tagging and pushing..."
 git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
-git push origin "$(git rev-parse --abbrev-ref HEAD)"
-git push origin "v$NEW_VERSION"
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+for remote in $(git remote); do
+  git push "$remote" "$CURRENT_BRANCH"
+  git push "$remote" "v$NEW_VERSION"
+done
 
 echo "Creating GitHub Release..."
 gh release create "v$NEW_VERSION" "$APK_PATH#musicplus-v$NEW_VERSION.apk" \
