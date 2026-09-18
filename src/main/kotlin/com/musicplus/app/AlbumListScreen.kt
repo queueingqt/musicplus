@@ -191,7 +191,7 @@ private fun AlbumRow(
             // end matches the SDK's own scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed
             // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = 2f.gridUnitsAsDp()),
+            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AlbumArt(

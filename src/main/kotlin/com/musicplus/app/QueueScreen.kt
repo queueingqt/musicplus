@@ -23,6 +23,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -109,15 +110,26 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                         .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
                 )
             } else {
-                // Default (Outside) scrollbar position, not Inside — Inside
-                // draws the scrollbar as an overlay directly on top of row
-                // content instead of reserving its own space, which put the
-                // trailing X right underneath/crossing through the scrollbar
-                // track. Reported live as worse, not better. Outside's own
-                // reserved gutter is normal spacing before a scrollbar, not a
-                // bug — reverted.
+                // Inside, not the default Outside — see AlbumDetailScreen's/
+                // PlaylistDetailScreen's identical call site for why: Outside's
+                // gutter width isn't known until after the LazyColumn's first
+                // real layout pass (derivedStateOf over listState.layoutInfo,
+                // which starts at zero), so trailing per-row content — the
+                // "Remove from queue" X here — briefly rendered full-width for
+                // that first frame, then visibly jumped left once the gutter
+                // was reserved. Reported live, 2026-09-18 (issue #39).
+                //
+                // An earlier version of this screen tried plain Inside without
+                // QueueScreenRow reserving space itself, and reverted it —
+                // Inside draws the scrollbar as an overlay rather than
+                // resizing the content, so without a row-level reservation the
+                // X sat right underneath/crossing through the scrollbar track.
+                // QueueScreenRow now reserves that same trailing width itself,
+                // unconditionally (matching PlaylistTrackRow's approach), so
+                // Inside's overlay never collides with it.
                 LightLazyScrollView(
                     modifier = Modifier.fillMaxWidth(),
+                    scrollBarPosition = LightScrollBarPosition.Inside,
                     uniformItemHeightGridUnits = 3f,
                 ) {
                     itemsIndexed(state.queue, key = { _, track -> track.id }) { i, track ->
@@ -168,7 +180,10 @@ private fun QueueScreenRow(
             // a tap at the innermost clickable it lands on, so tapping an
             // icon triggers that icon's own action, never both.
             .lightClickable(onClick = onTap)
-            .padding(vertical = 0.5f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            // end matches the SDK's own Inside scrollbar track width — see the
+            // LightLazyScrollView call site above for why this is fixed rather
+            // than conditional on whether a scrollbar happens to show.
+            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (isCurrent) {

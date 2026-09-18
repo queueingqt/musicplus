@@ -23,6 +23,7 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -98,7 +99,17 @@ class ArtistListScreen(activity: SealedLightActivity) :
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
         ) {
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
-            LightLazyScrollView(modifier = Modifier.fillMaxWidth(), listState = listState, uniformItemHeightGridUnits = 3f) {
+            // Inside, not the default Outside — see ScrollbarGutter.kt's doc
+            // (issue #39): ArtistRow's trailing favorite star only reserves a
+            // stable position when the scrollbar's own gutter isn't racing
+            // the LazyColumn's first layout pass. Reported live as a visible
+            // flash from full-width to gutter-reserved-width on first load.
+            LightLazyScrollView(
+                modifier = Modifier.fillMaxWidth(),
+                scrollBarPosition = LightScrollBarPosition.Inside,
+                listState = listState,
+                uniformItemHeightGridUnits = 3f,
+            ) {
                 items(artists, key = { it.id }) { artist ->
                     ArtistRow(
                         artist = artist,
@@ -129,7 +140,10 @@ private fun ArtistRow(artist: Artist, onClick: () -> Unit, onOpenActions: () -> 
         modifier = Modifier
             .fillMaxWidth()
             .lightCombinedClickable(onClick = onClick, onLongClick = onOpenActions)
-            .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
+            // end matches the SDK's own scrollbar track width — see the
+            // LightLazyScrollView call site above for why this is fixed
+            // rather than conditional on whether a scrollbar happens to show.
+            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {

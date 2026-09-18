@@ -320,7 +320,7 @@ private fun TrackRow(
                 // long enough to actually show a scrollbar (which is exactly the
                 // "not known until after first layout" timing this is working
                 // around — see the LightLazyScrollView call site's own doc).
-                end = 2f.gridUnitsAsDp(),
+                end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp(),
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
