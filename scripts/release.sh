@@ -62,11 +62,15 @@ echo "Building signed release APK..."
 JAVA_HOME="$(/usr/libexec/java_home -v 21)" \
   "$LIGHT_SDK_PATH/gradlew" -p "$LIGHT_SDK_PATH" :tool:assembleRelease
 
-APK_PATH="$LIGHT_SDK_PATH/tool/build/outputs/apk/release/tool-release.apk"
-if [[ ! -f "$APK_PATH" ]]; then
-  echo "Expected APK not found at $APK_PATH" >&2
+BUILT_APK_PATH="$LIGHT_SDK_PATH/tool/build/outputs/apk/release/tool-release.apk"
+if [[ ! -f "$BUILT_APK_PATH" ]]; then
+  echo "Expected APK not found at $BUILT_APK_PATH" >&2
   exit 1
 fi
+# Copy to the real intended filename — `gh release create file#label` only
+# labels the asset on the page, it doesn't rename what actually downloads.
+APK_PATH="$(dirname "$BUILT_APK_PATH")/musicplus-v$NEW_VERSION.apk"
+cp "$BUILT_APK_PATH" "$APK_PATH"
 
 unset MUSICPLUS_RELEASE_KEYSTORE_PASSWORD
 
@@ -79,7 +83,7 @@ for remote in $(git remote); do
 done
 
 echo "Creating GitHub Release..."
-gh release create "v$NEW_VERSION" "$APK_PATH#musicplus-v$NEW_VERSION.apk" \
+gh release create "v$NEW_VERSION" "$APK_PATH" \
   --title "v$NEW_VERSION" \
   --generate-notes
 
