@@ -6,10 +6,14 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.contentLength
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.readAvailable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.File
 import java.security.MessageDigest
 import kotlin.random.Random
 
@@ -78,6 +82,9 @@ class SubsonicClient(private val config: ServerConfig) {
         private const val API_VERSION = "1.16.1"
         private const val CLIENT_ID = "Music+"
         private val SALT_CHARS = ('a'..'z') + ('A'..'Z') + ('0'..'9')
+
+        /** See [downloadToFile]'s doc — the fixed chunk size that keeps its memory use constant regardless of file size. */
+        private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
     }
 
     private fun randomSalt(length: Int = 12): String =
@@ -121,7 +128,7 @@ class SubsonicClient(private val config: ServerConfig) {
         return body
     }
 
-    /** Raw bytes from a binary endpoint (download.view, getCoverArt.view, ...) — same client/engine as [call], so it gets the same cleartext-over-CIO handling. */
+    /** Raw bytes from a small binary endpoint (getCoverArt.view — a few tens of KB) — same client/engine as [call], so it gets the same cleartext-over-CIO handling. Never use this for a full track (see [downloadToFile]'s doc). */
     suspend fun getBytes(method: String, params: List<Pair<String, String>> = emptyList()): ByteArray {
         AppLogger.d("SubsonicClient", "getBytes($method): issuing request")
         val response = http.get("$baseUrl/rest/$method") {
@@ -131,6 +138,44 @@ class SubsonicClient(private val config: ServerConfig) {
         val bytes: ByteArray = response.body()
         AppLogger.d("SubsonicClient", "getBytes($method): read ${bytes.size} bytes")
         return bytes
+    }
+
+    /**
+     * Streams a binary endpoint's response body straight to [destination] —
+     * for `stream.view`/`download.view`, where the payload is a whole audio
+     * file, not a small image. [getBytes] materializes the entire response as
+     * one `ByteArray` before the caller can do anything with it; that crashed
+     * with `OutOfMemoryError` on a real ~30MB track (Android's per-process
+     * heap growth limit is commonly ~128MB, and one contiguous 30MB
+     * allocation doesn't fit once anything else is already resident —
+     * confirmed on-device, 2026-09-18). Both callers of the old
+     * `streamBytes`/`downloadBytes` only ever did `file.writeBytes(...)`
+     * immediately afterward anyway, so there was never a reason to hold the
+     * whole file in memory at once — this reads and writes in fixed-size
+     * chunks instead, keeping memory use roughly constant regardless of file
+     * size.
+     */
+    suspend fun downloadToFile(method: String, destination: File, params: List<Pair<String, String>> = emptyList()) {
+        AppLogger.d("SubsonicClient", "downloadToFile($method): issuing request")
+        http.prepareGet("$baseUrl/rest/$method") {
+            (authParams() + params).forEach { (k, v) -> parameter(k, v) }
+        }.execute { response ->
+            AppLogger.d("SubsonicClient", "downloadToFile($method): got response ${response.status}, contentLength=${response.contentLength()}")
+            val channel = response.bodyAsChannel()
+            var totalBytes = 0L
+            destination.outputStream().use { output ->
+                val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+                while (true) {
+                    val bytesRead = channel.readAvailable(buffer)
+                    if (bytesRead == -1) break
+                    if (bytesRead > 0) {
+                        output.write(buffer, 0, bytesRead)
+                        totalBytes += bytesRead
+                    }
+                }
+            }
+            AppLogger.d("SubsonicClient", "downloadToFile($method): wrote $totalBytes bytes")
+        }
     }
 
     /**

@@ -126,7 +126,13 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             // SubsonicClient to CIO. An earlier version of this job used openStream()
             // directly and downloads silently failed against a real http:// server —
             // found via on-device testing + logcat, not caught by compiling.
-            destination.writeBytes(api.downloadBytes(songId))
+            //
+            // downloadToFile, not destination.writeBytes(api.downloadBytes(songId))
+            // — the latter briefly held the whole track as one in-memory
+            // ByteArray, which crashed the app outright (OutOfMemoryError) on a
+            // real ~30MB track, confirmed on-device 2026-09-18. See
+            // SubsonicClient.downloadToFile's doc.
+            api.downloadToFile(songId, destination)
             db.downloadDao().upsert(
                 DownloadEntity(
                     songId = songId,

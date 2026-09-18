@@ -776,10 +776,21 @@ class PlaybackRepository(
         val cached = File(cacheDir, "$id.mp3")
         if (!cached.exists()) {
             AppLogger.d("PlaybackRepository", "cachedStreamFile($id): not cached, downloading")
-            val bytes = api.streamBytes(id)
-            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): downloaded ${bytes.size} bytes, writing to disk")
-            cached.writeBytes(bytes)
-            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): write complete")
+            try {
+                // Streams straight to disk — see SubsonicClient.downloadToFile's
+                // doc: the old `cached.writeBytes(api.streamBytes(id))` briefly
+                // held the whole track as one in-memory ByteArray, which crashed
+                // the app outright (OutOfMemoryError) on a real ~30MB track.
+                api.streamToFile(id, cached)
+                AppLogger.d("PlaybackRepository", "cachedStreamFile($id): write complete")
+            } catch (e: Exception) {
+                // A failed/interrupted download can leave a truncated file at
+                // `cached`'s path — the exists() check above would otherwise
+                // treat that as a legitimate cache hit forever after, playing
+                // back a corrupt partial file instead of ever retrying.
+                cached.delete()
+                throw e
+            }
         } else {
             AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")
         }
