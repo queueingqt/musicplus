@@ -92,7 +92,7 @@ fun LightwaveScaffold(
 @Composable
 private fun MiniPlayerBar(onClick: () -> Unit) {
     val playback = PlaybackRepositoryHolder.peek() ?: return
-    val state by playback.state.collectAsState(initial = PlaybackState())
+    val state by playback.state.collectAsState(initial = playback.currentSnapshot())
     val track = state.currentTrack ?: return
 
     Row(

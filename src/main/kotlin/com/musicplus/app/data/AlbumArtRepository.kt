@@ -17,22 +17,34 @@ import java.util.concurrent.ConcurrentHashMap
  *     Android's cleartext-traffic block the way an OkHttp/URLConnection-based
  *     image loader would be (see SubsonicClient's class doc).
  *  2. decode with [BitmapFactory] — pure Android SDK, no dependency needed.
- *  3. cache in memory (keyed by the full coverArtUrl, which already encodes both
- *     the coverArt id and the requested size) and on disk, alongside
- *     PlaybackRepository's `streamcache/` directory convention.
+ *  3. cache in memory and on disk, alongside PlaybackRepository's `streamcache/`
+ *     directory convention.
  *
  * [Track]/[Album]/[Artist].coverArtUrl is already a fully-built, fully-authenticated
  * `getCoverArt.view` URL (see LibraryRepository.toDomain()) — its `id`/`size` query
  * params are parsed back out here so the actual byte fetch can go through
  * [SubsonicApi.coverArtBytes] (same id+size shape as [SubsonicApi.downloadBytes]/
  * [SubsonicApi.streamBytes]) rather than hitting the pre-built URL directly.
+ *
+ * **The memory cache is keyed by `coverArtId:size`, never by the raw URL.**
+ * `coverArtUrl()` embeds a fresh Subsonic auth token/salt on every single call
+ * (`SubsonicClient.authParams()` — correct, standard, prevents replay), so the
+ * same artwork produces a *different* URL string every time it's requested,
+ * even moments apart. An earlier version of this class cached by the full URL
+ * and the memory cache could therefore never hit across recompositions or
+ * screen revisits — confirmed live on-device 2026-09-18 via added logging
+ * (every single "cache check" logged a miss, even for art fetched seconds
+ * earlier), which is what produced a visible artwork→placeholder→artwork
+ * flicker on every screen that showed previously-seen art. The disk cache was
+ * always correctly keyed by `coverArtId`/`size` (see [diskCacheFile]), which is
+ * why it masked the bug as "occasionally slow" rather than "always broken."
  */
 class AlbumArtRepository(
     private val apiHolder: SubsonicApiHolder,
     filesDir: File,
 ) {
     private val memoryCache = ConcurrentHashMap<String, Bitmap>()
-    private val failedUrls = ConcurrentHashMap.newKeySet<String>()
+    private val failedKeys = ConcurrentHashMap.newKeySet<String>()
     private val diskCacheDir = File(filesDir, "albumart").apply { mkdirs() }
 
     // A single mutex serializes fetches rather than one-lock-per-key: cover art
@@ -44,41 +56,42 @@ class AlbumArtRepository(
     private val fetchMutex = Mutex()
 
     /** Synchronous, memory-cache-only lookup — lets a caller show an already-cached image on its very first composition instead of flashing a placeholder while [getBitmap] re-confirms the same cache hit. */
-    fun peekCached(url: String): Bitmap? = memoryCache[url]
+    fun peekCached(url: String): Bitmap? {
+        val (coverArtId, size) = parseCoverArtParams(url) ?: return null
+        return memoryCache[cacheKey(coverArtId, size)]
+    }
 
     /** Returns the decoded [Bitmap] for [url] (cached after the first successful fetch), or null if it's not fetchable/decodable. */
     suspend fun getBitmap(url: String): Bitmap? {
-        memoryCache[url]?.let { return it }
-        if (url in failedUrls) return null
+        val (coverArtId, size) = parseCoverArtParams(url) ?: return null
+        val key = cacheKey(coverArtId, size)
+        memoryCache[key]?.let { return it }
+        if (key in failedKeys) return null
         return fetchMutex.withLock {
-            memoryCache[url]?.let { return@withLock it }
-            if (url in failedUrls) return@withLock null
-            fetchDecodeAndCache(url)
+            memoryCache[key]?.let { return@withLock it }
+            if (key in failedKeys) return@withLock null
+            fetchDecodeAndCache(coverArtId, size, key)
         }
     }
 
-    private suspend fun fetchDecodeAndCache(url: String): Bitmap? {
-        val params = parseCoverArtParams(url)
-        if (params == null) {
-            failedUrls += url
-            return null
-        }
-        val (coverArtId, size) = params
+    private suspend fun fetchDecodeAndCache(coverArtId: String, size: Int, key: String): Bitmap? {
         return try {
             val bytes = readFromDisk(coverArtId, size) ?: fetchFromNetwork(coverArtId, size)
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             if (bitmap == null) {
-                failedUrls += url
+                failedKeys += key
                 null
             } else {
-                memoryCache[url] = bitmap
+                memoryCache[key] = bitmap
                 bitmap
             }
         } catch (e: Exception) {
-            failedUrls += url
+            failedKeys += key
             null
         }
     }
+
+    private fun cacheKey(coverArtId: String, size: Int) = "$coverArtId:$size"
 
     private fun readFromDisk(coverArtId: String, size: Int): ByteArray? {
         val file = diskCacheFile(coverArtId, size)

@@ -109,7 +109,7 @@ private fun SetUpServerSplash(onSetUp: () -> Unit) {
 private fun MenuRow(label: String, onClick: () -> Unit) {
     LightText(
         text = label,
-        variant = LightTextVariant.Copy,
+        variant = LightTextVariant.Heading,
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onClick)

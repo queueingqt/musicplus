@@ -63,6 +63,27 @@ class PlaybackRepository(
         )
     }
 
+    /**
+     * Synchronous read of every constituent `.value` — every one of them is
+     * genuinely `StateFlow`-backed (confirmed in `LightAudioPlayer`), so this is
+     * a real snapshot, not a guess. Used to seed a fresh screen's `state.stateIn`
+     * initial value instead of a blank `PlaybackState()`: without this, Now
+     * Playing visibly flashed its art/title/track info to empty on every
+     * navigation into the screen, even mid-playback with a live queue already
+     * in hand — same root cause as AlbumDetailScreen's album flash, confirmed
+     * on-device 2026-09-18.
+     */
+    fun currentSnapshot(): PlaybackState = PlaybackState(
+        queue = queue.value,
+        currentIndex = player.currentMediaItemIndex.value,
+        isPlaying = player.isPlaying.value,
+        positionMs = player.positionMs.value,
+        durationMs = player.durationMs.value,
+        shuffle = shuffle.value,
+        repeatMode = repeatMode.value,
+        errorMessage = player.error.value?.let { "${it.kind}: ${it.diagnostic}" },
+    )
+
     suspend fun play(tracks: List<Track>, startIndex: Int) {
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return // not configured — nothing playable

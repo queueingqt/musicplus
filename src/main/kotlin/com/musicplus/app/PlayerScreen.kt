@@ -44,7 +44,7 @@ class PlayerScreenViewModel(
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
-        playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PlaybackState())
+        playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
 
     fun togglePlayPause() = playback.togglePlayPause()
     fun skipBack() = playback.skipBack()

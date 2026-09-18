@@ -46,19 +46,23 @@ class AlbumDetailScreenViewModel(
     private val libraryRepository: LibraryRepository,
     private val downloadRepository: DownloadRepository,
     private val albumId: String,
+    initialAlbum: Album?,
 ) : LightViewModel<Unit>() {
 
     val tracks: StateFlow<List<Track>> = libraryRepository.observeTracksByAlbum(albumId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    // Depends on the album already being cached locally — true once AlbumListScreen's
-    // refreshAlbumList() or ArtistDetailScreen's refreshArtistDetail() has run, since
-    // both upsert album rows; there's no observeAlbumById on LibraryRepository. Title
-    // falls back to a track's own albumName in the Composable when this is still null
-    // (e.g. arriving here straight from a search result).
+    // Seeded from whatever the caller already had in hand (e.g. the row a list
+    // screen just tapped) rather than always starting at null. Room's Flow here
+    // is genuinely async — even though the row is already local, StateFlow has
+    // no synchronous "peek" and reports its initial value for at least the
+    // first frame — so without this seed, title AND art visibly flashed to
+    // their empty/placeholder state on every single navigation into this
+    // screen, confirmed live on-device 2026-09-18. Reconciles with the real
+    // Flow as soon as it emits, same as before.
     val album: StateFlow<Album?> = libraryRepository.observeAlbums()
         .map { albums -> albums.find { it.id == albumId } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialAlbum)
 
     // Drives the album-level download action's icon/label: NONE (nothing downloaded),
     // SOME (a mix — shows as the "start" icon, tapping downloads the rest),
@@ -125,13 +129,14 @@ enum class AlbumDownloadState { NONE, SOME, ALL }
 class AlbumDetailScreen(
     private val activity: SealedLightActivity,
     private val albumId: String,
+    private val initialAlbum: Album? = null,
 ) : LightScreen<Unit, AlbumDetailScreenViewModel>(activity) {
 
     override val viewModelClass = AlbumDetailScreenViewModel::class.java
 
     override fun createViewModel(): AlbumDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return AlbumDetailScreenViewModel(graph.libraryRepository, graph.downloadRepository, albumId)
+        return AlbumDetailScreenViewModel(graph.libraryRepository, graph.downloadRepository, albumId, initialAlbum)
     }
 
     @Composable

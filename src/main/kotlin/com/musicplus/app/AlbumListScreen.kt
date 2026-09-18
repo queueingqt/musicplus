@@ -98,7 +98,7 @@ class AlbumListScreen(activity: SealedLightActivity) :
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
                 items(albums, key = { it.id }) { album ->
                     AlbumRow(lightContext, album) {
-                        navigateTo({ a -> AlbumDetailScreen(a, album.id) })
+                        navigateTo({ a -> AlbumDetailScreen(a, album.id, album) })
                     }
                 }
             }

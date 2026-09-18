@@ -122,7 +122,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 item { SectionHeader("Albums") }
                 items(albums, key = { "album-${it.id}" }) { album ->
                     FavoriteRowWithArt(lightContext, album.name, album.coverArtUrl) {
-                        navigateTo({ a -> AlbumDetailScreen(a, album.id) })
+                        navigateTo({ a -> AlbumDetailScreen(a, album.id, album) })
                     }
                 }
                 item { SectionHeader("Tracks") }
