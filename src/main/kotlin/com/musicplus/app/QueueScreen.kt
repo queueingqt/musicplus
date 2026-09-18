@@ -1,6 +1,10 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -9,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
@@ -22,16 +27,21 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightModal
+import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
+import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 class QueueScreenViewModel(private val playback: PlaybackRepository) : LightViewModel<Unit>() {
     val state: StateFlow<PlaybackState> =
@@ -40,6 +50,7 @@ class QueueScreenViewModel(private val playback: PlaybackRepository) : LightView
     fun removeFromQueue(index: Int) = viewModelScope.launch { playback.removeFromQueue(index) }
     fun moveQueueItemUp(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, -1) }
     fun moveQueueItemDown(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, 1) }
+    fun clearQueue() = viewModelScope.launch { playback.clearQueue() }
 }
 
 /**
@@ -71,6 +82,16 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Queue"),
+                    rightButton = LightBarButton.LightIcon(
+                        icon = LightIcons.DELETE,
+                        onClick = {
+                            LightModalManager.show(
+                                ClearQueueModal(onConfirm = { viewModel.clearQueue() }),
+                                duration = 30.seconds,
+                            )
+                        },
+                        contentDescription = "Clear queue",
+                    ),
                 )
             },
             // false — this screen already has its own full queue list on
@@ -176,16 +197,81 @@ private fun QueueScreenRow(
             modifier = Modifier.weight(1f),
         )
         if (canRemove) {
-            // CLOSE (X), not TRASH — matches the LightOS convention of a plain
-            // X for "remove/dismiss this" rather than a trash-can metaphor.
             LightIcon(
-                icon = LightIcons.CLOSE,
+                icon = LightIcons.DELETE,
                 size = 1.5f,
                 contentDescription = "Remove from queue",
                 modifier = Modifier
                     .lightClickable(onClick = onRemove)
                     .padding(start = 0.5f.gridUnitsAsDp()),
             )
+        }
+    }
+}
+
+/**
+ * "Clear queue?" confirmation, shown via LightModalManager — a genuine
+ * transient (one-shot, short-lived) use of it, unlike the persistent
+ * mini-player case this app's scaffold already ruled it out for. 30s
+ * duration, not the 2s default: a destructive-action confirmation needs real
+ * time to read and decide, not a toast-length window. Timing out without a
+ * choice behaves as Deny (onExpired is a no-op) — the safe default for an
+ * unconfirmed destructive action.
+ */
+private class ClearQueueModal(private val onConfirm: () -> Unit) : LightModal {
+    private val dismissSignal = CompletableDeferred<Unit>()
+
+    override val onExpired: () -> Unit = {}
+
+    override fun dismiss() {
+        dismissSignal.complete(Unit)
+    }
+
+    override suspend fun awaitDismiss() {
+        dismissSignal.await()
+    }
+
+    @Composable
+    override fun Content() {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(LightThemeTokens.colors.background.copy(alpha = 0.96f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(horizontal = 2f.gridUnitsAsDp()),
+            ) {
+                LightText(text = "Clear queue?", variant = LightTextVariant.Heading, align = TextAlign.Center)
+                LightText(
+                    text = "Removes every track and stops playback.",
+                    variant = LightTextVariant.Detail,
+                    align = TextAlign.Center,
+                    modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp(), bottom = 1.5f.gridUnitsAsDp()),
+                )
+                Row {
+                    LightIcon(
+                        icon = LightIcons.DENY,
+                        size = 2f,
+                        contentDescription = "Cancel",
+                        modifier = Modifier
+                            .lightClickable { dismiss() }
+                            .padding(horizontal = 2f.gridUnitsAsDp()),
+                    )
+                    LightIcon(
+                        icon = LightIcons.ACCEPT,
+                        size = 2f,
+                        contentDescription = "Clear queue",
+                        modifier = Modifier
+                            .lightClickable {
+                                onConfirm()
+                                dismiss()
+                            }
+                            .padding(horizontal = 2f.gridUnitsAsDp()),
+                    )
+                }
+            }
         }
     }
 }

@@ -194,6 +194,23 @@ class PlaybackRepository(
     }
 
     /**
+     * Stops playback and empties the queue entirely — the "Clear queue"
+     * action. Unlike removeFromQueue/moveQueueItem, this can clear the
+     * currently playing track too; clearing *is* the whole point here, none
+     * of the "only touch upcoming tracks" restriction those enforce applies.
+     * `setMediaQueue(emptyList())` is LightAudioPlayer's own documented way
+     * to fully clear (calls `clearMediaItems()`, resets the index, no
+     * `prepare()`/`play()` after) — confirmed via its source, not guessed.
+     */
+    suspend fun clearQueue() {
+        if (!player.awaitReady()) return
+        queue.value = emptyList()
+        pendingIndex.value = 0
+        currentAlbumArtUrl.value = null
+        player.setMediaQueue(emptyList())
+    }
+
+    /**
      * Patches [trackId]'s favorite flag in the live queue in place — metadata
      * only, doesn't touch the player at all (no rebuildQueue/setMediaQueue
      * call), so it can't cause the reorder-style playback pause (issue #23).
