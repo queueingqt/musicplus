@@ -245,7 +245,7 @@ private class ClearQueueModal(private val onConfirm: () -> Unit) : LightModal {
             ) {
                 LightText(text = "Clear queue?", variant = LightTextVariant.Heading, align = TextAlign.Center)
                 LightText(
-                    text = "Removes every track and stops playback.",
+                    text = "Removes every other track. The current song keeps playing.",
                     variant = LightTextVariant.Detail,
                     align = TextAlign.Center,
                     modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp(), bottom = 1.5f.gridUnitsAsDp()),

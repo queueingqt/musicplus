@@ -194,20 +194,21 @@ class PlaybackRepository(
     }
 
     /**
-     * Stops playback and empties the queue entirely — the "Clear queue"
-     * action. Unlike removeFromQueue/moveQueueItem, this can clear the
-     * currently playing track too; clearing *is* the whole point here, none
-     * of the "only touch upcoming tracks" restriction those enforce applies.
-     * `setMediaQueue(emptyList())` is LightAudioPlayer's own documented way
-     * to fully clear (calls `clearMediaItems()`, resets the index, no
-     * `prepare()`/`play()` after) — confirmed via its source, not guessed.
+     * The "Clear queue" action — drops every other track (past and upcoming)
+     * but leaves whatever's currently playing alone. Reported live: an
+     * earlier version wiped the queue down to nothing and stopped playback
+     * too, which isn't what "clear queue" means while something is actively
+     * playing — it should behave like "clear everything except now," the
+     * same restriction removeFromQueue/moveQueueItem already enforce, not a
+     * full stop. Goes through [rebuildQueue] rather than
+     * `setMediaQueue(emptyList())` so the current track's position/play
+     * state carries over exactly like any other queue trim.
      */
     suspend fun clearQueue() {
-        if (!player.awaitReady()) return
-        queue.value = emptyList()
-        pendingIndex.value = 0
-        currentAlbumArtUrl.value = null
-        player.setMediaQueue(emptyList())
+        val current = queue.value
+        if (current.isEmpty()) return
+        val currentIndex = player.currentMediaItemIndex.value.coerceIn(0, current.lastIndex)
+        rebuildQueue(listOf(current[currentIndex]))
     }
 
     /**

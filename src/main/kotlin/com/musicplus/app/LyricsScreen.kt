@@ -17,9 +17,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.LyricsRepository
 import com.musicplus.app.data.PlaybackRepository
 import com.musicplus.app.data.PlaybackRepositoryHolder
-import com.musicplus.app.data.SubsonicApiHolder
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -55,7 +55,7 @@ import kotlinx.coroutines.launch
  */
 class LyricsScreenViewModel(
     private val playback: PlaybackRepository,
-    private val apiHolder: SubsonicApiHolder,
+    private val lyricsRepository: LyricsRepository,
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
@@ -87,30 +87,7 @@ class LyricsScreenViewModel(
         }
         _lyrics.value = LyricsState.Loading
         lyricsJob = viewModelScope.launch {
-            val api = apiHolder.get()
-            _lyrics.value = if (api == null) {
-                LyricsState.Error("Not connected to a server")
-            } else {
-                try {
-                    val entries = api.getLyricsBySongId(trackId)
-                    // Prefer an explicit "main" entry if the server bothers to tag
-                    // one (spec allows translation/pronunciation alongside it);
-                    // otherwise take the first synced entry, then just the first
-                    // entry with any lines at all. Real probes against this
-                    // project's Navidrome only ever returned a single entry with
-                    // no `kind` set, so this is defensive rather than exercised.
-                    val best = entries.firstOrNull { it.kind == "main" && it.line.isNotEmpty() }
-                        ?: entries.firstOrNull { it.synced && it.line.isNotEmpty() }
-                        ?: entries.firstOrNull { it.line.isNotEmpty() }
-                    when {
-                        best == null -> LyricsState.NoLyrics
-                        best.synced -> LyricsState.Synced(best.line.map { LyricLine(it.start, it.value) })
-                        else -> LyricsState.Plain(best.line.joinToString("\n") { it.value }.trim())
-                    }
-                } catch (e: Exception) {
-                    LyricsState.Error(e.message ?: "Couldn't load lyrics")
-                }
-            }
+            _lyrics.value = lyricsRepository.getLyrics(trackId)
         }
     }
 }
@@ -123,7 +100,7 @@ class LyricsScreen(private val sealedActivity: SealedLightActivity) :
     override fun createViewModel(): LyricsScreenViewModel {
         val graph = AppGraph.from(lightContext)
         val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder, lightContext.filesDir)
-        return LyricsScreenViewModel(playback, graph.apiHolder)
+        return LyricsScreenViewModel(playback, graph.lyricsRepository)
     }
 
     @Composable

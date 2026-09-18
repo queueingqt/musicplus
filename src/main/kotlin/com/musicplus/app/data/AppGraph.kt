@@ -23,6 +23,7 @@ object AppGraph {
         val playlistRepository: PlaylistRepository,
         val downloadRepository: DownloadRepository,
         val albumArtRepository: AlbumArtRepository,
+        val lyricsRepository: LyricsRepository,
         val connectivity: LightConnectivity,
     )
 
@@ -87,6 +88,10 @@ object AppGraph {
             apiHolder = apiHolder,
             filesDir = lightContext.filesDir,
         )
+        val lyricsRepository = LyricsRepository(
+            apiHolder = apiHolder,
+            filesDir = lightContext.filesDir,
+        )
         return Graph(
             serverConfigRepository = serverConfigRepository,
             appSettingsRepository = appSettingsRepository,
@@ -96,6 +101,7 @@ object AppGraph {
             playlistRepository = playlistRepository,
             downloadRepository = downloadRepository,
             albumArtRepository = albumArtRepository,
+            lyricsRepository = lyricsRepository,
             connectivity = connectivity,
         )
     }

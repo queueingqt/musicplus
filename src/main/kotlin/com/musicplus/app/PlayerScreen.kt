@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -142,6 +143,18 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val albumArtUrl by viewModel.albumArtUrl.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
+
+        // Self-dismiss rather than show an empty "Nothing playing" screen —
+        // there's no legitimate reason to linger here once nothing's queued.
+        // PlaybackRepository.clearQueue() now always keeps the currently
+        // playing track (reported live: clearing the queue shouldn't stop
+        // playback), so this no longer fires from that flow specifically —
+        // it's a defensive fallback for the case nothing was ever queued in
+        // the first place, kept because reaching this screen with a null
+        // track should never show a dead page regardless of how it happens.
+        LaunchedEffect(track) {
+            if (track == null) goBack()
+        }
 
         // showMiniPlayer = false — the full now-playing UI is already on screen
         // here, a mini-player row would just duplicate it.
