@@ -79,19 +79,17 @@ class PlaylistListScreenViewModel(
         return id
     }
 
-    /** See TrackListDownload.kt — shared with the album-level download rows, just sourced from a playlist's own tracks instead. */
+    // See SelfLoadingTrackList.kt — shared with the album-level download rows,
+    // just sourced from a playlist's own tracks instead. Same root cause as
+    // AlbumListScreenViewModel's toggleAlbumDownload used to have: playlistRepository.observeTracks'
+    // Room cache was only ever populated by PlaylistDetailScreen's own
+    // onScreenShow, so choosing "Download playlist" here without ever opening
+    // that playlist first silently enqueued nothing.
     fun playlistDownloadState(playlistId: String): Flow<TrackListDownloadState> =
-        observeTrackListDownloadState(playlistRepository.observeTracks(playlistId), downloadRepository)
+        SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).observeDownloadState(downloadRepository)
 
-    // refreshPlaylistDetail first — same root cause as AlbumListScreenViewModel's
-    // toggleAlbumDownload: playlistRepository.observeTracks' Room cache is only
-    // ever populated by PlaylistDetailScreen's own onScreenShow, so choosing
-    // "Download playlist" here without ever opening that playlist first silently
-    // enqueued nothing.
-    suspend fun togglePlaylistDownload(lightContext: SealedLightContext, playlistId: String): TrackListDownloadState {
-        playlistRepository.refreshPlaylistDetail(playlistId)
-        return toggleTrackListDownload(lightContext, playlistRepository.observeTracks(playlistId), downloadRepository)
-    }
+    suspend fun togglePlaylistDownload(lightContext: SealedLightContext, playlistId: String): TrackListDownloadState =
+        SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).toggleDownload(lightContext, downloadRepository)
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     var scrollIndex = 0
