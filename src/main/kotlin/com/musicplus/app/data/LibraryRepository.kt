@@ -3,6 +3,7 @@ package com.musicplus.app.data
 import com.musicplus.app.Album
 import com.musicplus.app.Artist
 import com.musicplus.app.Track
+import com.musicplus.app.WriteOutcome
 import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -129,14 +130,24 @@ class LibraryRepository(
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { albumDao.setStarred(id, favorite) }
     suspend fun setTrackFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { trackDao.setStarred(id, favorite) }
 
-    private suspend inline fun setFavorite(id: String, favorite: Boolean, updateLocal: () -> Unit) {
+    /**
+     * Returns [WriteOutcome.FAILED] (rather than silently swallowing, as this
+     * used to) so [SyncQueueRepository] knows to queue this for a later retry —
+     * confirmed live that a failed/offline favorite toggle otherwise showed as
+     * permanently favorited locally with zero indication the server never got
+     * it (issue #24).
+     */
+    private suspend inline fun setFavorite(id: String, favorite: Boolean, updateLocal: () -> Unit): WriteOutcome {
         updateLocal() // optimistic — reflect it immediately, reconcile on next refresh if this fails
-        val api = apiHolder.get() ?: return
-        try {
+        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        return try {
             if (favorite) api.star(id) else api.unstar(id)
+            WriteOutcome.SUCCESS
         } catch (e: Exception) {
-            // Local state already reflects the tap; a later refresh reconciles.
+            // Local state already reflects the tap; a later refresh (or a
+            // successful sync-queue replay) reconciles.
             AppLogger.e("LibraryRepository", "setFavorite($id, $favorite) failed", e)
+            WriteOutcome.FAILED
         }
     }
 

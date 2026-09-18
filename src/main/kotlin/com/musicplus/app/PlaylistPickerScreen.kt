@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.PlaylistRepository
+import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -31,6 +32,7 @@ import kotlinx.coroutines.launch
 
 class PlaylistPickerScreenViewModel(
     private val playlistRepository: PlaylistRepository,
+    private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
     val playlists: StateFlow<List<Playlist>> = playlistRepository.observePlaylists()
@@ -41,13 +43,13 @@ class PlaylistPickerScreenViewModel(
     }
 
     suspend fun addToExisting(playlistId: String, songId: String) {
-        playlistRepository.addTrack(playlistId, songId)
+        syncQueueRepository.addTrack(playlistId, songId)
     }
 
-    /** Returns the new playlist's id, or null if creation failed (offline/not configured). */
+    /** Returns the new playlist's id — real or a local placeholder (see SyncQueueRepository.createPlaylist) — or null only if no server is configured at all. */
     suspend fun createAndAdd(name: String, songId: String): String? {
-        val id = playlistRepository.createPlaylist(name) ?: return null
-        playlistRepository.addTrack(id, songId)
+        val id = syncQueueRepository.createPlaylist(name) ?: return null
+        syncQueueRepository.addTrack(id, songId)
         playlistRepository.refreshPlaylists()
         return id
     }
@@ -72,7 +74,10 @@ class PlaylistPickerScreen(
 
     override val viewModelClass = PlaylistPickerScreenViewModel::class.java
 
-    override fun createViewModel() = PlaylistPickerScreenViewModel(AppGraph.from(lightContext).playlistRepository)
+    override fun createViewModel(): PlaylistPickerScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        return PlaylistPickerScreenViewModel(graph.playlistRepository, graph.syncQueueRepository)
+    }
 
     @Composable
     override fun Content() {

@@ -135,18 +135,21 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                         },
                         onOpenActions = {
                             navigateTo({ a ->
+                                lateinit var addToQueueItem: ActionMenuItem
+                                addToQueueItem = ActionMenuItem(
+                                    icon = LightIcons.ADD,
+                                    label = "Add to queue",
+                                    onSelect = ActionMenuSelection.Perform {
+                                        val graph = AppGraph.from(lightContext)
+                                        PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
+                                        addToQueueItem
+                                    },
+                                )
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = track.title,
                                     items = listOf(
-                                        ActionMenuItem(
-                                            icon = LightIcons.ADD,
-                                            label = "Add to queue",
-                                            onSelect = ActionMenuSelection.Perform {
-                                                val graph = AppGraph.from(lightContext)
-                                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
-                                            },
-                                        ),
+                                        addToQueueItem,
                                         ActionMenuItem(
                                             icon = LightIcons.LIST,
                                             label = "Add to playlist",

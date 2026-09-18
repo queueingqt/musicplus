@@ -24,6 +24,7 @@ import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.PlaybackRepositoryHolder
 import com.musicplus.app.data.PlaylistRepository
+import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -50,6 +51,7 @@ class PlaylistDetailScreenViewModel(
     private val playlistRepository: PlaylistRepository,
     private val libraryRepository: LibraryRepository,
     private val downloadRepository: DownloadRepository,
+    private val syncQueueRepository: SyncQueueRepository,
     private val playlistId: String,
 ) : LightViewModel<Unit>() {
 
@@ -65,41 +67,44 @@ class PlaylistDetailScreenViewModel(
 
     fun downloadStatus(songId: String): Flow<DownloadEntity?> = downloadRepository.observeStatus(songId)
 
-    /** Same enqueue/cancel-doubles-as-remove semantics as AlbumDetailScreenViewModel.toggleDownload. */
-    fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?) {
-        viewModelScope.launch {
-            when (currentStatus) {
-                DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE ->
-                    downloadRepository.cancel(lightContext, track.id)
-                DownloadStatus.FAILED, null -> downloadRepository.enqueue(lightContext, track)
+    /**
+     * Same enqueue/cancel-doubles-as-remove semantics as
+     * AlbumDetailScreenViewModel.toggleDownload. Suspend and returns the
+     * resulting status (rather than fire-and-forget) so the action menu row
+     * that triggers this can update itself in place afterward.
+     */
+    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
+        when (currentStatus) {
+            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
+                downloadRepository.cancel(lightContext, track.id)
+                null
+            }
+            DownloadStatus.FAILED, null -> {
+                downloadRepository.enqueue(lightContext, track)
+                DownloadStatus.QUEUED
             }
         }
-    }
 
-    fun toggleFavorite(track: Track) {
-        viewModelScope.launch { libraryRepository.setTrackFavorite(track.id, !track.isFavorite) }
-    }
-
-    /** [position] is the track's zero-based index in the currently-displayed (i.e. server) order. */
-    fun removeTrack(position: Int) {
-        viewModelScope.launch { playlistRepository.removeTrack(playlistId, position) }
+    /** [position] is the track's zero-based index in the currently-displayed (i.e. server) order. Suspend, same reasoning as [toggleDownload]. */
+    suspend fun removeTrack(position: Int) {
+        syncQueueRepository.removeTrack(playlistId, position)
     }
 
     fun moveUp(position: Int) {
-        viewModelScope.launch { playlistRepository.moveTrackUp(playlistId, position) }
+        viewModelScope.launch { syncQueueRepository.moveTrackUp(playlistId, position) }
     }
 
     fun moveDown(position: Int) {
-        viewModelScope.launch { playlistRepository.moveTrackDown(playlistId, position) }
+        viewModelScope.launch { syncQueueRepository.moveTrackDown(playlistId, position) }
     }
 
     fun rename(name: String) {
-        viewModelScope.launch { playlistRepository.renamePlaylist(playlistId, name) }
+        viewModelScope.launch { syncQueueRepository.renamePlaylist(playlistId, name) }
     }
 
     fun delete(onDeleted: () -> Unit) {
         viewModelScope.launch {
-            playlistRepository.deletePlaylist(playlistId)
+            syncQueueRepository.deletePlaylist(playlistId)
             onDeleted()
         }
     }
@@ -118,7 +123,7 @@ class PlaylistDetailScreen(
 
     override fun createViewModel(): PlaylistDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.libraryRepository, graph.downloadRepository, playlistId)
+        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, playlistId)
     }
 
     @Composable
@@ -139,6 +144,14 @@ class PlaylistDetailScreen(
                 confirmDelete = false
             }
         }
+
+        fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
+            icon = if (status == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
+            label = downloadStatusLabel(status),
+            onSelect = ActionMenuSelection.Perform {
+                trackDownloadActionItem(track, viewModel.toggleDownload(lightContext, track, status))
+            },
+        )
 
         MusicPlusScaffold(
             topBar = {
@@ -206,22 +219,17 @@ class PlaylistDetailScreen(
                                     activity = a,
                                     subtitle = track.title,
                                     items = listOf(
-                                        ActionMenuItem(
-                                            icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                                            label = if (track.isFavorite) "Remove from favorites" else "Add to favorites",
-                                            onSelect = ActionMenuSelection.Perform { viewModel.toggleFavorite(track) },
-                                        ),
-                                        ActionMenuItem(
-                                            icon = if (status?.status == DownloadStatus.COMPLETE) LightIcons.DOWNLOADED_ARROW else LightIcons.DOWNLOAD_ARROW,
-                                            label = downloadStatusLabel(status),
-                                            onSelect = ActionMenuSelection.Perform {
-                                                viewModel.toggleDownload(lightContext, track, status?.status)
-                                            },
-                                        ),
+                                        favoriteActionItem(track.isFavorite) { favorite ->
+                                            AppGraph.from(lightContext).syncQueueRepository.setTrackFavorite(track.id, favorite)
+                                        },
+                                        trackDownloadActionItem(track, status?.status),
                                         ActionMenuItem(
                                             icon = LightIcons.CLOSE,
                                             label = "Remove from playlist",
-                                            onSelect = ActionMenuSelection.Perform { viewModel.removeTrack(index) },
+                                            onSelect = ActionMenuSelection.Perform {
+                                                viewModel.removeTrack(index)
+                                                null
+                                            },
                                         ),
                                     ),
                                 )
@@ -297,7 +305,7 @@ private fun PlaylistTrackRow(
 }
 
 /** Tap semantics: QUEUED/DOWNLOADING/COMPLETE -> stop or remove; FAILED/null -> start. See AlbumDetailScreen's identical helper. */
-private fun downloadStatusLabel(status: DownloadEntity?): String = when (status?.status) {
+private fun downloadStatusLabel(status: DownloadStatus?): String = when (status) {
     null -> "Download"
     DownloadStatus.QUEUED -> "Queued — tap to cancel"
     DownloadStatus.DOWNLOADING -> "Downloading — tap to cancel"

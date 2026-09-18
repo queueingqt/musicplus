@@ -14,6 +14,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.LibraryRepository
+import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -39,6 +40,7 @@ import kotlinx.coroutines.launch
 
 class ArtistDetailScreenViewModel(
     private val libraryRepository: LibraryRepository,
+    private val syncQueueRepository: SyncQueueRepository,
     private val artistId: String,
 ) : LightViewModel<Unit>() {
 
@@ -69,7 +71,7 @@ class ArtistDetailScreenViewModel(
 
     fun toggleFavorite() {
         val isFavorite = artist.value?.isFavorite ?: false
-        viewModelScope.launch { libraryRepository.setArtistFavorite(artistId, !isFavorite) }
+        viewModelScope.launch { syncQueueRepository.setArtistFavorite(artistId, !isFavorite) }
     }
 }
 
@@ -80,8 +82,10 @@ class ArtistDetailScreen(
 
     override val viewModelClass = ArtistDetailScreenViewModel::class.java
 
-    override fun createViewModel() =
-        ArtistDetailScreenViewModel(AppGraph.from(lightContext).libraryRepository, artistId)
+    override fun createViewModel(): ArtistDetailScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        return ArtistDetailScreenViewModel(graph.libraryRepository, graph.syncQueueRepository, artistId)
+    }
 
     @Composable
     override fun Content() {

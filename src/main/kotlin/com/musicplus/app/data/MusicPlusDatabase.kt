@@ -16,11 +16,14 @@ import java.io.File
         QueueItemEntity::class,
         PlaylistEntity::class,
         PlaylistTrackEntity::class,
+        PendingMutationEntity::class,
     ],
-    // v2: adds playlists/playlist_tracks (issue #5). See migrateV1ToV2IfNeeded
-    // below for how an existing v1 install is carried forward losslessly despite
-    // there being no way to register a real Migration object here.
-    version = 2,
+    // v2: adds playlists/playlist_tracks (issue #5). v3: adds pending_mutations
+    // (issue #24, the offline sync queue). See migrateV1ToV2IfNeeded/
+    // migrateV2ToV3IfNeeded below for how an existing install is carried forward
+    // losslessly despite there being no way to register a real Migration object
+    // here.
+    version = 3,
     exportSchema = false,
 )
 abstract class MusicPlusDatabase : RoomDatabase() {
@@ -30,6 +33,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
     abstract fun downloadDao(): DownloadDao
     abstract fun queueDao(): QueueDao
     abstract fun playlistDao(): PlaylistDao
+    abstract fun pendingMutationDao(): PendingMutationDao
 
     companion object {
         // Read verbatim off a real build's generated MusicPlusDatabase_Impl.kt
@@ -45,6 +49,10 @@ abstract class MusicPlusDatabase : RoomDatabase() {
         // Unaffected by the class/file rename from LightwaveDatabase below — Room's
         // identity hash is derived from the entity/column shape, not the class name.
         private const val V2_IDENTITY_HASH = "7ebbf7cb6e6169831fde6abd69471667"
+        // Same provenance as V2_IDENTITY_HASH above — read verbatim off a real
+        // build's generated MusicPlusDatabase_Impl.kt after adding
+        // PendingMutationEntity, not invented.
+        private const val V3_IDENTITY_HASH = "29d76f40bf75edd9fe9d5139cf3c35d2"
 
         private const val DB_FILE_NAME = "musicplus.db"
         private const val LEGACY_DB_FILE_NAME = "lightwave.db"
@@ -55,6 +63,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
         fun create(lightContext: SealedLightContext): MusicPlusDatabase {
             renameLegacyDbFileIfNeeded(lightContext)
             migrateV1ToV2IfNeeded(lightContext)
+            migrateV2ToV3IfNeeded(lightContext)
             return lightContext.buildDatabase(MusicPlusDatabase::class.java, DB_FILE_NAME)
         }
 
@@ -165,6 +174,34 @@ abstract class MusicPlusDatabase : RoomDatabase() {
                 // understood) failure mode below, never a new one.
                 android.util.Log.e("MusicPlusDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
                 AppLogger.e("MusicPlusDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
+            }
+        }
+
+        /**
+         * Hand-rolled v2 -> v3 migration (adds `pending_mutations`, issue #24's
+         * offline sync queue) — same raw-SQLite pre-flight approach as
+         * migrateV1ToV2IfNeeded above, for the exact same reason (no
+         * addMigrations hook exposed by this SDK's buildDatabase()). See that
+         * function's doc for the full rationale; this only differs in which
+         * version it patches from/to and which table it adds.
+         */
+        private fun migrateV2ToV3IfNeeded(lightContext: SealedLightContext) {
+            try {
+                val dbFile = File(lightContext.filesDir.parentFile, "databases/$DB_FILE_NAME")
+                if (!dbFile.exists()) return // fresh install — Room creates everything at v3 itself, nothing to migrate
+
+                val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
+                db.use {
+                    if (it.version != 2) return@use // already migrated, or a version this code doesn't know about — leave it alone
+                    it.execSQL(
+                        "CREATE TABLE IF NOT EXISTS `pending_mutations` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `type` TEXT NOT NULL, `targetId` TEXT NOT NULL, `payloadJson` TEXT NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `attemptCount` INTEGER NOT NULL, `lastError` TEXT)",
+                    )
+                    it.execSQL("INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '$V3_IDENTITY_HASH')")
+                    it.version = 3
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MusicPlusDatabase", "v2 -> v3 hand migration failed, falling back to Room's own open", e)
+                AppLogger.e("MusicPlusDatabase", "v2 -> v3 hand migration failed, falling back to Room's own open", e)
             }
         }
     }

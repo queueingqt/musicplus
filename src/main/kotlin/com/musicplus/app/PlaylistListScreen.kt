@@ -20,6 +20,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.PlaylistRepository
+import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -41,6 +42,7 @@ import kotlinx.coroutines.launch
 
 class PlaylistListScreenViewModel(
     private val playlistRepository: PlaylistRepository,
+    private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
     private val _query = MutableStateFlow("")
@@ -64,9 +66,9 @@ class PlaylistListScreenViewModel(
         _query.value = value
     }
 
-    /** Returns the new playlist's id, or null if creation failed (offline/not configured). */
+    /** Returns the new playlist's id — real if it synced immediately, a local placeholder if it's now queued (see SyncQueueRepository), or null only if no server is configured at all. */
     suspend fun createPlaylist(name: String): String? {
-        val id = playlistRepository.createPlaylist(name)
+        val id = syncQueueRepository.createPlaylist(name)
         playlistRepository.refreshPlaylists()
         return id
     }
@@ -77,7 +79,10 @@ class PlaylistListScreen(activity: SealedLightActivity) :
 
     override val viewModelClass = PlaylistListScreenViewModel::class.java
 
-    override fun createViewModel() = PlaylistListScreenViewModel(AppGraph.from(lightContext).playlistRepository)
+    override fun createViewModel(): PlaylistListScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        return PlaylistListScreenViewModel(graph.playlistRepository, graph.syncQueueRepository)
+    }
 
     @Composable
     override fun Content() {

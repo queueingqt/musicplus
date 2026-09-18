@@ -20,6 +20,7 @@ import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -44,6 +45,7 @@ import kotlinx.coroutines.launch
 class AlbumDetailScreenViewModel(
     private val libraryRepository: LibraryRepository,
     private val downloadRepository: DownloadRepository,
+    private val syncQueueRepository: SyncQueueRepository,
     private val albumId: String,
     initialAlbum: Album?,
 ) : LightViewModel<Unit>() {
@@ -81,11 +83,6 @@ class AlbumDetailScreenViewModel(
         viewModelScope.launch { libraryRepository.refreshAlbumDetail(albumId) }
     }
 
-    fun toggleFavorite() {
-        val isFavorite = album.value?.isFavorite ?: false
-        viewModelScope.launch { libraryRepository.setAlbumFavorite(albumId, !isFavorite) }
-    }
-
     fun downloadStatus(songId: String): Flow<DownloadEntity?> = downloadRepository.observeStatus(songId)
 
     /**
@@ -94,25 +91,33 @@ class AlbumDetailScreenViewModel(
      * enqueue when there's nothing downloaded/in-flight, and stop/remove otherwise.
      * `DownloadRepository.cancel` already deletes both the local file and the DB
      * row regardless of job state, so it doubles as "remove local copy" for a
-     * COMPLETE download, not just "abort an in-flight one".
+     * COMPLETE download, not just "abort an in-flight one". Suspend and returns
+     * the resulting status (rather than fire-and-forget) so the action menu row
+     * that triggers this can update itself in place afterward.
      */
-    fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?) {
-        viewModelScope.launch {
-            when (currentStatus) {
-                DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE ->
-                    downloadRepository.cancel(lightContext, track.id)
-                DownloadStatus.FAILED, null -> downloadRepository.enqueue(lightContext, track)
+    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
+        when (currentStatus) {
+            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
+                downloadRepository.cancel(lightContext, track.id)
+                null
+            }
+            DownloadStatus.FAILED, null -> {
+                downloadRepository.enqueue(lightContext, track)
+                DownloadStatus.QUEUED
             }
         }
-    }
 
-    /** ALL -> remove every downloaded track; NONE/SOME -> download whatever isn't already complete. */
-    fun toggleAlbumDownload(lightContext: SealedLightContext) {
-        viewModelScope.launch {
-            val currentTracks = tracks.value
-            when (albumDownloadState.value) {
-                AlbumDownloadState.ALL -> currentTracks.forEach { downloadRepository.cancel(lightContext, it.id) }
-                AlbumDownloadState.NONE, AlbumDownloadState.SOME -> currentTracks.forEach { downloadRepository.enqueue(lightContext, it) }
+    /** ALL -> remove every downloaded track; NONE/SOME -> download whatever isn't already complete. Suspend, same reasoning as [toggleDownload]. */
+    suspend fun toggleAlbumDownload(lightContext: SealedLightContext): AlbumDownloadState {
+        val currentTracks = tracks.value
+        return when (albumDownloadState.value) {
+            AlbumDownloadState.ALL -> {
+                currentTracks.forEach { downloadRepository.cancel(lightContext, it.id) }
+                AlbumDownloadState.NONE
+            }
+            AlbumDownloadState.NONE, AlbumDownloadState.SOME -> {
+                currentTracks.forEach { downloadRepository.enqueue(lightContext, it) }
+                AlbumDownloadState.ALL
             }
         }
     }
@@ -135,7 +140,7 @@ class AlbumDetailScreen(
 
     override fun createViewModel(): AlbumDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return AlbumDetailScreenViewModel(graph.libraryRepository, graph.downloadRepository, albumId, initialAlbum)
+        return AlbumDetailScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, albumId, initialAlbum)
     }
 
     @Composable
@@ -145,6 +150,29 @@ class AlbumDetailScreen(
         val album by viewModel.album.collectAsState()
         val albumDownloadState by viewModel.albumDownloadState.collectAsState()
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
+
+        fun albumDownloadActionItem(state: AlbumDownloadState): ActionMenuItem = ActionMenuItem(
+            icon = when (state) {
+                AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
+                AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
+            },
+            label = when (state) {
+                AlbumDownloadState.ALL -> "Downloaded — remove"
+                AlbumDownloadState.SOME -> "Some tracks downloaded — download the rest"
+                AlbumDownloadState.NONE -> "Download album"
+            },
+            onSelect = ActionMenuSelection.Perform {
+                albumDownloadActionItem(viewModel.toggleAlbumDownload(lightContext))
+            },
+        )
+
+        fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
+            icon = downloadIcon(status),
+            label = downloadStatusLabel(status),
+            onSelect = ActionMenuSelection.Perform {
+                trackDownloadActionItem(track, viewModel.toggleDownload(lightContext, track, status))
+            },
+        )
 
         // Plain back + centered title now — the 3 album-level action icons that used to
         // live here (favorite, download, add-to-queue, added earlier this session) moved
@@ -183,35 +211,25 @@ class AlbumDetailScreen(
                             onLongClick = {
                                 navigateTo({ a ->
                                     val isFavorite = album?.isFavorite == true
+                                    lateinit var addAlbumToQueueItem: ActionMenuItem
+                                    addAlbumToQueueItem = ActionMenuItem(
+                                        icon = LightIcons.ADD,
+                                        label = "Add album to queue",
+                                        onSelect = ActionMenuSelection.Perform {
+                                            val graph = AppGraph.from(lightContext)
+                                            PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
+                                            addAlbumToQueueItem
+                                        },
+                                    )
                                     ActionsMenuScreen(
                                         activity = a,
                                         subtitle = title,
                                         items = listOf(
-                                            ActionMenuItem(
-                                                icon = if (isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                                                label = if (isFavorite) "Remove from favorites" else "Add to favorites",
-                                                onSelect = ActionMenuSelection.Perform { viewModel.toggleFavorite() },
-                                            ),
-                                            ActionMenuItem(
-                                                icon = when (albumDownloadState) {
-                                                    AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
-                                                    AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
-                                                },
-                                                label = when (albumDownloadState) {
-                                                    AlbumDownloadState.ALL -> "Downloaded — remove"
-                                                    AlbumDownloadState.SOME -> "Some tracks downloaded — download the rest"
-                                                    AlbumDownloadState.NONE -> "Download album"
-                                                },
-                                                onSelect = ActionMenuSelection.Perform { viewModel.toggleAlbumDownload(lightContext) },
-                                            ),
-                                            ActionMenuItem(
-                                                icon = LightIcons.ADD,
-                                                label = "Add album to queue",
-                                                onSelect = ActionMenuSelection.Perform {
-                                                    val graph = AppGraph.from(lightContext)
-                                                    PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
-                                                },
-                                            ),
+                                            favoriteActionItem(isFavorite) { favorite ->
+                                                AppGraph.from(lightContext).syncQueueRepository.setAlbumFavorite(albumId, favorite)
+                                            },
+                                            albumDownloadActionItem(albumDownloadState),
+                                            addAlbumToQueueItem,
                                         ),
                                     )
                                 })
@@ -236,25 +254,24 @@ class AlbumDetailScreen(
                         },
                         onOpenActions = {
                             navigateTo({ a ->
+                                lateinit var addTrackToQueueItem: ActionMenuItem
+                                addTrackToQueueItem = ActionMenuItem(
+                                    icon = LightIcons.ADD,
+                                    label = "Add to queue",
+                                    onSelect = ActionMenuSelection.Perform {
+                                        val graph = AppGraph.from(lightContext)
+                                        PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
+                                        addTrackToQueueItem
+                                    },
+                                )
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = track.title,
                                     items = listOf(
-                                        ActionMenuItem(
-                                            icon = if (track.isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
-                                            label = if (track.isFavorite) "Remove from favorites" else "Add to favorites",
-                                            onSelect = ActionMenuSelection.Perform {
-                                                AppGraph.from(lightContext).libraryRepository.setTrackFavorite(track.id, !track.isFavorite)
-                                            },
-                                        ),
-                                        ActionMenuItem(
-                                            icon = LightIcons.ADD,
-                                            label = "Add to queue",
-                                            onSelect = ActionMenuSelection.Perform {
-                                                val graph = AppGraph.from(lightContext)
-                                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(listOf(track))
-                                            },
-                                        ),
+                                        favoriteActionItem(track.isFavorite) { favorite ->
+                                            AppGraph.from(lightContext).syncQueueRepository.setTrackFavorite(track.id, favorite)
+                                        },
+                                        addTrackToQueueItem,
                                         ActionMenuItem(
                                             icon = LightIcons.LIST,
                                             label = "Add to playlist",
@@ -262,13 +279,7 @@ class AlbumDetailScreen(
                                                 navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
                                             },
                                         ),
-                                        ActionMenuItem(
-                                            icon = downloadIcon(status),
-                                            label = downloadStatusLabel(status),
-                                            onSelect = ActionMenuSelection.Perform {
-                                                viewModel.toggleDownload(lightContext, track, status?.status)
-                                            },
-                                        ),
+                                        trackDownloadActionItem(track, status?.status),
                                     ),
                                 )
                             })
@@ -313,14 +324,14 @@ private fun TrackRow(
  * album download was running. There's no dedicated spinner/progress icon in
  * LightIcons; REFRESH isn't used anywhere else in this app, so it doesn't collide.
  */
-private fun downloadIcon(status: DownloadEntity?) = when (status?.status) {
+private fun downloadIcon(status: DownloadStatus?) = when (status) {
     DownloadStatus.COMPLETE -> LightIcons.DOWNLOADED_ARROW
     DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.REFRESH
     DownloadStatus.FAILED, null -> LightIcons.DOWNLOAD_ARROW
 }
 
 /** Tap semantics: QUEUED/DOWNLOADING/COMPLETE -> stop or remove; FAILED/null -> start. See `toggleDownload`. */
-private fun downloadStatusLabel(status: DownloadEntity?): String = when (status?.status) {
+private fun downloadStatusLabel(status: DownloadStatus?): String = when (status) {
     null -> "Download"
     DownloadStatus.QUEUED -> "Queued — tap to cancel"
     DownloadStatus.DOWNLOADING -> "Downloading — tap to cancel"

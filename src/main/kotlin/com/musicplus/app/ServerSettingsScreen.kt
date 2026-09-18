@@ -120,7 +120,10 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                                                     ActionMenuItem(
                                                         icon = LightIcons.SELECT_ON,
                                                         label = "Set active",
-                                                        onSelect = ActionMenuSelection.Perform { viewModel.setActive(server.id) },
+                                                        onSelect = ActionMenuSelection.Perform {
+                                                            viewModel.setActive(server.id)
+                                                            null
+                                                        },
                                                     ),
                                                 )
                                             }
@@ -128,7 +131,10 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                                                 ActionMenuItem(
                                                     icon = LightIcons.TRASH,
                                                     label = "Delete",
-                                                    onSelect = ActionMenuSelection.Perform { viewModel.remove(server.id) },
+                                                    onSelect = ActionMenuSelection.Perform {
+                                                        viewModel.remove(server.id)
+                                                        null
+                                                    },
                                                 ),
                                             )
                                         },

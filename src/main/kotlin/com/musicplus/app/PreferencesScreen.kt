@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppSettingsRepository
+import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -38,7 +39,12 @@ import kotlinx.coroutines.launch
  */
 class PreferencesScreenViewModel(
     private val appSettingsRepository: AppSettingsRepository,
+    syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
+
+    /** Real count, not a toggle — see SyncQueueRepository (issue #24). Zero means either everything's synced or nothing's ever been queued; either way there's nothing to show. */
+    val pendingSyncCount: StateFlow<Int> = syncQueueRepository.pendingCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     val showAlbumArtwork: StateFlow<Boolean> = appSettingsRepository.showAlbumArtwork
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
@@ -67,14 +73,17 @@ class PreferencesScreen(activity: SealedLightActivity) :
 
     override val viewModelClass = PreferencesScreenViewModel::class.java
 
-    override fun createViewModel() =
-        PreferencesScreenViewModel(AppGraph.from(lightContext).appSettingsRepository)
+    override fun createViewModel(): PreferencesScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        return PreferencesScreenViewModel(graph.appSettingsRepository, graph.syncQueueRepository)
+    }
 
     @Composable
     override fun Content() {
         val showAlbumArtwork by viewModel.showAlbumArtwork.collectAsState()
         val debugLoggingEnabled by viewModel.debugLoggingEnabled.collectAsState()
         val hapticFeedbackEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
+        val pendingSyncCount by viewModel.pendingSyncCount.collectAsState()
 
         MusicPlusScaffold(
             topBar = {
@@ -103,6 +112,17 @@ class PreferencesScreen(activity: SealedLightActivity) :
                     isOn = debugLoggingEnabled,
                     onToggle = { viewModel.toggleDebugLogging() },
                 )
+                // Not a toggle — a live, real count of writes (favorites,
+                // playlist edits) still waiting to reach the server, so a
+                // failed/offline write is never just silently identical to a
+                // confirmed one (issue #24). Nothing to show, nothing shown.
+                if (pendingSyncCount > 0) {
+                    LightText(
+                        text = if (pendingSyncCount == 1) "1 change waiting to sync" else "$pendingSyncCount changes waiting to sync",
+                        variant = LightTextVariant.Fine,
+                        modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
+                    )
+                }
             }
         }
     }

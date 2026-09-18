@@ -87,3 +87,26 @@ data class QueueItemEntity(
     val position: Int,
     val songId: String,
 )
+
+/**
+ * A server write that was attempted and failed (offline, or a transient server
+ * error), waiting to be replayed — see [SyncQueueRepository]. [type] is a
+ * [PendingMutationType] name; [payloadJson] is that type's own small
+ * `@Serializable` payload (everything the type needs beyond [targetId]).
+ * [targetId] is always "the thing this mutation is about" — a track/album/
+ * artist id for a favorite toggle, a playlist id for everything else — kept as
+ * its own indexed column (not buried in the JSON) so it's directly queryable:
+ * driving a per-item "still syncing" UI indicator, and letting every other
+ * still-pending mutation against a given playlist be found/dropped/remapped
+ * in one query (see deleting or offline-creating a playlist).
+ */
+@Entity(tableName = "pending_mutations")
+data class PendingMutationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val type: String,
+    val targetId: String,
+    val payloadJson: String,
+    val createdAtEpochMs: Long,
+    val attemptCount: Int = 0,
+    val lastError: String? = null,
+)

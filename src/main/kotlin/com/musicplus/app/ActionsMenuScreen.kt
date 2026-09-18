@@ -31,14 +31,21 @@ import kotlinx.coroutines.launch
 
 /**
  * What happens when an [ActionMenuItem] is tapped.
- *
- * Two cases, not one plain `suspend () -> Unit`, because they need different
- * sequencing around [ActionsMenuScreen]'s own `goBack()` — see that class's
- * doc comment for why the ordering isn't just style.
  */
 sealed interface ActionMenuSelection {
-    /** Run [action] to completion, then return to the screen that opened this menu. */
-    class Perform(val action: suspend () -> Unit) : ActionMenuSelection
+    /**
+     * Runs [action] and updates just that one row with whatever it returns —
+     * the menu itself never closes on its own from this. Reported live:
+     * tapping "Add to favorites" used to call `goBack()` the instant the
+     * write finished, closing the whole menu instead of just flipping to
+     * "Remove from favorites" in place. [action] returns the row's new
+     * icon/label (e.g. the flipped favorite state) to replace itself with, or
+     * `null` if the row no longer applies at all (e.g. "Remove from
+     * playlist" — its own subject is now gone), in which case just that row
+     * is dropped rather than the whole menu closing. The person closes this
+     * screen themselves, same as any other screen.
+     */
+    class Perform(val action: suspend () -> ActionMenuItem?) : ActionMenuSelection
 
     /** Leave this menu and open another screen, instead of returning to the row's screen. */
     class Navigate(val open: () -> Unit) : ActionMenuSelection
@@ -49,6 +56,23 @@ data class ActionMenuItem(
     val label: String,
     val onSelect: ActionMenuSelection,
 )
+
+/**
+ * Builds a self-updating "Add/Remove favorites" row shared by every call
+ * site: each tap flips [isFavorite], calls [toggle] with the new value, and
+ * rebuilds itself reflecting that — the same shape as the old value, not a
+ * one-shot action, so this is the one place that needs to know how.
+ */
+fun favoriteActionItem(isFavorite: Boolean, toggle: suspend (Boolean) -> Unit): ActionMenuItem =
+    ActionMenuItem(
+        icon = if (isFavorite) LightIcons.STAR else LightIcons.STAR_OUTLINE,
+        label = if (isFavorite) "Remove from favorites" else "Add to favorites",
+        onSelect = ActionMenuSelection.Perform {
+            val newValue = !isFavorite
+            toggle(newValue)
+            favoriteActionItem(newValue, toggle)
+        },
+    )
 
 class ActionsMenuScreenViewModel : LightViewModel<Unit>()
 
@@ -69,12 +93,12 @@ class ActionsMenuScreenViewModel : LightViewModel<Unit>()
  * otherwise no way to tell what the menu is even for.
  *
  * [items] is a plain snapshot resolved by the caller at the moment the row
- * was long-pressed (current favorite state, current download status, and
- * so on) — not a live observation of those values. That's deliberate: every
- * [ActionMenuSelection.Perform] item calls `goBack()` as soon as its action
- * finishes, so this screen is never on-screen long enough for a stale
- * snapshot to matter, and it keeps this screen fully decoupled from any
- * particular caller's ViewModel/Flows.
+ * was long-pressed (current favorite state, current download status, and so
+ * on) — not a live observation of those values. [Content] keeps its own
+ * mutable copy afterward, updated in place from whatever each
+ * [ActionMenuSelection.Perform] returns, so a snapshot going stale after the
+ * first tap isn't a problem the way it would be for something read once and
+ * never revisited.
  *
  * Implementation note for future call sites: [ActionMenuSelection.Perform]'s
  * `action` runs on *this* screen's own `rememberCoroutineScope()`, not
@@ -90,18 +114,22 @@ class ActionsMenuScreenViewModel : LightViewModel<Unit>()
  * that screen is itself popped) — but an `action` should never wrap its own
  * body in `scope.launch { }` against a scope it captured from elsewhere.
  *
- * Second implementation note (issue #20): every tap here — any row, or the
- * back button — is only ever acted on once per screen instance, via the
- * `handled` latch in [Content]. `LightActivity`'s back stack (`currentScreen`
- * / `backStack` in `LightActivity.kt`) is Activity-global state, not scoped
- * to this screen, so a *second* `goBack()` call doesn't harmlessly no-op just
- * because this screen already popped itself once — it pops whatever screen
- * is now on top, i.e. the one this menu was opened from. [ActionRow] uses
- * `lightClickable`, which by design shows no press indication (see
- * `LightClickable.kt`), so a person gets no visual confirmation their tap
- * landed; an accidental second tap — on the same row, a different one, or
- * the back icon — landing before this screen is actually torn down would,
- * without this guard, silently close the caller's screen too.
+ * Second implementation note (issue #20, still relevant even though
+ * [ActionMenuSelection.Perform] no longer auto-closes): the back button, and
+ * any [ActionMenuSelection.Navigate] row, are only ever acted on once per
+ * screen instance, via the `closing` latch in [Content]. `LightActivity`'s
+ * back stack (`currentScreen`/`backStack` in `LightActivity.kt`) is
+ * Activity-global state, not scoped to this screen, so a *second* `goBack()`
+ * call doesn't harmlessly no-op just because this screen already popped
+ * itself once — it pops whatever screen is now on top, i.e. the one this
+ * menu was opened from. [ActionRow] uses `lightClickable`, which by design
+ * shows no press indication (see `LightClickable.kt`), so a person gets no
+ * visual confirmation their tap landed; an accidental second tap on the back
+ * icon (or a [Navigate] row) landing before this screen is actually torn
+ * down would, without this guard, silently close the caller's screen too.
+ * `busy` is the equivalent guard for [Perform] rows — blocks a second tap
+ * (any row, not just the same one) while one is still in flight, so two
+ * favorite toggles fired in quick succession can't race each other.
  */
 class ActionsMenuScreen(
     activity: SealedLightActivity,
@@ -115,26 +143,41 @@ class ActionsMenuScreen(
     @Composable
     override fun Content() {
         val scope = rememberCoroutineScope()
+        var visibleItems by remember { mutableStateOf(items) }
 
-        // See the class doc comment ("Second implementation note") — only the
-        // first tap this screen instance ever receives (row or back button) is
-        // acted on; every later one is ignored.
-        var handled by remember { mutableStateOf(false) }
+        // See the class doc comment ("Second implementation note") — guards
+        // goBack() specifically (back button / a Navigate row), not every tap:
+        // a Perform row updates in place and never calls goBack() on its own,
+        // so it's freely re-tappable (any row, once `busy` clears) rather than
+        // single-shot for the screen's whole lifetime.
+        var closing by remember { mutableStateOf(false) }
+        var busy by remember { mutableStateOf(false) }
 
-        fun handleSelection(selection: ActionMenuSelection) {
-            if (handled) return
-            handled = true
-            when (selection) {
+        fun close() {
+            if (closing) return
+            closing = true
+            goBack()
+        }
+
+        fun handleSelection(item: ActionMenuItem) {
+            if (closing || busy) return
+            when (val selection = item.onSelect) {
                 is ActionMenuSelection.Perform -> scope.launch {
-                    selection.action()
-                    goBack()
+                    busy = true
+                    val updated = selection.action()
+                    visibleItems = if (updated != null) {
+                        visibleItems.map { if (it === item) updated else it }
+                    } else {
+                        visibleItems.filter { it !== item }
+                    }
+                    busy = false
                 }
                 is ActionMenuSelection.Navigate -> {
                     // goBack() *before* opening the next screen so it lands directly
                     // on top of the row's own screen instead of on top of this menu —
                     // otherwise its own goBack() would only return here, leaving one
                     // extra screen for the person to dismiss afterward.
-                    goBack()
+                    close()
                     selection.open()
                 }
             }
@@ -145,12 +188,7 @@ class ActionsMenuScreen(
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(
                         icon = LightIcons.BACK,
-                        onClick = {
-                            if (!handled) {
-                                handled = true
-                                goBack()
-                            }
-                        },
+                        onClick = { close() },
                     ),
                     center = LightTopBarCenter.TwoLineDetail(line1 = "Actions", line2 = subtitle),
                 )
@@ -159,8 +197,8 @@ class ActionsMenuScreen(
             onQueueClick = { navigateTo(::QueueScreen) },
         ) {
             LightLazyScrollView(modifier = Modifier.fillMaxWidth(), uniformItemHeightGridUnits = 3f) {
-                items(items, key = { it.label }) { item ->
-                    ActionRow(item) { handleSelection(item.onSelect) }
+                items(visibleItems, key = { it.label }) { item ->
+                    ActionRow(item) { handleSelection(item) }
                 }
             }
         }

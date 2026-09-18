@@ -47,6 +47,16 @@ data class Playlist(
 
 enum class RepeatMode { OFF, REPEAT_QUEUE, REPEAT_TRACK }
 
+/**
+ * What actually happened when a repository attempted a server write.
+ * [NOT_CONFIGURED] (no server saved at all) is deliberately distinct from
+ * [FAILED] (a configured server's call itself threw, e.g. offline or a
+ * transient error) — only [FAILED] is worth queueing for a later retry;
+ * there's nothing a background retry could do about there being no server to
+ * reach at all. See [com.musicplus.app.data.SyncQueueRepository].
+ */
+enum class WriteOutcome { SUCCESS, NOT_CONFIGURED, FAILED }
+
 data class PlaybackState(
     val queue: List<Track> = emptyList(),
     val currentIndex: Int = -1,

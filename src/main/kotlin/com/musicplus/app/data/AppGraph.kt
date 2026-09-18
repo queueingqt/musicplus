@@ -1,10 +1,13 @@
 package com.musicplus.app.data
 
 import com.thelightphone.sdk.LightConnectivity
+import com.thelightphone.sdk.LightWork
 import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -24,6 +27,7 @@ object AppGraph {
         val downloadRepository: DownloadRepository,
         val albumArtRepository: AlbumArtRepository,
         val lyricsRepository: LyricsRepository,
+        val syncQueueRepository: SyncQueueRepository,
         val connectivity: LightConnectivity,
     )
 
@@ -92,6 +96,47 @@ object AppGraph {
             apiHolder = apiHolder,
             filesDir = lightContext.filesDir,
         )
+        val syncQueueRepository = SyncQueueRepository(
+            pendingMutationDao = database.pendingMutationDao(),
+            libraryRepository = libraryRepository,
+            playlistRepository = playlistRepository,
+        )
+
+        // Periodic backstop (WorkManager's own 15-minute floor — see
+        // scheduleSyncQueueJob) for when the app isn't in the foreground to
+        // observe a reconnect below. Registering this is idempotent
+        // (ExistingPeriodicWorkPolicy.UPDATE) so it's safe to call on every
+        // process start, not just the first ever launch.
+        scheduleSyncQueueJob(lightContext)
+
+        // The near-instant path for the common case: the app is already open
+        // when connectivity comes back, so there's no reason to wait out the
+        // periodic floor above. `observeNetworkStatus()` emits once
+        // immediately with the current status too, which is deliberately not
+        // filtered out here — draining on a fresh app launch that's already
+        // online, in case anything was queued from a previous offline
+        // session, is exactly the behavior wanted, not just future
+        // transitions.
+        //
+        // Distinct `tag` from the periodic schedule above, even though both
+        // point at the same job — `LightWork.enqueue`'s one-time request uses
+        // `ExistingWorkPolicy.REPLACE` on whatever uniqueness slot it's given,
+        // and the periodic schedule above lives under the plain job-key slot.
+        // Sharing that slot would mean every single reconnect replaces (i.e.
+        // destroys) the periodic backstop with a one-time job, so it'd only
+        // ever come back at the next app launch instead of surviving in the
+        // background the way a periodic schedule is supposed to.
+        appScope.launch {
+            connectivity.observeNetworkStatus()
+                .map { it.isConnected }
+                .distinctUntilChanged()
+                .collect { isConnected ->
+                    if (isConnected) {
+                        LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
+                    }
+                }
+        }
+
         return Graph(
             serverConfigRepository = serverConfigRepository,
             appSettingsRepository = appSettingsRepository,
@@ -102,6 +147,7 @@ object AppGraph {
             downloadRepository = downloadRepository,
             albumArtRepository = albumArtRepository,
             lyricsRepository = lyricsRepository,
+            syncQueueRepository = syncQueueRepository,
             connectivity = connectivity,
         )
     }

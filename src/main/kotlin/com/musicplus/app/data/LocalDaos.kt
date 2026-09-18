@@ -115,6 +115,58 @@ interface PlaylistDao {
         clearTracks(playlistId)
         insertTracks(tracks)
     }
+
+    @Query("UPDATE playlists SET id = :newId WHERE id = :oldId")
+    suspend fun reassignId(oldId: String, newId: String)
+
+    @Query("UPDATE playlist_tracks SET playlistId = :newId WHERE playlistId = :oldId")
+    suspend fun reassignTracksPlaylistId(oldId: String, newId: String)
+
+    /**
+     * Swaps a locally-generated placeholder playlist id for the real server id
+     * once an offline "create playlist" mutation finally syncs — see
+     * [SyncQueueRepository]'s PLAYLIST_CREATE replay. Both the playlist row
+     * itself and its membership rows move together in one transaction so the
+     * UI never observes a moment where the playlist exists but looks empty
+     * (or vice versa).
+     */
+    @Transaction
+    suspend fun reassignPlaylistId(oldId: String, newId: String) {
+        reassignTracksPlaylistId(oldId, newId)
+        reassignId(oldId, newId)
+    }
+}
+
+@Dao
+interface PendingMutationDao {
+    @Query("SELECT * FROM pending_mutations ORDER BY id ASC")
+    fun observeAll(): Flow<List<PendingMutationEntity>>
+
+    @Query("SELECT * FROM pending_mutations ORDER BY id ASC")
+    suspend fun getAllInOrder(): List<PendingMutationEntity>
+
+    @Query("SELECT COUNT(*) FROM pending_mutations")
+    fun observeCount(): Flow<Int>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM pending_mutations WHERE type = :type AND targetId = :targetId)")
+    fun observePendingForTarget(type: String, targetId: String): Flow<Boolean>
+
+    @Insert
+    suspend fun insert(mutation: PendingMutationEntity): Long
+
+    @Query("DELETE FROM pending_mutations WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    /** Drops every still-pending mutation targeting [targetId] — used when a playlist is deleted, so a queued add-track/rename/etc against it isn't replayed against a playlist that's already gone. */
+    @Query("DELETE FROM pending_mutations WHERE targetId = :targetId")
+    suspend fun deleteForTarget(targetId: String)
+
+    /** Retargets every still-pending mutation from a placeholder id to the real server id — see PLAYLIST_CREATE replay. */
+    @Query("UPDATE pending_mutations SET targetId = :newTargetId WHERE targetId = :oldTargetId")
+    suspend fun reassignTarget(oldTargetId: String, newTargetId: String)
+
+    @Query("UPDATE pending_mutations SET attemptCount = attemptCount + 1, lastError = :error WHERE id = :id")
+    suspend fun recordFailure(id: Long, error: String?)
 }
 
 @Dao

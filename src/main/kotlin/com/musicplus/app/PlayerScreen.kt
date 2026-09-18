@@ -38,12 +38,18 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PlayerScreenViewModel(
     private val playback: PlaybackRepository,
     private val libraryRepository: com.musicplus.app.data.LibraryRepository,
+    private val syncQueueRepository: com.musicplus.app.data.SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
@@ -81,6 +87,13 @@ class PlayerScreenViewModel(
         playback.albumArtUrlHint.value ?: playback.currentSnapshot().currentTrack?.coverArtUrl,
     )
 
+    /** True while the current track's favorite state is still waiting to reach the server (issue #24) — the star's own filled/outline state already reflects the optimistic local value, so this drives a separate "still syncing" indicator rather than a third icon state. */
+    val isFavoritePending: StateFlow<Boolean> = state
+        .map { it.currentTrack?.id }
+        .distinctUntilChanged()
+        .flatMapLatest { trackId -> trackId?.let { syncQueueRepository.isFavoritePending(it) } ?: flowOf(false) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     fun togglePlayPause() = playback.togglePlayPause()
     fun skipBack() = playback.skipBack()
     fun skipForward() = playback.skipForward()
@@ -95,7 +108,7 @@ class PlayerScreenViewModel(
         // setTrackFavorite alone never touches, so without this the write
         // succeeds but the star icon never visibly updates (issue #8).
         playback.updateTrackFavorite(track.id, newValue)
-        viewModelScope.launch { libraryRepository.setTrackFavorite(track.id, newValue) }
+        viewModelScope.launch { syncQueueRepository.setTrackFavorite(track.id, newValue) }
     }
 
     fun toggleShuffle() = playback.setShuffle(!state.value.shuffle)
@@ -134,13 +147,14 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
     override fun createViewModel(): PlayerScreenViewModel {
         val graph = AppGraph.from(lightContext)
         val playback = PlaybackRepositoryHolder.get(sealedActivity, graph.apiHolder, lightContext.filesDir)
-        return PlayerScreenViewModel(playback, graph.libraryRepository)
+        return PlayerScreenViewModel(playback, graph.libraryRepository, graph.syncQueueRepository)
     }
 
     @Composable
     override fun Content() {
         val state by viewModel.state.collectAsState()
         val albumArtUrl by viewModel.albumArtUrl.collectAsState()
+        val isFavoritePending by viewModel.isFavoritePending.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
 
@@ -286,6 +300,18 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                                 .padding(horizontal = 1f.gridUnitsAsDp()),
                         )
                     }
+                }
+
+                // The star's own filled/outline state already reflects the tap
+                // optimistically — this is the only signal that it hasn't
+                // actually reached the server yet (issue #24).
+                if (isFavoritePending) {
+                    LightText(
+                        text = "Favorite syncing…",
+                        variant = LightTextVariant.Fine,
+                        modifier = Modifier.fillMaxWidth(),
+                        align = TextAlign.Center,
+                    )
                 }
             }
 
