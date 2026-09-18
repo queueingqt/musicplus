@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.PlaybackRepository
 import com.musicplus.app.data.PlaybackRepositoryHolder
@@ -162,6 +163,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val state by viewModel.state.collectAsState()
         val albumArtUrl by viewModel.albumArtUrl.collectAsState()
         val isFavoritePending by viewModel.isFavoritePending.collectAsState()
+        val showArtwork by AppDisplayPrefs.showAlbumArtwork.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
 
@@ -219,6 +221,18 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 )
             },
         ) {
+            // Reported previously, still not addressed until now: with artwork off,
+            // AlbumArt below renders nothing (zero height — see its own doc), so
+            // without this the title/timeline/controls block just stacked at the
+            // top under an empty top bar instead of sitting in the middle of the
+            // space the artwork would have occupied. Only added when artwork's off
+            // — the weight(1f) spacer below (which pushes "Up Next" toward the
+            // bottom) already gives the with-artwork layout its intended shape, and
+            // balancing it with an equal spacer here would re-center that case too,
+            // which was never reported as wrong.
+            if (!showArtwork) {
+                Spacer(modifier = Modifier.weight(1f))
+            }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
