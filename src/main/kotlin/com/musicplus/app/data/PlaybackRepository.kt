@@ -13,6 +13,7 @@ import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,23 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+
+/**
+ * Sleep timer state — ephemeral, in-memory only, by design (see
+ * [PlaybackRepository]'s sleep-timer section): resets to `null` on every
+ * app restart, nothing here is persisted.
+ *
+ * [Countdown.totalMs] is the duration originally selected, carried
+ * alongside [Countdown.remainingMs] (which ticks down every second)
+ * specifically so SleepTimerPickerScreen can tell which preset/custom row
+ * is currently active — comparing against [remainingMs] directly would
+ * only ever match for the first second, since it decays continuously after
+ * that.
+ */
+sealed class SleepTimerState {
+    data class Countdown(val remainingMs: Long, val totalMs: Long) : SleepTimerState()
+    data object EndOfTrack : SleepTimerState()
+}
 
 /**
  * Wraps one [LightAudio]-provided player for the whole tool session. Built as
@@ -69,6 +87,23 @@ class PlaybackRepository(
     // it exactly — see setShuffle's doc. Null means "not currently shuffled"
     // (nothing to restore).
     private val preShuffleOrder = MutableStateFlow<List<String>?>(null)
+
+    // Sleep timer — ephemeral, in-memory only (see [SleepTimerState]'s doc).
+    // Lives here, on this repository's own [scope], rather than any one
+    // screen's viewModelScope for the same reason [scope] itself does (see
+    // this class's header doc): PlaybackRepository is a process-lifetime
+    // singleton tied to the same LightAudioPlayback.Detached foreground
+    // service that already keeps playback alive across backgrounding, so a
+    // timer counting down here keeps counting down exactly as reliably as
+    // playback itself does — no WorkManager/AlarmManager needed.
+    private val _sleepTimerState = MutableStateFlow<SleepTimerState?>(null)
+    val sleepTimerState: StateFlow<SleepTimerState?> = _sleepTimerState.asStateFlow()
+
+    // The running countdown coroutine, if any. [SleepTimerState.EndOfTrack]
+    // doesn't need one of these — it's driven by [nearEndCompletionWatcher]
+    // below instead, reusing its existing near-end polling rather than a
+    // second one — so this stays null in that mode.
+    private var sleepTimerJob: Job? = null
 
     // Set synchronously by play()/rebuildQueue() at the same moment as `queue`,
     // before the slow `setMediaQueue()`/network step. `player.currentMediaItemIndex`
@@ -239,8 +274,7 @@ class PlaybackRepository(
     // to the next track first, then snapping back).
     private val nearEndCompletionWatcher = scope.launch {
         state.collect { s ->
-            val mode = repeatMode.value
-            if (mode == RepeatMode.OFF || !s.isPlaying || s.durationMs <= 0L) return@collect
+            if (!s.isPlaying || s.durationMs <= 0L) return@collect
             val remainingMs = s.durationMs - s.positionMs
             val nearEnd = remainingMs in 0..NEAR_END_THRESHOLD_MS
             if (!nearEnd) {
@@ -249,8 +283,29 @@ class PlaybackRepository(
                 // played nearly all the way through once more, so this is
                 // never a same-position re-arm race.
                 lastHandledCompletionIndex = -1
+                lastHandledSleepTimerIndex = -1
                 return@collect
             }
+
+            // Sleep timer's "end of current track" option reuses this exact
+            // same near-end polling technique, for the identical reason (see
+            // this watcher's header doc): LightAudioPlayer's confirmed public
+            // surface has no track-completion event to react to instead.
+            // Checked, and returns if it fires, before the repeat-mode
+            // handling below — so a timer set to stop at the end of this
+            // track actually stops it here rather than REPEAT_TRACK/
+            // REPEAT_QUEUE looping past it in the very same near-end window.
+            if (_sleepTimerState.value is SleepTimerState.EndOfTrack) {
+                if (lastHandledSleepTimerIndex != s.currentIndex) {
+                    lastHandledSleepTimerIndex = s.currentIndex
+                    pauseForSleepTimer()
+                    _sleepTimerState.value = null
+                }
+                return@collect
+            }
+
+            val mode = repeatMode.value
+            if (mode == RepeatMode.OFF) return@collect
             // Edge-detector: without this, every emission still inside the
             // near-end window would refire the action (repeated seekTo(0)
             // calls, or repeatedly restarting the queue wrap).
@@ -275,6 +330,7 @@ class PlaybackRepository(
         }
     }
     private var lastHandledCompletionIndex = -1
+    private var lastHandledSleepTimerIndex = -1
 
     // Restore must finish (including its Room/DataStore reads) before the
     // queue-persistence collector below starts — both run in one coroutine,
@@ -857,6 +913,69 @@ class PlaybackRepository(
         }
     }
 
+    /**
+     * Starts (or restarts, replacing whatever was already running/set) a
+     * plain countdown sleep timer — pauses playback once [minutes] has
+     * elapsed. See [SleepTimerState.Countdown.totalMs]'s doc for why the
+     * originally-selected duration is kept alongside the live, ticking-down
+     * remaining time.
+     */
+    fun startSleepTimer(minutes: Int) {
+        require(minutes > 0) { "minutes must be positive" }
+        val totalMs = minutes * 60_000L
+        sleepTimerJob?.cancel()
+        _sleepTimerState.value = SleepTimerState.Countdown(remainingMs = totalMs, totalMs = totalMs)
+        sleepTimerJob = scope.launch {
+            var remaining = totalMs
+            while (remaining > 0) {
+                val tick = SLEEP_TIMER_TICK_MS.coerceAtMost(remaining)
+                delay(tick)
+                remaining -= tick
+                _sleepTimerState.value = SleepTimerState.Countdown(remainingMs = remaining, totalMs = totalMs)
+            }
+            pauseForSleepTimer()
+            _sleepTimerState.value = null
+            sleepTimerJob = null
+        }
+    }
+
+    /**
+     * "End of current track" — no coroutine of its own; unlike
+     * [startSleepTimer]'s plain countdown, there's no fixed duration to
+     * count down. [nearEndCompletionWatcher] (already polling position for
+     * the REPEAT_TRACK/REPEAT_QUEUE workaround — see its doc) checks this
+     * state on every emission and fires the pause itself once the current
+     * track nears its end, reusing that same near-end detection rather than
+     * running a second poller alongside it.
+     */
+    fun startSleepTimerAtEndOfTrack() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        _sleepTimerState.value = SleepTimerState.EndOfTrack
+    }
+
+    /** Cancels a running sleep timer outright (either kind) — playback itself is untouched either way. */
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        _sleepTimerState.value = null
+    }
+
+    /**
+     * The sleep timer's only effect — pause, and only if actually playing
+     * right now; nothing else (no stop, no clearQueue: [queue]/[pendingIndex]
+     * stay exactly as they were). Guarded on [player.isPlaying] rather than
+     * calling [togglePlayPause] unconditionally — a timer that fires after
+     * the person already paused by hand must stay paused, not toggle
+     * straight back into play.
+     */
+    private fun pauseForSleepTimer() {
+        if (player.isPlaying.value) {
+            player.pause()
+            scope.launch { persistScalarStateIfLoaded() }
+        }
+    }
+
     fun release() = player.release()
 
     /**
@@ -879,6 +998,7 @@ class PlaybackRepository(
         currentAlbumArtUrl.value = null
         playerQueueLoaded.value = false
         restoredPositionMs = 0L
+        cancelSleepTimer()
     }
 
     /**
@@ -979,6 +1099,9 @@ class PlaybackRepository(
 
         /** See [statePersistenceWatcher]'s doc — how often the resume position is checkpointed to disk during ordinary playback. */
         const val STATE_PERSIST_INTERVAL_MS = 5_000L
+
+        /** See [startSleepTimer]'s doc — how often the live countdown's [SleepTimerState.Countdown.remainingMs] ticks. */
+        const val SLEEP_TIMER_TICK_MS = 1_000L
     }
 }
 

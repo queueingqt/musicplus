@@ -29,6 +29,7 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.PlaybackRepository
+import com.musicplus.app.data.SleepTimerState
 import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -90,6 +91,9 @@ class PlayerScreenViewModel(
 
     val state: StateFlow<PlaybackState> =
         playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
+
+    /** Ephemeral, in-memory-only sleep timer — see [PlaybackRepository.sleepTimerState]'s doc. */
+    val sleepTimerState: StateFlow<SleepTimerState?> = playback.sleepTimerState
 
     // Seeded from the same synchronous values [resolveAlbumArtUrl] would
     // eventually settle on, not null — every navigation to PlayerScreen (even
@@ -179,6 +183,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val state by viewModel.state.collectAsState()
         val albumArtUrl by viewModel.albumArtUrl.collectAsState()
         val isFavoritePending by viewModel.isFavoritePending.collectAsState()
+        val sleepTimerState by viewModel.sleepTimerState.collectAsState()
         val showArtwork by AppDisplayPrefs.showAlbumArtwork.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
@@ -409,6 +414,23 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                                 .padding(horizontal = 1f.gridUnitsAsDp()),
                         )
                     }
+                    // Sleep timer — tapping always opens SleepTimerPickerScreen,
+                    // whether or not one's currently running: with nothing running it's
+                    // a plain picker, and with one active the same screen also offers
+                    // "Cancel timer" and lets a new duration replace it. No
+                    // ALARM_OFF/outline counterpart exists in this SDK's icon
+                    // set (confirmed via LightIcons source, same as LOOP's
+                    // missing "repeat one" icon above), so the active/inactive
+                    // states reuse ToggleableIcon's pill-background treatment
+                    // instead of swapping the glyph itself, same as
+                    // shuffle/repeat just above.
+                    ToggleableIcon(
+                        icon = LightIcons.ALARM,
+                        active = sleepTimerState != null,
+                        contentDescription = if (sleepTimerState != null) "Sleep timer running" else "Sleep timer",
+                        onClick = { navigateTo(::SleepTimerPickerScreen) },
+                        modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
+                    )
                 }
 
                 // The star's own filled/outline state already reflects the tap
