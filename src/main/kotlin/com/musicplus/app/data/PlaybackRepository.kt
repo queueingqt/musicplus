@@ -162,6 +162,15 @@ class PlaybackRepository(
         queue.value = tracks
         pendingIndex.value = startIndex
         currentAlbumArtUrl.value = albumArtUrl
+        // Pause whatever was already playing the instant the UI switches to the
+        // new track's title/art (just above) — setMediaQueue below can take a
+        // real, visible amount of time to resolve (see toAudioItem: a cleartext
+        // server downloads the whole file first), and leaving the old item
+        // running until then meant the previous song kept audibly playing under
+        // the new song's displayed info. Reported live. The "pending" state
+        // already shows 0:00/paused rather than the old track's real position —
+        // this makes the actual audio match that, instead of just the numbers.
+        player.pause()
         // setMediaQueue takes every item's source resolved up front — there's no
         // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
         // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
