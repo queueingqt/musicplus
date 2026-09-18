@@ -229,7 +229,8 @@ class AlbumDetailScreen(
                         onPlay = {
                             scope.launch {
                                 val graph = AppGraph.from(lightContext)
-                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).play(tracks, index)
+                                PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
+                                    .play(tracks, index, albumArtUrl = album?.coverArtUrl)
                                 navigateTo(::PlayerScreen)
                             }
                         },

@@ -47,28 +47,37 @@ class PlayerScreenViewModel(
     val state: StateFlow<PlaybackState> =
         playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
 
-    // Prefers the *album's* art over the current track's own. Navidrome assigns
-    // every individual track its own distinct coverArt id (a "mf-..." id,
-    // separate from the album's "al-..." id) even when it's the exact same
-    // embedded image every other track on the album shares — confirmed live
-    // 2026-09-18 (every track change fetched fresh art, even within an album
-    // already fully browsed). Since AlbumListScreen/AlbumDetailScreen already
-    // warm the album's own art in the shared AlbumArtRepository cache just by
-    // being browsed, using that art here instead means Now Playing shows
-    // instantly for any track whose album has already been viewed, with no
-    // fetch at all — falls back to the track's own art only when the album
-    // isn't resolvable (e.g. arriving via search with no album cached yet).
-    // Seeded from the same synchronous snapshot `state` uses, not null — every
-    // navigation to PlayerScreen (even replaying the identical track) creates a
-    // fresh ViewModel, and this StateFlow's initial value otherwise has nothing
-    // to do with whether the art was already cached a moment ago. Confirmed
-    // on-device 2026-09-18: even the *same* track played twice in a row still
-    // flashed placeholder-then-art here, purely from this cold start — the
-    // album-art-sharing fix above only helps once this first value resolves.
-    val albumArtUrl: StateFlow<String?> = combine(state, libraryRepository.observeAlbums()) { s, albums ->
+    // Prefers, in order: (1) the explicit hint PlaybackRepository.play() was
+    // given — set synchronously by the caller the same moment playback starts,
+    // see PlaybackRepository.albumArtUrlHint's doc; (2) the *album's* art
+    // looked up by id, for sessions that didn't supply a hint (e.g. resuming
+    // via the mini-player, where nothing is "in progress" to pass one); (3)
+    // the track's own art as a last resort. Navidrome assigns every individual
+    // track its own distinct coverArt id (a "mf-..." id, separate from the
+    // album's "al-..." one) even when it's the exact same embedded image every
+    // other track on the album shares, so falling all the way back to (3)
+    // without ever reaching (1) or (2) means a real, uncached fetch every
+    // time — confirmed on-device 2026-09-18. (1) is what actually avoids the
+    // one-frame flash a Room-based lookup can't fully avoid on its own, since
+    // it needs an async combine to resolve even when the answer is already
+    // known synchronously at play()-time.
+    //
+    // Seeded from the same synchronous values used above, not null — every
+    // navigation to PlayerScreen (even replaying the identical track) creates
+    // a fresh ViewModel, and this StateFlow's initial value otherwise has
+    // nothing to do with whether the art was already known a moment ago.
+    // Confirmed on-device 2026-09-18: even the *same* track played twice in a
+    // row still flashed placeholder-then-art here, purely from this cold start.
+    val albumArtUrl: StateFlow<String?> = combine(
+        state, libraryRepository.observeAlbums(), playback.albumArtUrlHint,
+    ) { s, albums, hint ->
         val track = s.currentTrack
-        albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot().currentTrack?.coverArtUrl)
+        hint ?: albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        playback.albumArtUrlHint.value ?: playback.currentSnapshot().currentTrack?.coverArtUrl,
+    )
 
     fun togglePlayPause() = playback.togglePlayPause()
     fun skipBack() = playback.skipBack()
@@ -244,43 +253,43 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 }
             }
 
-            // A short, fixed-height preview rather than a weighted/scrolling
-            // list — that version relied on the outer Column handing it
-            // leftover space via weight(1f), and on-device the header above
-            // (art/title/progress/shuffle row) was already tall enough to
-            // leave it none, so "Up next" was invisible, clipped behind the
-            // bottom transport bar. Confirmed live 2026-09-18. Full queue
-            // management (reorder/remove, the whole list) now lives in
-            // QueueScreen, reachable via the top bar's queue icon above —
-            // this preview's job is just a quick glance, not scrolling.
-            LightText(
-                text = "Up next",
-                variant = LightTextVariant.Heading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.15f.gridUnitsAsDp()),
-            )
+            // "Up next" and the next track's name share one row — a fixed-
+            // height preview, not a weighted/scrolling list; that version
+            // relied on the outer Column handing it leftover space via
+            // weight(1f), and on-device the header above (art/title/progress/
+            // shuffle row) was already tall enough to leave it none, so
+            // "Up next" was invisible, clipped behind the bottom transport
+            // bar. Confirmed live 2026-09-18. Full queue management (reorder/
+            // remove, the whole list) now lives in QueueScreen, reachable via
+            // the top bar's queue icon above — this row's job is just a quick
+            // glance, not scrolling.
             if (upcoming.isEmpty()) {
                 LightText(
-                    text = "Nothing queued",
+                    text = "Up next — nothing queued",
                     variant = LightTextVariant.Fine,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
                 )
             } else {
                 val previewCount = 1
                 upcoming.take(previewCount).forEach { queuedTrack ->
-                    LightText(
-                        text = queuedTrack.title,
-                        variant = LightTextVariant.Copy,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .lightClickable { navigateTo(::QueueScreen) }
                             .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.25f.gridUnitsAsDp()),
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        LightText(text = "Up next", variant = LightTextVariant.Heading)
+                        LightText(
+                            text = queuedTrack.title,
+                            variant = LightTextVariant.Copy,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(start = 0.5f.gridUnitsAsDp()),
+                        )
+                    }
                 }
                 if (upcoming.size > previewCount) {
                     LightText(

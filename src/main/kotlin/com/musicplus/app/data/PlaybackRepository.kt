@@ -9,6 +9,8 @@ import com.thelightphone.sdk.audio.LightAudioPlayback
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import java.io.File
 
@@ -41,6 +43,18 @@ class PlaybackRepository(
     // fixed earlier, and not fixable by caching since the app itself doesn't
     // know the right answer yet at that moment.
     private val pendingIndex = MutableStateFlow(0)
+
+    // Set synchronously by play(), same moment as queue/pendingIndex — an
+    // explicit hint from the caller (when it already has one in hand, e.g. an
+    // album screen playing one of its own tracks) for which art to show on Now
+    // Playing, preferred over looking the track's own art up by album id.
+    // Without this, even a track never before played individually still
+    // seeded Now Playing's art from its own (uncached) coverArtUrl for one
+    // frame before the async album lookup corrected it to the already-cached
+    // album art — confirmed on-device 2026-09-18 as a real, if brief, flicker
+    // on every new track within an already-browsed album, not just the
+    // StateFlow cold-start case fixed earlier for a repeated track.
+    private val currentAlbumArtUrl = MutableStateFlow<String?>(null)
 
     // Nested combines rather than one wide call — kotlinx.coroutines only has typed
     // `combine` overloads up to 5 flows; this keeps every step on solid ground
@@ -99,6 +113,9 @@ class PlaybackRepository(
         )
     }
 
+    /** The explicit album-art hint passed to the current [play] call, if any — see [currentAlbumArtUrl]'s doc. */
+    val albumArtUrlHint: StateFlow<String?> = currentAlbumArtUrl.asStateFlow()
+
     /**
      * Synchronous read of every constituent `.value` — every one of them is
      * genuinely `StateFlow`-backed (confirmed in `LightAudioPlayer`), so this is
@@ -136,11 +153,13 @@ class PlaybackRepository(
         )
     }
 
-    suspend fun play(tracks: List<Track>, startIndex: Int) {
+    /** [albumArtUrl]: pass it when the caller already has it (e.g. playing a track from within an album screen) — see [currentAlbumArtUrl]'s doc for why. */
+    suspend fun play(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return // not configured — nothing playable
         queue.value = tracks
         pendingIndex.value = startIndex
+        currentAlbumArtUrl.value = albumArtUrl
         // setMediaQueue takes every item's source resolved up front — there's no
         // lazy/per-item resolution in the confirmed LightAudioPlayer API — so for an
         // http:// server (see toAudioItem) this pre-fetches the WHOLE queue before
