@@ -33,6 +33,26 @@ android {
             enableV3Signing = true
             enableV4Signing = true
         }
+        // Real per-app release identity, never the shared SDK dev key every
+        // example module uses. Keystore lives at ~/.android/keystores/ (outside
+        // any repo) and its password comes from an env var set by
+        // scripts/release.sh (which reads it from macOS Keychain) — never
+        // hardcoded here, since this file is committed. Falls back to the dev
+        // key below when the env vars aren't set, so a plain `assembleRelease`
+        // still works for anyone without the real release credentials (CI,
+        // another contributor, etc.) instead of failing the build outright.
+        val releaseKeystorePath = System.getenv("MUSICPLUS_RELEASE_KEYSTORE_PATH")
+        val releaseKeystorePassword = System.getenv("MUSICPLUS_RELEASE_KEYSTORE_PASSWORD")
+        if (releaseKeystorePath != null && releaseKeystorePassword != null) {
+            create("musicplusRelease") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseKeystorePassword
+                keyAlias = "musicplus-release"
+                keyPassword = releaseKeystorePassword
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
     }
 
     defaultConfig {
@@ -52,7 +72,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("lightsdkDev")
+            signingConfig = signingConfigs.findByName("musicplusRelease") ?: signingConfigs.getByName("lightsdkDev")
         }
     }
 

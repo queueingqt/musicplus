@@ -14,9 +14,9 @@ dependency from a separate, independent repo.
 Every real community fork found while researching this (`gauravmallya/light-apps`,
 `tattaccato/light-sdk`, `zduvall/light-sdk`) is a literal fork of the whole
 `light-sdk` repo, with the developer's tool added as/instead of the `tool/` module.
-Music + is kept as its own tracked repo instead (so it has clean history and
-lives on this NAS's Forgejo like everything else), which means attaching it to an
-SDK checkout is a manual step rather than something `git clone` alone gives you.
+Music + is kept as its own tracked repo instead (so it has its own clean
+history), which means attaching it to an SDK checkout is a manual step rather
+than something `git clone` alone gives you.
 
 ## Steps
 
@@ -50,16 +50,33 @@ SDK checkout is a manual step rather than something `git clone` alone gives you.
 Debug/dev builds sign with the SDK's own shared dev keystore
 (`sdk/keys/lightsdk-dev.jks`, alias `lightsdk-dev`, password `android` for both
 store and key — not a secret, it's the SDK's public dev-only key, same one every
-example module uses). Official distribution has no public path yet: per the SDK's
-README (July 2026), Light plans to clone tools from a public git commit and
+example module uses). Release builds sign with a real per-app key instead — see
+"Cutting a release" below. Official distribution has no public path yet: per the
+SDK's README (July 2026), Light plans to clone tools from a public git commit and
 build/sign them server-side.
+
+## Cutting a release
+
+`scripts/release.sh <version>` (e.g. `scripts/release.sh 0.2.0`) bumps
+`lighttool.toml`'s version, builds a release APK signed with a real,
+per-app release key (not the shared SDK dev key), tags the commit, and
+publishes a GitHub Release with the APK attached.
+
+The release keystore itself lives outside this repo
+(`~/.android/keystores/musicplus-release.jks`) and its password comes from
+macOS Keychain (`security find-generic-password -a musicplus-release -s
+musicplus-release-keystore-password`) — never committed. A plain
+`:tool:assembleRelease` without those credentials set falls back to the
+shared SDK dev key, so the build still works for anyone without the real
+release identity.
 
 ## Configuring a server
 
 First run needs a Navidrome (or other Subsonic-API) server URL, username, and
-password — enter these in Settings. `ServerConfigRepository` stores them via the
-SDK's shared DataStore; see its file comment for a known gap (the password isn't
-encrypted at rest yet).
+password — enter these in Settings. `ServerConfigRepository` stores them via
+the SDK's shared DataStore, encrypted with an Android Keystore-backed AES/GCM
+cipher (see `EncryptedPrefsCipher.kt`) — DataStore itself has no built-in
+at-rest encryption, so this repo adds its own.
 
 ## What's real vs. stubbed
 
