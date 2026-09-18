@@ -4,6 +4,8 @@ import com.musicplus.app.PlaybackState
 import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
 import com.thelightphone.sdk.LightConnectivity
+import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.audio.LightAudio
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayback
@@ -1016,3 +1018,16 @@ object PlaybackRepositoryHolder {
      */
     fun peek(): PlaybackRepository? = instance
 }
+
+/**
+ * `AppGraph.from(lightContext)` + [PlaybackRepositoryHolder.get] collapsed to
+ * one call — the same 3-line sequence was hand-copied at every call site that
+ * needs playback (album/artist/songs/playlist/favorites/search lists). Not an
+ * extension on `LightScreen` itself: `SimpleLightScreen.lightContext` is
+ * `protected`, invisible to a top-level extension function (confirmed by the
+ * compiler, not assumed), so both it and [activity] — itself `internal` to
+ * `:sdk:client`, which is exactly why every screen already retains its own
+ * `SealedLightActivity` constructor property — stay explicit parameters here.
+ */
+fun playbackRepository(activity: SealedLightActivity, lightContext: SealedLightContext): PlaybackRepository =
+    PlaybackRepositoryHolder.get(activity, AppGraph.from(lightContext), lightContext.filesDir)

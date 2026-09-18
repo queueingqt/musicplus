@@ -17,8 +17,7 @@ import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.DownloadEntity
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
-import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
@@ -30,7 +29,6 @@ import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -46,18 +44,24 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.seconds
 
 class PlaylistDetailScreenViewModel(
     private val playlistRepository: PlaylistRepository,
-    private val libraryRepository: LibraryRepository,
     private val downloadRepository: DownloadRepository,
     private val syncQueueRepository: SyncQueueRepository,
     private val playlistId: String,
     startInReorderMode: Boolean = false,
 ) : LightViewModel<Unit>() {
 
-    val tracks: StateFlow<List<Track>> = playlistRepository.observeTracks(playlistId)
+    // See SelfLoadingTrackList.kt (shared with PlaylistListScreen's own
+    // playlist-level download row) — [tracks], [playlistDownloadState], and
+    // [toggleDownload] (playlist-level) all read through this one wrapper now,
+    // instead of [tracks] reading the raw Room-cache flow directly — this used
+    // to be the one call site that bypassed the refresh-then-read guarantee
+    // the wrapper exists to enforce.
+    private val selfLoadingTracks = SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId)
+
+    val tracks: StateFlow<List<Track>> = selfLoadingTracks.observeTracks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val playlist: StateFlow<Playlist?> = playlistRepository.observePlaylist(playlistId)
@@ -78,13 +82,13 @@ class PlaylistDetailScreenViewModel(
 
     /** See TrackListDownload.kt / SelfLoadingTrackList.kt — shared with PlaylistListScreen's own playlist-level download row. */
     fun playlistDownloadState(): Flow<TrackListDownloadState> =
-        SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).observeDownloadState(downloadRepository)
+        selfLoadingTracks.observeDownloadState(downloadRepository)
 
     suspend fun toggleDownload(lightContext: SealedLightContext): TrackListDownloadState =
-        SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).toggleDownload(lightContext, downloadRepository)
+        selfLoadingTracks.toggleDownload(lightContext, downloadRepository)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch { playlistRepository.refreshPlaylistDetail(playlistId) }
+        viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
 
     fun downloadStatus(songId: String): Flow<DownloadEntity?> = downloadRepository.observeStatus(songId)
@@ -112,6 +116,9 @@ class PlaylistDetailScreenViewModel(
         syncQueueRepository.removeTrack(playlistId, position)
     }
 
+    /** Same pattern as FavoritesScreen's identical wrapper — the View shouldn't reach past this ViewModel to AppGraph's syncQueueRepository directly. */
+    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
+
     fun moveUp(position: Int) {
         viewModelScope.launch { syncQueueRepository.moveTrackUp(playlistId, position) }
     }
@@ -137,7 +144,7 @@ class PlaylistDetailScreenViewModel(
 
 /**
  * `activity` is retained as a property for the same reason as AlbumDetailScreen's —
- * per-track play needs it for `PlaybackRepositoryHolder.get(...)` from `Content()`.
+ * per-track play needs it for `playbackRepository(...)` from `Content()`.
  */
 class PlaylistDetailScreen(
     private val activity: SealedLightActivity,
@@ -152,7 +159,7 @@ class PlaylistDetailScreen(
 
     override fun createViewModel(): PlaylistDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, playlistId, startInReorderMode)
+        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.downloadRepository, graph.syncQueueRepository, playlistId, startInReorderMode)
     }
 
     @Composable
@@ -208,28 +215,13 @@ class PlaylistDetailScreen(
                         onClick = {},
                         onLongClick = {
                             navigateTo({ a ->
-                                // lateinit self-reference, not a plain `null` return — Perform's
-                                // contract is "null means this row no longer applies at all, drop
-                                // it from the menu" (see ActionsMenuScreen.kt's doc). This row still
-                                // applies regardless of whether the confirm dialog it just opened
-                                // gets confirmed or cancelled, so it must return itself, not null.
-                                // Reported live, 2026-09-18 (see git history for the fuller story).
-                                lateinit var deleteItem: ActionMenuItem
-                                deleteItem = ActionMenuItem(
+                                val deleteItem = confirmActionItem(
                                     icon = LightIcons.TRASH,
                                     label = "Delete playlist",
-                                    onSelect = ActionMenuSelection.Perform {
-                                        LightModalManager.show(
-                                            ConfirmModal(
-                                                title = "Delete \"$title\"?",
-                                                message = "This removes the playlist. The tracks themselves aren't affected.",
-                                                confirmContentDescription = "Delete playlist",
-                                                onConfirm = { viewModel.delete { goBack() } },
-                                            ),
-                                            duration = 30.seconds,
-                                        )
-                                        deleteItem
-                                    },
+                                    confirmTitle = "Delete \"$title\"?",
+                                    confirmMessage = "This removes the playlist. The tracks themselves aren't affected.",
+                                    confirmContentDescription = "Delete playlist",
+                                    onConfirm = { viewModel.delete { goBack() } },
                                 )
                                 ActionsMenuScreen(
                                     activity = a,
@@ -295,8 +287,7 @@ class PlaylistDetailScreen(
                             // continues loading on PlaybackRepository's own scope,
                             // so navigating away immediately after is safe — see
                             // PlaybackRepository.playAsync's doc.
-                            val graph = AppGraph.from(lightContext)
-                            val playback = PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir)
+                            val playback = playbackRepository(activity, lightContext)
                             playback.playAsync(tracks, index)
                             navigateTo(::PlayerScreen)
                         },
@@ -307,7 +298,7 @@ class PlaylistDetailScreen(
                                     subtitle = track.title,
                                     items = listOf(
                                         favoriteActionItem(track.isFavorite) { favorite ->
-                                            AppGraph.from(lightContext).syncQueueRepository.setTrackFavorite(track.id, favorite)
+                                            viewModel.setTrackFavorite(track.id, favorite)
                                         },
                                         trackDownloadActionItem(status?.status) { newStatus ->
                                             viewModel.toggleDownload(lightContext, track, newStatus)

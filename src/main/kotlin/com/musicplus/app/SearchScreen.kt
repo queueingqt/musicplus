@@ -15,7 +15,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -201,8 +201,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                             // continues loading on PlaybackRepository's own scope,
                             // so navigating away immediately after is safe — see
                             // PlaybackRepository.playAsync's doc.
-                            val graph = AppGraph.from(lightContext)
-                            val playback = PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir)
+                            val playback = playbackRepository(activity, lightContext)
                             playback.playAsync(listOf(track), 0)
                             navigateTo(::PlayerScreen)
                         },
@@ -213,8 +212,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                                     icon = LightIcons.ADD,
                                     label = "Add to queue",
                                     onSelect = ActionMenuSelection.Perform {
-                                        val graph = AppGraph.from(lightContext)
-                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
+                                        playbackRepository(activity, lightContext).addToQueue(listOf(track))
                                         addToQueueItem
                                     },
                                 )

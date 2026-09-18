@@ -70,4 +70,16 @@ class SelfLoadingTrackList private constructor(
         refresh()
         return tracksFlow.first()
     }
+
+    /**
+     * Live observation of the same cache [toggleDownload]/[tracks] read — for
+     * a screen's own primary track list, which needs to keep observing after
+     * its own one-time [refreshNow] rather than reading once. Doesn't refresh
+     * on its own for the same reason [observeDownloadState] doesn't (see its
+     * doc) — pair with one [refreshNow] call, e.g. from `onScreenShow`.
+     */
+    fun observeTracks(): Flow<List<Track>> = tracksFlow
+
+    /** One-time refresh, same guarantee [toggleDownload]/[tracks] give themselves internally — call once (e.g. from `onScreenShow`) before observing [observeTracks] so a freshly-opened screen isn't reading a stale/empty cache. */
+    suspend fun refreshNow() = refresh()
 }

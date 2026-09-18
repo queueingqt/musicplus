@@ -31,7 +31,6 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -46,7 +45,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.seconds
 
 class PlaylistListScreenViewModel(
     private val playlistRepository: PlaylistRepository,
@@ -175,25 +173,13 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                                 // Same 4 items, same order, as PlaylistDetailScreen's own
                                 // long-press menu — reported live: this list's menu only had
                                 // Download, unlike the one reached from inside a playlist.
-                                // lateinit self-reference for Delete, not a plain `null`
-                                // return — see PlaylistDetailScreen's identical fix for why
-                                // that matters once a ConfirmModal is involved.
-                                lateinit var deleteItem: ActionMenuItem
-                                deleteItem = ActionMenuItem(
+                                val deleteItem = confirmActionItem(
                                     icon = LightIcons.TRASH,
                                     label = "Delete playlist",
-                                    onSelect = ActionMenuSelection.Perform {
-                                        LightModalManager.show(
-                                            ConfirmModal(
-                                                title = "Delete \"${playlist.name}\"?",
-                                                message = "This removes the playlist. The tracks themselves aren't affected.",
-                                                confirmContentDescription = "Delete playlist",
-                                                onConfirm = { viewModel.delete(playlist.id) },
-                                            ),
-                                            duration = 30.seconds,
-                                        )
-                                        deleteItem
-                                    },
+                                    confirmTitle = "Delete \"${playlist.name}\"?",
+                                    confirmMessage = "This removes the playlist. The tracks themselves aren't affected.",
+                                    confirmContentDescription = "Delete playlist",
+                                    onConfirm = { viewModel.delete(playlist.id) },
                                 )
                                 ActionsMenuScreen(
                                     activity = a,

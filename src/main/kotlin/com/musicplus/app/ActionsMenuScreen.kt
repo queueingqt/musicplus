@@ -21,6 +21,7 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -31,6 +32,7 @@ import com.thelightphone.sdk.ui.lightClickable
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * What happens when an [ActionMenuItem] is tapped.
@@ -98,6 +100,47 @@ fun favoriteActionItem(isFavorite: Boolean, toggle: suspend (Boolean) -> Unit): 
             favoriteActionItem(newValue, toggle)
         },
     )
+
+/**
+ * Builds a row that opens a [ConfirmModal] on tap instead of acting
+ * immediately — [onConfirm] only runs if the person confirms. Always returns
+ * itself: unlike [favoriteActionItem]'s "always some new state," this row
+ * still applies whether the dialog it opens gets confirmed or cancelled, so
+ * there's no `null` case. That's the one shape easy to get backwards by hand
+ * — a plain `null` return here drops the row from the menu the instant it's
+ * tapped, before the dialog even shows. Copied wrong twice (PlaylistListScreen,
+ * PlaylistDetailScreen, ServerSettingsScreen all hand-rolled the identical
+ * `lateinit var` idiom, and two of the three shipped with the `null` bug) —
+ * this is that idiom owned once instead of hand-copied at every call site,
+ * matching [favoriteActionItem]/`addToQueueActionItem`'s existing pattern.
+ */
+fun confirmActionItem(
+    icon: LightIconConfiguration,
+    label: String,
+    confirmTitle: String,
+    confirmMessage: String,
+    confirmContentDescription: String = label,
+    onConfirm: () -> Unit,
+): ActionMenuItem {
+    lateinit var item: ActionMenuItem
+    item = ActionMenuItem(
+        icon = icon,
+        label = label,
+        onSelect = ActionMenuSelection.Perform {
+            LightModalManager.show(
+                ConfirmModal(
+                    title = confirmTitle,
+                    message = confirmMessage,
+                    confirmContentDescription = confirmContentDescription,
+                    onConfirm = onConfirm,
+                ),
+                duration = 30.seconds,
+            )
+            item
+        },
+    )
+    return item
+}
 
 class ActionsMenuScreenViewModel : LightViewModel<Unit>()
 

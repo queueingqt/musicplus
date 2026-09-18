@@ -17,7 +17,7 @@ import com.musicplus.app.data.DownloadEntity
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -165,16 +165,14 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                                 // continues loading on PlaybackRepository's own
                                 // scope, so navigating away immediately after is
                                 // safe — see PlaybackRepository.playAsync's doc.
-                                val graph = AppGraph.from(lightContext)
-                                val playback = PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir)
+                                val playback = playbackRepository(activity, lightContext)
                                 playback.playAsync(listOf(track), 0)
                                 navigateTo(::PlayerScreen)
                             },
                             onOpenActions = {
                                 navigateTo({ a ->
                                     val addToQueueItem = addToQueueActionItem("Add to queue") {
-                                        val graph = AppGraph.from(lightContext)
-                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
+                                        playbackRepository(activity, lightContext).addToQueue(listOf(track))
                                     }
                                     ActionsMenuScreen(
                                         activity = a,

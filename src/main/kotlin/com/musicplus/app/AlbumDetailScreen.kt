@@ -18,7 +18,7 @@ import com.musicplus.app.data.DownloadEntity
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -51,7 +51,15 @@ class AlbumDetailScreenViewModel(
     initialAlbum: Album?,
 ) : LightViewModel<Unit>() {
 
-    val tracks: StateFlow<List<Track>> = libraryRepository.observeTracksByAlbum(albumId)
+    // See SelfLoadingTrackList.kt (shared with AlbumListScreen/ArtistDetailScreen's
+    // own album-level download rows, and PlaylistListScreen's playlist ones) —
+    // both [tracks] and [albumDownloadState]/[toggleAlbumDownload] below read
+    // through this one wrapper now, instead of [tracks] reading the raw
+    // Room-cache flow directly — this used to be the one call site that
+    // bypassed the refresh-then-read guarantee the wrapper exists to enforce.
+    private val selfLoadingTracks = SelfLoadingTrackList.forAlbum(libraryRepository, albumId)
+
+    val tracks: StateFlow<List<Track>> = selfLoadingTracks.observeTracks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     // Seeded from whatever the caller already had in hand (e.g. the row a list
@@ -66,22 +74,12 @@ class AlbumDetailScreenViewModel(
         .map { albums -> albums.find { it.id == albumId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialAlbum)
 
-    // See SelfLoadingTrackList.kt (shared with AlbumListScreen/ArtistDetailScreen's
-    // own album-level download rows, and PlaylistListScreen's playlist ones) —
-    // this screen's own onScreenShow below already refreshes this album's
-    // tracks for [tracks] above, so SelfLoadingTrackList's own refresh here is
-    // usually redundant, but it's what makes this screen no longer the one
-    // special-case call site that "happens to" work right; every screen now
-    // gets the guarantee the same way. See TrackListDownload.kt's
-    // [observeTrackListDownloadState] for why IN_PROGRESS is its own state.
-    private val selfLoadingTracks = SelfLoadingTrackList.forAlbum(libraryRepository, albumId)
-
     val albumDownloadState: StateFlow<TrackListDownloadState> =
         selfLoadingTracks.observeDownloadState(downloadRepository)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrackListDownloadState.NONE)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch { libraryRepository.refreshAlbumDetail(albumId) }
+        viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
 
     fun downloadStatus(songId: String): Flow<DownloadEntity?> = downloadRepository.observeStatus(songId)
@@ -112,6 +110,11 @@ class AlbumDetailScreenViewModel(
     suspend fun toggleAlbumDownload(lightContext: SealedLightContext): TrackListDownloadState =
         selfLoadingTracks.toggleDownload(lightContext, downloadRepository)
 
+    // Same pattern as FavoritesScreen's identical wrappers — the View shouldn't
+    // reach past this ViewModel to AppGraph's syncQueueRepository directly.
+    suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
+    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
+
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
 }
@@ -119,7 +122,7 @@ class AlbumDetailScreenViewModel(
 /**
  * `activity` is retained as a property (same reasoning as PlayerScreen's
  * `sealedActivity`) because the per-track play action needs it for
- * `PlaybackRepositoryHolder.get(...)` from inside `Content()`.
+ * `playbackRepository(...)` from inside `Content()`.
  */
 class AlbumDetailScreen(
     private val activity: SealedLightActivity,
@@ -186,15 +189,14 @@ class AlbumDetailScreen(
                                 navigateTo({ a ->
                                     val isFavorite = album?.isFavorite == true
                                     val addAlbumToQueueItem = addToQueueActionItem("Add album to queue") {
-                                        val graph = AppGraph.from(lightContext)
-                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(tracks)
+                                        playbackRepository(activity, lightContext).addToQueue(tracks)
                                     }
                                     ActionsMenuScreen(
                                         activity = a,
                                         subtitle = title,
                                         items = listOf(
                                             favoriteActionItem(isFavorite) { favorite ->
-                                                AppGraph.from(lightContext).syncQueueRepository.setAlbumFavorite(albumId, favorite)
+                                                viewModel.setAlbumFavorite(albumId, favorite)
                                             },
                                             trackListDownloadActionItem("album", albumDownloadState) { viewModel.toggleAlbumDownload(lightContext) }.copy(
                                                 liveUpdates = viewModel.albumDownloadState.map { s ->
@@ -240,23 +242,21 @@ class AlbumDetailScreen(
                             // continues loading on PlaybackRepository's own scope,
                             // so navigating away immediately after is safe — see
                             // PlaybackRepository.playAsync's doc.
-                            val graph = AppGraph.from(lightContext)
-                            val playback = PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir)
+                            val playback = playbackRepository(activity, lightContext)
                             playback.playAsync(tracks, index, albumArtUrl = album?.coverArtUrl)
                             navigateTo(::PlayerScreen)
                         },
                         onOpenActions = {
                             navigateTo({ a ->
                                 val addTrackToQueueItem = addToQueueActionItem("Add to queue") {
-                                    val graph = AppGraph.from(lightContext)
-                                    PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
+                                    playbackRepository(activity, lightContext).addToQueue(listOf(track))
                                 }
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = track.title,
                                     items = listOf(
                                         favoriteActionItem(track.isFavorite) { favorite ->
-                                            AppGraph.from(lightContext).syncQueueRepository.setTrackFavorite(track.id, favorite)
+                                            viewModel.setTrackFavorite(track.id, favorite)
                                         },
                                         addTrackToQueueItem,
                                         ActionMenuItem(

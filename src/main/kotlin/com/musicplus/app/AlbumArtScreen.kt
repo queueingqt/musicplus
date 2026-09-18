@@ -11,7 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.PlaybackRepository
-import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -64,7 +64,7 @@ class AlbumArtScreen(private val sealedActivity: SealedLightActivity) :
 
     override fun createViewModel(): AlbumArtScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph, lightContext.filesDir)
+        val playback = playbackRepository(sealedActivity, lightContext)
         return AlbumArtScreenViewModel(playback, graph.libraryRepository)
     }
 

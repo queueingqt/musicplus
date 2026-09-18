@@ -29,7 +29,7 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.PlaybackRepository
-import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -159,7 +159,7 @@ class PlayerScreenViewModel(
  * AlbumDetailScreen).
  *
  * `sealedActivity` is captured as a property here (unlike other screens) because
- * `PlaybackRepositoryHolder.get(...)` needs it in `createViewModel()`, and
+ * `playbackRepository(...)` needs it in `createViewModel()`, and
  * `SimpleLightScreen` doesn't retain the raw activity for subclasses to reuse
  * (only the derived `lightContext` is exposed) — see the SDK reference notes.
  */
@@ -170,7 +170,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
 
     override fun createViewModel(): PlayerScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        val playback = PlaybackRepositoryHolder.get(sealedActivity, graph, lightContext.filesDir)
+        val playback = playbackRepository(sealedActivity, lightContext)
         return PlayerScreenViewModel(playback, graph.libraryRepository, graph.syncQueueRepository)
     }
 

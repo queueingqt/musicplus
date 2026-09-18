@@ -7,6 +7,7 @@ import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -56,6 +57,15 @@ object AppGraph {
         instance?.apiHolder?.invalidate()
     }
 
+    // Every AppSettingsRepository flow that just needs to keep a process-lifetime
+    // singleton (AppLogger, AppHaptics, AppDisplayPrefs, AppQualityPrefs, ...) in
+    // sync follows this exact shape — collapsed to one helper so build() reads as
+    // "mirror these six settings" plus the two genuinely special bootstrap steps,
+    // not eight same-shaped appScope.launch blocks.
+    private fun <T> mirrorInto(flow: Flow<T>, sink: (T) -> Unit) {
+        appScope.launch { flow.collect(sink) }
+    }
+
     // Opts into MusicPlusDatabase.create() — see DatabaseFactoryAccess's doc for
     // why that function is opt-in-gated rather than just `internal`: this is the
     // one function in the whole tool meant to ever call it.
@@ -74,27 +84,15 @@ object AppGraph {
         }
         val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
         val playbackStateRepository = PlaybackStateRepository(lightContext.dataStore)
-        appScope.launch {
-            appSettingsRepository.debugLoggingEnabled.collect {
-                AppLogger.setEnabled(it)
-                CrashReporter.setEnabled(it)
-            }
+        mirrorInto(appSettingsRepository.debugLoggingEnabled) {
+            AppLogger.setEnabled(it)
+            CrashReporter.setEnabled(it)
         }
-        appScope.launch {
-            appSettingsRepository.hapticFeedbackEnabled.collect { AppHaptics.setEnabled(it) }
-        }
-        appScope.launch {
-            appSettingsRepository.showAlbumArtwork.collect { AppDisplayPrefs.setShowAlbumArtwork(it) }
-        }
-        appScope.launch {
-            appSettingsRepository.streamQualityWifi.collect { AppQualityPrefs.setStreamQualityWifi(it) }
-        }
-        appScope.launch {
-            appSettingsRepository.streamQualityCellular.collect { AppQualityPrefs.setStreamQualityCellular(it) }
-        }
-        appScope.launch {
-            appSettingsRepository.downloadQuality.collect { AppQualityPrefs.setDownloadQuality(it) }
-        }
+        mirrorInto(appSettingsRepository.hapticFeedbackEnabled, AppHaptics::setEnabled)
+        mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs::setShowAlbumArtwork)
+        mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs::setStreamQualityWifi)
+        mirrorInto(appSettingsRepository.streamQualityCellular, AppQualityPrefs::setStreamQualityCellular)
+        mirrorInto(appSettingsRepository.downloadQuality, AppQualityPrefs::setDownloadQuality)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         val database = MusicPlusDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible

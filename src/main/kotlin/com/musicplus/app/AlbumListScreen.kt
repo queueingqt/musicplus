@@ -16,7 +16,7 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -147,8 +147,7 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
                             navigateTo({ a ->
                                 val addToQueueItem = addToQueueActionItem("Add album to queue") {
                                     val tracks = viewModel.tracksForAlbum(album.id)
-                                    val graph = AppGraph.from(lightContext)
-                                    PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(tracks)
+                                    playbackRepository(activity, lightContext).addToQueue(tracks)
                                 }
                                 ActionsMenuScreen(
                                     activity = a,
