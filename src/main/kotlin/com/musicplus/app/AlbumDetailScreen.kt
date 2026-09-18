@@ -144,15 +144,6 @@ class AlbumDetailScreen(
         // repeat state that's already the option being offered there.
         val topBarTitle = if (album?.isFavorite == true) "★ $title" else title
 
-        fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
-            key = "download",
-            icon = downloadIcon(status),
-            label = downloadStatusLabel(status),
-            onSelect = ActionMenuSelection.Perform {
-                trackDownloadActionItem(track, viewModel.toggleDownload(lightContext, track, status))
-            },
-        )
-
         // Plain back + centered title now — the 3 album-level action icons that used to
         // live here (favorite, download, add-to-queue, added earlier this session) moved
         // to a long-press on the artwork below instead (issue #16). See the long-press
@@ -190,16 +181,10 @@ class AlbumDetailScreen(
                             onLongClick = {
                                 navigateTo({ a ->
                                     val isFavorite = album?.isFavorite == true
-                                    lateinit var addAlbumToQueueItem: ActionMenuItem
-                                    addAlbumToQueueItem = ActionMenuItem(
-                                        icon = LightIcons.ADD,
-                                        label = "Add album to queue",
-                                        onSelect = ActionMenuSelection.Perform {
-                                            val graph = AppGraph.from(lightContext)
-                                            PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(tracks)
-                                            addAlbumToQueueItem
-                                        },
-                                    )
+                                    val addAlbumToQueueItem = addToQueueActionItem("Add album to queue") {
+                                        val graph = AppGraph.from(lightContext)
+                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(tracks)
+                                    }
                                     ActionsMenuScreen(
                                         activity = a,
                                         subtitle = title,
@@ -261,16 +246,10 @@ class AlbumDetailScreen(
                         },
                         onOpenActions = {
                             navigateTo({ a ->
-                                lateinit var addTrackToQueueItem: ActionMenuItem
-                                addTrackToQueueItem = ActionMenuItem(
-                                    icon = LightIcons.ADD,
-                                    label = "Add to queue",
-                                    onSelect = ActionMenuSelection.Perform {
-                                        val graph = AppGraph.from(lightContext)
-                                        PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
-                                        addTrackToQueueItem
-                                    },
-                                )
+                                val addTrackToQueueItem = addToQueueActionItem("Add to queue") {
+                                    val graph = AppGraph.from(lightContext)
+                                    PlaybackRepositoryHolder.get(activity, graph, lightContext.filesDir).addToQueue(listOf(track))
+                                }
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = track.title,
@@ -286,8 +265,14 @@ class AlbumDetailScreen(
                                                 navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
                                             },
                                         ),
-                                        trackDownloadActionItem(track, status?.status).copy(
-                                            liveUpdates = viewModel.downloadStatus(track.id).map { trackDownloadActionItem(track, it?.status) },
+                                        trackDownloadActionItem(status?.status) { newStatus ->
+                                            viewModel.toggleDownload(lightContext, track, newStatus)
+                                        }.copy(
+                                            liveUpdates = viewModel.downloadStatus(track.id).map { entity ->
+                                                trackDownloadActionItem(entity?.status) { newStatus ->
+                                                    viewModel.toggleDownload(lightContext, track, newStatus)
+                                                }
+                                            },
                                         ),
                                     ),
                                 )
@@ -355,35 +340,11 @@ private fun TrackRow(
         }
         if (downloadStatus != null) {
             LightIcon(
-                icon = downloadIcon(downloadStatus),
+                icon = downloadStatusIcon(downloadStatus),
                 size = 1.2f,
                 contentDescription = downloadStatusLabel(downloadStatus),
                 modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
             )
         }
     }
-}
-
-/**
- * Three real visual states, not two: QUEUED/DOWNLOADING now render distinctly from
- * both "not downloaded" and "downloaded" instead of only toggling between
- * DOWNLOAD_ARROW/DOWNLOADED_ARROW. Uses REFRESH for "in progress" — LOOP was tried
- * first but is the exact same icon the Now Playing screen uses for Repeat, which
- * on-device looked like a stray repeat toggle appearing on tracks whenever an
- * album download was running. There's no dedicated spinner/progress icon in
- * LightIcons; REFRESH isn't used anywhere else in this app, so it doesn't collide.
- */
-private fun downloadIcon(status: DownloadStatus?) = when (status) {
-    DownloadStatus.COMPLETE -> LightIcons.DOWNLOADED_ARROW
-    DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.REFRESH
-    DownloadStatus.FAILED, null -> LightIcons.DOWNLOAD_ARROW
-}
-
-/** Tap semantics: QUEUED/DOWNLOADING/COMPLETE -> stop or remove; FAILED/null -> start. See `toggleDownload`. */
-private fun downloadStatusLabel(status: DownloadStatus?): String = when (status) {
-    null -> "Download"
-    DownloadStatus.QUEUED -> "Queued — tap to cancel"
-    DownloadStatus.DOWNLOADING -> "Downloading — tap to cancel"
-    DownloadStatus.COMPLETE -> "Downloaded — tap to remove"
-    DownloadStatus.FAILED -> "Failed — tap to retry"
 }
