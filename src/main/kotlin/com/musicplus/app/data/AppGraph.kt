@@ -59,6 +59,9 @@ object AppGraph {
         // First thing any screen touches (see class doc) — as early as this
         // process-lifetime singleton can install the crash handler.
         AppLogger.init(lightContext.filesDir)
+        // Chains its own uncaught-exception handler after AppLogger's (see
+        // CrashReporter.init) — both run on a crash, not one-or-the-other.
+        CrashReporter.init(lightContext.filesDir)
 
         val serverConfigRepository = ServerConfigRepository(lightContext.dataStore)
         appScope.launch {
@@ -67,7 +70,10 @@ object AppGraph {
         val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
         val playbackStateRepository = PlaybackStateRepository(lightContext.dataStore)
         appScope.launch {
-            appSettingsRepository.debugLoggingEnabled.collect { AppLogger.setEnabled(it) }
+            appSettingsRepository.debugLoggingEnabled.collect {
+                AppLogger.setEnabled(it)
+                CrashReporter.setEnabled(it)
+            }
         }
         appScope.launch {
             appSettingsRepository.hapticFeedbackEnabled.collect { AppHaptics.setEnabled(it) }

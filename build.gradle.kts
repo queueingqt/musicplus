@@ -62,6 +62,18 @@ android {
         minSdk = rootProject.ext["minSdk"] as Int
         targetSdk = rootProject.ext["targetSdk"] as Int
         manifestPlaceholders["sdkVersion"] = property("sdkVersion") as String
+
+        // Fine-grained GitHub PAT (Issues: write only, scoped to this one repo,
+        // expiring) for CrashReporter.kt — never hardcoded here, since this file
+        // is committed. Empty string (not present) when the env var isn't set,
+        // so a plain build still works for anyone without it; CrashReporter
+        // no-ops on a blank token. See scripts/release.sh's keystore handling
+        // for the same "env var sourced from Keychain, never committed" pattern.
+        buildConfigField("String", "GITHUB_CRASH_TOKEN", "\"${System.getenv("MUSICPLUS_GITHUB_TOKEN") ?: ""}\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {

@@ -125,7 +125,11 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                 )
                 // Always last — the least likely to be touched day-to-day.
                 ToggleRow(
-                    label = "Debug logging",
+                    // Also gates local debug logging (AppLogger), not just
+                    // CrashReporter (issue #41) — kept as one toggle/one
+                    // underlying setting (debugLoggingEnabled), just
+                    // relabeled per explicit request.
+                    label = "Report Crashes",
                     isOn = debugLoggingEnabled,
                     onToggle = { viewModel.toggleDebugLogging() },
                 )
