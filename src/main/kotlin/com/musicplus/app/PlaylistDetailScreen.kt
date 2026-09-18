@@ -12,7 +12,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
@@ -143,56 +142,24 @@ class PlaylistDetailScreen(
                         icon = LightIcons.BACK,
                         onClick = { goBack() },
                     ),
-                    // Generic label, not the playlist's own name — that's shown
-                    // (and interactive) as the body heading below. Reported live:
-                    // showing the exact same name in both places read as a
-                    // double title once the body heading was added.
                     center = LightTopBarCenter.Text("Playlist"),
+                    // Replaces the old standalone rename pencil — opens the same
+                    // actions menu every other album/playlist/track-level long-press
+                    // uses, now on a tap since this is a top-bar icon button
+                    // (LightTopBarCenter/LightBarButton have no long-press variant —
+                    // confirmed in the SDK). Rename moved in here as its own row
+                    // instead of keeping a separate icon for it.
                     rightButton = LightBarButton.LightIcon(
-                        icon = LightIcons.PENCIL,
-                        contentDescription = "Rename playlist",
+                        icon = LightIcons.SETTINGS,
+                        contentDescription = "Playlist actions",
                         onClick = {
-                            navigateTo({ a -> TextEditScreen(a, "Playlist name", title) }) { newName ->
-                                if (!newName.isNullOrBlank()) viewModel.rename(newName)
-                            }
-                        },
-                    ),
-                )
-            },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onQueueClick = { navigateTo(::QueueScreen) },
-        ) {
-            // The trash icon that used to live here moved into the long-press
-            // action menu (issue reported live: wanted delete off a standalone
-            // glyph and onto the same long-press pattern every other
-            // album/playlist/track-level action uses). This title is the
-            // long-press target for it — the screen had no long-press target
-            // for playlist-level actions at all before, unlike AlbumDetailScreen's
-            // artwork. Tap is a deliberate no-op, same reasoning as that
-            // screen's artwork: this text had no tap behavior of its own before.
-            LightText(
-                text = title,
-                variant = LightTextVariant.Heading,
-                align = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp())
-                    .lightCombinedClickable(
-                        onClick = {},
-                        onLongClick = {
                             navigateTo({ a ->
                                 // lateinit self-reference, not a plain `null` return — Perform's
                                 // contract is "null means this row no longer applies at all, drop
                                 // it from the menu" (see ActionsMenuScreen.kt's doc). This row still
                                 // applies regardless of whether the confirm dialog it just opened
                                 // gets confirmed or cancelled, so it must return itself, not null.
-                                // Returning null here (copied from ServerSettingsScreen's identical
-                                // Delete row, which has the same latent bug) dropped this row the
-                                // instant it was tapped — invisible there since it's one of several
-                                // rows, but this menu has only this one row, so it went blank.
-                                // Reported live, 2026-09-18.
+                                // Reported live, 2026-09-18 (see git history for the fuller story).
                                 lateinit var deleteItem: ActionMenuItem
                                 deleteItem = ActionMenuItem(
                                     icon = LightIcons.TRASH,
@@ -213,12 +180,27 @@ class PlaylistDetailScreen(
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = title,
-                                    items = listOf(deleteItem),
+                                    items = listOf(
+                                        ActionMenuItem(
+                                            icon = LightIcons.PENCIL,
+                                            label = "Rename playlist",
+                                            onSelect = ActionMenuSelection.Navigate {
+                                                navigateTo({ a2 -> TextEditScreen(a2, "Playlist name", title) }) { newName ->
+                                                    if (!newName.isNullOrBlank()) viewModel.rename(newName)
+                                                }
+                                            },
+                                        ),
+                                        deleteItem,
+                                    ),
                                 )
                             })
                         },
                     ),
-            )
+                )
+            },
+            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onQueueClick = { navigateTo(::QueueScreen) },
+        ) {
 
             // Inside, not Outside — see AlbumDetailScreen's identical call site
             // for why (Outside's gutter width isn't known until after first
