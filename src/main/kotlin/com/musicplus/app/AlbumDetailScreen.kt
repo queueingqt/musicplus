@@ -39,7 +39,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -67,11 +66,18 @@ class AlbumDetailScreenViewModel(
         .map { albums -> albums.find { it.id == albumId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialAlbum)
 
-    // See TrackListDownload.kt (shared with AlbumListScreen/ArtistDetailScreen's
-    // own album-level download rows, and PlaylistListScreen's playlist ones)
-    // for why IN_PROGRESS is its own state.
+    // See SelfLoadingTrackList.kt (shared with AlbumListScreen/ArtistDetailScreen's
+    // own album-level download rows, and PlaylistListScreen's playlist ones) —
+    // this screen's own onScreenShow below already refreshes this album's
+    // tracks for [tracks] above, so SelfLoadingTrackList's own refresh here is
+    // usually redundant, but it's what makes this screen no longer the one
+    // special-case call site that "happens to" work right; every screen now
+    // gets the guarantee the same way. See TrackListDownload.kt's
+    // [observeTrackListDownloadState] for why IN_PROGRESS is its own state.
+    private val selfLoadingTracks = SelfLoadingTrackList.forAlbum(libraryRepository, albumId)
+
     val albumDownloadState: StateFlow<TrackListDownloadState> =
-        observeTrackListDownloadState(libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
+        selfLoadingTracks.observeDownloadState(downloadRepository)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrackListDownloadState.NONE)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
@@ -102,9 +108,9 @@ class AlbumDetailScreenViewModel(
             }
         }
 
-    /** See TrackListDownload.kt's [toggleTrackListDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows, and PlaylistListScreen's playlist ones. */
+    /** See SelfLoadingTrackList.kt's [SelfLoadingTrackList.toggleDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows, and PlaylistListScreen's playlist ones. */
     suspend fun toggleAlbumDownload(lightContext: SealedLightContext): TrackListDownloadState =
-        toggleTrackListDownload(lightContext, libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
+        selfLoadingTracks.toggleDownload(lightContext, downloadRepository)
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     var scrollIndex = 0

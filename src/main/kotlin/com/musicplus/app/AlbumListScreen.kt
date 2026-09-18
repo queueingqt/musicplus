@@ -38,7 +38,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -71,28 +70,24 @@ class AlbumListScreenViewModel(
         viewModelScope.launch { libraryRepository.refreshAlbumList() }
     }
 
-    fun albumDownloadState(albumId: String): Flow<TrackListDownloadState> =
-        observeTrackListDownloadState(libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
-
-    // refreshAlbumDetail first — reported live: choosing "Download album" from
+    // See SelfLoadingTrackList.kt — reported live: choosing "Download album" from
     // this list (without ever having opened that album's own detail screen)
-    // silently enqueued nothing, because observeTracksByAlbum's Room cache is
-    // only ever populated by AlbumDetailScreen's onScreenShow. toggleTrackListDownload
-    // still reported IN_PROGRESS regardless, so nothing here looked wrong until
-    // the track list was reopened and showed no download icons at all.
-    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): TrackListDownloadState {
-        libraryRepository.refreshAlbumDetail(albumId)
-        return toggleTrackListDownload(lightContext, libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
-    }
+    // silently enqueued nothing, because observeTracksByAlbum's Room cache was
+    // only ever populated by AlbumDetailScreen's onScreenShow. SelfLoadingTrackList
+    // refreshes before either of these can read the tracks, so that's no longer
+    // something this ViewModel has to remember to do itself.
+    fun albumDownloadState(albumId: String): Flow<TrackListDownloadState> =
+        SelfLoadingTrackList.forAlbum(libraryRepository, albumId).observeDownloadState(downloadRepository)
+
+    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): TrackListDownloadState =
+        SelfLoadingTrackList.forAlbum(libraryRepository, albumId).toggleDownload(lightContext, downloadRepository)
 
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
 
     // Same fix as toggleAlbumDownload above — "Add album to queue" from this
     // list has the identical dependency on the album's tracks already being cached.
-    suspend fun tracksForAlbum(albumId: String): List<Track> {
-        libraryRepository.refreshAlbumDetail(albumId)
-        return libraryRepository.observeTracksByAlbum(albumId).first()
-    }
+    suspend fun tracksForAlbum(albumId: String): List<Track> =
+        SelfLoadingTrackList.forAlbum(libraryRepository, albumId).tracks()
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     var scrollIndex = 0
