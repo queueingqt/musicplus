@@ -61,6 +61,9 @@ object AppGraph {
         AppLogger.init(lightContext.filesDir)
 
         val serverConfigRepository = ServerConfigRepository(lightContext.dataStore)
+        appScope.launch {
+            serverConfigRepository.migrateLegacyConfigIfNeeded()
+        }
         val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
         val playbackStateRepository = PlaybackStateRepository(lightContext.dataStore)
         appScope.launch {

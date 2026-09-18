@@ -16,10 +16,12 @@ import kotlinx.serialization.json.Json
  * primitives, so the list is kept as one JSON-encoded string rather than
  * per-server indexed keys — simpler to read/write atomically as a whole list.
  *
- * TODO: the password is stored as plain DataStore text. Preferences DataStore has
- * no built-in at-rest encryption — wrap this in an Android Keystore-backed cipher
- * (or store only the credentials needed to mint a Subsonic token, never the raw
- * password) before this ships past a stub.
+ * The JSON blob (including the password) is encrypted with
+ * [EncryptedPrefsCipher] before it's written — Preferences DataStore has no
+ * built-in at-rest encryption of its own. [parseServers] falls back to
+ * treating the stored value as plain (pre-encryption) JSON if decryption
+ * fails, so an install that already has a server saved from before this
+ * change doesn't lose it — the next [addOrUpdate] re-writes it encrypted.
  */
 class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
 
@@ -27,10 +29,10 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
         val SERVERS_JSON = stringPreferencesKey("server_profiles_json")
         val ACTIVE_SERVER_ID = stringPreferencesKey("active_server_id")
 
-        // Pre-multi-server single-config keys. Never written to anymore — read
-        // only as a one-time fallback so an already-configured install doesn't
-        // lose its working server the first time it opens this build. See
-        // parseServers()'s doc.
+        // Pre-multi-server single-config keys. Never written to anymore, and
+        // actively removed once migrated (see migrateLegacyConfigIfNeeded) —
+        // kept only so parseServers()'s read-time fallback and that migration
+        // can still see a not-yet-migrated install's working server.
         val LEGACY_BASE_URL = stringPreferencesKey("server_base_url")
         val LEGACY_USERNAME = stringPreferencesKey("server_username")
         val LEGACY_PASSWORD = stringPreferencesKey("server_password")
@@ -57,8 +59,13 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
      * runs before the person ever opens the new Servers screen.
      */
     private fun parseServers(prefs: Preferences): List<ServerProfile> {
-        val json = prefs[Keys.SERVERS_JSON]
-        if (!json.isNullOrBlank()) {
+        val stored = prefs[Keys.SERVERS_JSON]
+        if (!stored.isNullOrBlank()) {
+            // Pre-encryption installs have this key holding plain JSON already —
+            // fall back to reading it as-is rather than losing a working server
+            // config. addOrUpdate()/remove() always write the encrypted form, so
+            // this self-heals on the next write.
+            val json = runCatching { EncryptedPrefsCipher.decrypt(stored) }.getOrDefault(stored)
             return runCatching { Json.decodeFromString<List<ServerProfile>>(json) }.getOrDefault(emptyList())
         }
         val baseUrl = prefs[Keys.LEGACY_BASE_URL]
@@ -76,13 +83,40 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
         )
     }
 
+    /**
+     * One-time migration: if the pre-multi-server legacy keys still hold a
+     * config, folds it into [Keys.SERVERS_JSON] (encrypted, same as any other
+     * write) and removes the legacy keys — so a credential that
+     * [parseServers]'s read-time fallback already surfaces to the rest of the
+     * app doesn't also sit forever as a second, permanently-plaintext copy on
+     * disk. No-op once the legacy keys are gone. Called once at startup from
+     * [AppGraph.build].
+     */
+    suspend fun migrateLegacyConfigIfNeeded() {
+        dataStore.edit { prefs ->
+            val hasLegacy = !prefs[Keys.LEGACY_BASE_URL].isNullOrBlank() &&
+                !prefs[Keys.LEGACY_USERNAME].isNullOrBlank() &&
+                !prefs[Keys.LEGACY_PASSWORD].isNullOrBlank()
+            if (!hasLegacy) return@edit
+
+            if (prefs[Keys.SERVERS_JSON].isNullOrBlank()) {
+                val migrated = parseServers(prefs)
+                prefs[Keys.SERVERS_JSON] = EncryptedPrefsCipher.encrypt(Json.encodeToString(migrated))
+                if (prefs[Keys.ACTIVE_SERVER_ID] == null) migrated.firstOrNull()?.let { prefs[Keys.ACTIVE_SERVER_ID] = it.id }
+            }
+            prefs.remove(Keys.LEGACY_BASE_URL)
+            prefs.remove(Keys.LEGACY_USERNAME)
+            prefs.remove(Keys.LEGACY_PASSWORD)
+        }
+    }
+
     /** Adds a new profile, or replaces the one with the same [ServerProfile.id]. First server saved becomes active automatically. */
     suspend fun addOrUpdate(profile: ServerProfile) {
         dataStore.edit { prefs ->
             val current = parseServers(prefs).toMutableList()
             val index = current.indexOfFirst { it.id == profile.id }
             if (index >= 0) current[index] = profile else current += profile
-            prefs[Keys.SERVERS_JSON] = Json.encodeToString(current)
+            prefs[Keys.SERVERS_JSON] = EncryptedPrefsCipher.encrypt(Json.encodeToString(current))
             if (prefs[Keys.ACTIVE_SERVER_ID] == null) prefs[Keys.ACTIVE_SERVER_ID] = profile.id
         }
     }
@@ -90,7 +124,7 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
     suspend fun remove(id: String) {
         dataStore.edit { prefs ->
             val remaining = parseServers(prefs).filterNot { it.id == id }
-            prefs[Keys.SERVERS_JSON] = Json.encodeToString(remaining)
+            prefs[Keys.SERVERS_JSON] = EncryptedPrefsCipher.encrypt(Json.encodeToString(remaining))
             if (prefs[Keys.ACTIVE_SERVER_ID] == id) {
                 val nextActive = remaining.firstOrNull()?.id
                 if (nextActive != null) prefs[Keys.ACTIVE_SERVER_ID] = nextActive else prefs.remove(Keys.ACTIVE_SERVER_ID)
