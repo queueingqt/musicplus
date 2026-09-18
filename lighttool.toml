@@ -2,7 +2,7 @@
 
 [tool]
 id            = "com.lightwave.app"
-label         = "music +"
+label         = "Music +"
 versionCode   = 1
 versionName   = "0.1.0"
 
