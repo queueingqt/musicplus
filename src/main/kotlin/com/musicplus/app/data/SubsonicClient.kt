@@ -6,6 +6,7 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
+import io.ktor.http.contentLength
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -121,10 +122,16 @@ class SubsonicClient(private val config: ServerConfig) {
     }
 
     /** Raw bytes from a binary endpoint (download.view, getCoverArt.view, ...) — same client/engine as [call], so it gets the same cleartext-over-CIO handling. */
-    suspend fun getBytes(method: String, params: List<Pair<String, String>> = emptyList()): ByteArray =
-        http.get("$baseUrl/rest/$method") {
+    suspend fun getBytes(method: String, params: List<Pair<String, String>> = emptyList()): ByteArray {
+        AppLogger.d("SubsonicClient", "getBytes($method): issuing request")
+        val response = http.get("$baseUrl/rest/$method") {
             (authParams() + params).forEach { (k, v) -> parameter(k, v) }
-        }.body()
+        }
+        AppLogger.d("SubsonicClient", "getBytes($method): got response ${response.status}, contentLength=${response.contentLength()}")
+        val bytes: ByteArray = response.body()
+        AppLogger.d("SubsonicClient", "getBytes($method): read ${bytes.size} bytes")
+        return bytes
+    }
 
     /**
      * `ping.view` — verifies the server is reachable and the credentials are valid.

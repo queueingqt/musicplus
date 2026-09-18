@@ -8,7 +8,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -91,7 +90,6 @@ class SearchScreen(private val activity: SealedLightActivity) :
 
     @Composable
     override fun Content() {
-        val scope = rememberCoroutineScope()
         val query by viewModel.query.collectAsState()
         val artists by viewModel.artistResults.collectAsState()
         val albums by viewModel.albumResults.collectAsState()
@@ -157,13 +155,14 @@ class SearchScreen(private val activity: SealedLightActivity) :
                         lightContext = lightContext,
                         track = track,
                         onPlay = {
-                            // beginPlay() + navigate immediately, *then* the slow
-                            // part — see PlaybackRepository.beginPlay's doc.
+                            // playAsync() updates title/art synchronously and
+                            // continues loading on PlaybackRepository's own scope,
+                            // so navigating away immediately after is safe — see
+                            // PlaybackRepository.playAsync's doc.
                             val graph = AppGraph.from(lightContext)
                             val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
-                            playback.beginPlay(listOf(track), 0)
+                            playback.playAsync(listOf(track), 0)
                             navigateTo(::PlayerScreen)
-                            scope.launch { playback.play(listOf(track), 0) }
                         },
                         onOpenActions = {
                             navigateTo({ a ->

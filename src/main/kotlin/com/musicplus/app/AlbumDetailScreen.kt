@@ -9,7 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -127,7 +126,6 @@ class AlbumDetailScreen(
 
     @Composable
     override fun Content() {
-        val scope = rememberCoroutineScope()
         val tracks by viewModel.tracks.collectAsState()
         val album by viewModel.album.collectAsState()
         val albumDownloadState by viewModel.albumDownloadState.collectAsState()
@@ -242,17 +240,14 @@ class AlbumDetailScreen(
                         track = track,
                         downloadStatus = status?.status,
                         onPlay = {
-                            // beginPlay() + navigate immediately, *then* the slow
-                            // part — see PlaybackRepository.beginPlay's doc.
-                            // Reported live: tapping a track showed no feedback
-                            // at all until playback was already fully loaded,
-                            // since navigation used to wait for the whole play()
-                            // call (including the network-bound part) to finish.
+                            // playAsync() updates title/art synchronously and
+                            // continues loading on PlaybackRepository's own scope,
+                            // so navigating away immediately after is safe — see
+                            // PlaybackRepository.playAsync's doc.
                             val graph = AppGraph.from(lightContext)
                             val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
-                            playback.beginPlay(tracks, index, albumArtUrl = album?.coverArtUrl)
+                            playback.playAsync(tracks, index, albumArtUrl = album?.coverArtUrl)
                             navigateTo(::PlayerScreen)
-                            scope.launch { playback.play(tracks, index, albumArtUrl = album?.coverArtUrl) }
                         },
                         onOpenActions = {
                             navigateTo({ a ->

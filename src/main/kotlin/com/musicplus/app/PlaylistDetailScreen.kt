@@ -12,7 +12,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -135,7 +134,6 @@ class PlaylistDetailScreen(
 
     @Composable
     override fun Content() {
-        val scope = rememberCoroutineScope()
         val tracks by viewModel.tracks.collectAsState()
         val playlist by viewModel.playlist.collectAsState()
         val title = playlist?.name ?: "Playlist"
@@ -230,13 +228,14 @@ class PlaylistDetailScreen(
                         canMoveUp = index > 0,
                         canMoveDown = index < tracks.lastIndex,
                         onPlay = {
-                            // beginPlay() + navigate immediately, *then* the slow
-                            // part — see PlaybackRepository.beginPlay's doc.
+                            // playAsync() updates title/art synchronously and
+                            // continues loading on PlaybackRepository's own scope,
+                            // so navigating away immediately after is safe — see
+                            // PlaybackRepository.playAsync's doc.
                             val graph = AppGraph.from(lightContext)
                             val playback = PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir)
-                            playback.beginPlay(tracks, index)
+                            playback.playAsync(tracks, index)
                             navigateTo(::PlayerScreen)
-                            scope.launch { playback.play(tracks, index) }
                         },
                         onOpenActions = {
                             navigateTo({ a ->

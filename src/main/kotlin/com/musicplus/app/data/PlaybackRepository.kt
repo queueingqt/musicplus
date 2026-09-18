@@ -38,7 +38,18 @@ class PlaybackRepository(
     // repository is itself a process-lifetime singleton (see
     // PlaybackRepositoryHolder), so nothing here needs a narrower scope tied
     // to any particular screen's composition.
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    //
+    // Main, not Default: every path through this scope eventually calls
+    // `player.*` (pause/play/setMediaQueue/seekTo), which wraps a media3
+    // MediaController — those methods throw IllegalStateException off the
+    // thread that created the controller (main). Confirmed on-device,
+    // 2026-09-17: playAsync()'s launch crashed on exactly this
+    // ("MediaController method is called from a wrong thread") the first
+    // time anything actually ran on this scope with Dispatchers.Default.
+    // Suspend calls that do real network I/O (toAudioItem/cachedStreamFile)
+    // stay non-blocking regardless — Ktor's CIO engine dispatches its own
+    // socket I/O internally rather than blocking the caller's dispatcher.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val queue = MutableStateFlow<List<Track>>(emptyList())
     private val shuffle = MutableStateFlow(false)
@@ -236,7 +247,10 @@ class PlaybackRepository(
         // playback starts, not just the starting track. Correct but not great UX for
         // a multi-track queue on a cleartext server; tracked as a follow-up rather
         // than solved here.
-        player.setMediaQueue(tracks.map { it.toAudioItem(api) }, startIndex)
+        AppLogger.d("PlaybackRepository", "play(): resolving ${tracks.size} track(s), startIndex=$startIndex")
+        val items = tracks.map { it.toAudioItem(api) }
+        AppLogger.d("PlaybackRepository", "play(): all tracks resolved, calling setMediaQueue")
+        player.setMediaQueue(items, startIndex)
         player.play()
     }
 
@@ -269,6 +283,24 @@ class PlaybackRepository(
         // already shows 0:00/paused rather than the old track's real position —
         // this makes the actual audio match that, instead of just the numbers.
         player.pause()
+    }
+
+    /**
+     * [beginPlay] + [play], but launches the slow (network-bound) part on this
+     * repository's own long-lived [scope] instead of suspending — the caller-side
+     * pattern of `beginPlay(...); navigateTo(::PlayerScreen); scope.launch { play(...) }`
+     * looked right but wasn't: a screen's `rememberCoroutineScope()` is tied to its
+     * own composition, and `navigateTo` disposes that composition, so the launched
+     * coroutine got cancelled before `play()`'s suspend work ever ran — every tap
+     * silently stuck at 0:00/0:00 with no log output, since the coroutine never
+     * reached its first line. Three other screens (Songs/Favorites/Search) never
+     * called `play()` at all, same bug via a different mistake. Confirmed root
+     * cause of the tracked playback-stall bug, 2026-09-17. Screens should call this
+     * instead of the beginPlay+launch+play pattern directly.
+     */
+    fun playAsync(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
+        beginPlay(tracks, startIndex, albumArtUrl)
+        scope.launch { play(tracks, startIndex, albumArtUrl) }
     }
 
     /**
@@ -487,7 +519,13 @@ class PlaybackRepository(
         val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
         val cached = File(cacheDir, "$id.mp3")
         if (!cached.exists()) {
-            cached.writeBytes(api.streamBytes(id))
+            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): not cached, downloading")
+            val bytes = api.streamBytes(id)
+            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): downloaded ${bytes.size} bytes, writing to disk")
+            cached.writeBytes(bytes)
+            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): write complete")
+        } else {
+            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")
         }
         return cached
     }
