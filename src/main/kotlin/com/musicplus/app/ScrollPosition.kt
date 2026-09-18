@@ -7,8 +7,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 
 /**
- * Seeds a [LazyListState] from a previously-saved position and keeps writing
- * the live position back via [onPositionChanged] as the person scrolls.
+ * A list screen's scroll position, held as one mutable property on that
+ * screen's ViewModel instead of a separate index/offset var pair.
+ */
+class ScrollPosition(var index: Int = 0, var offset: Int = 0)
+
+/**
+ * Seeds a [LazyListState] from a previously-saved [position] and keeps
+ * writing the live position back into it as the person scrolls.
  *
  * Exists because of how this SDK's navigation actually works (confirmed by
  * reading `LightActivity.kt`/`LightScreen.kt` directly): `goBack()` pops the
@@ -19,19 +25,18 @@ import androidx.compose.runtime.snapshotFlow
  * called inside `Content()` always resets to the top. Reported live: every
  * list screen scrolled back to the top on `goBack()` instead of restoring
  * where it was. The ViewModel is the one thing here that actually survives,
- * so that's where the position has to live — a plain `var` pair on each
- * screen's ViewModel, not a new cross-screen store.
+ * so that's where the position has to live — one [ScrollPosition] per screen's
+ * ViewModel, not a new cross-screen store.
  */
 @Composable
-fun rememberPersistedLazyListState(
-    initialIndex: Int,
-    initialOffset: Int,
-    onPositionChanged: (index: Int, offset: Int) -> Unit,
-): LazyListState {
-    val listState = rememberLazyListState(initialIndex, initialOffset)
+fun rememberPersistedLazyListState(position: ScrollPosition): LazyListState {
+    val listState = rememberLazyListState(position.index, position.offset)
     LaunchedEffect(listState) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .collect { (index, offset) -> onPositionChanged(index, offset) }
+            .collect { (index, offset) ->
+                position.index = index
+                position.offset = offset
+            }
     }
     return listState
 }
