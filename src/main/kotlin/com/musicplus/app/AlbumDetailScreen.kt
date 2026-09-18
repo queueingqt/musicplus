@@ -68,27 +68,11 @@ class AlbumDetailScreenViewModel(
         .map { albums -> albums.find { it.id == albumId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialAlbum)
 
-    // Drives the album-level download action's icon/label: NONE (nothing downloaded),
-    // SOME (a mix, all quiet/settled — shows as the "start" icon, tapping downloads
-    // the rest), IN_PROGRESS (at least one track actively queued/downloading right
-    // now), ALL (every track downloaded — shows as complete, tapping removes all).
-    // IN_PROGRESS is checked before SOME/ALL are even considered — reported live:
-    // tapping "Download album" instantly showed "Downloaded — remove" because the
-    // original 3-state version only ever looked at COMPLETE counts, so "just
-    // enqueued, zero actually done yet" and "fully downloaded" were indistinguishable.
+    // See AlbumDownload.kt (shared with AlbumListScreen/ArtistDetailScreen's
+    // own album-level download rows) for why IN_PROGRESS is its own state.
     val albumDownloadState: StateFlow<AlbumDownloadState> =
-        combine(tracks, downloadRepository.observeAll()) { trackList, downloads ->
-            if (trackList.isEmpty()) return@combine AlbumDownloadState.NONE
-            val statusById = downloads.associateBy { it.songId }
-            val completeCount = trackList.count { statusById[it.id]?.status == DownloadStatus.COMPLETE }
-            val anyInProgress = trackList.any { statusById[it.id]?.status in IN_PROGRESS_STATUSES }
-            when {
-                anyInProgress -> AlbumDownloadState.IN_PROGRESS
-                completeCount == trackList.size -> AlbumDownloadState.ALL
-                completeCount > 0 -> AlbumDownloadState.SOME
-                else -> AlbumDownloadState.NONE
-            }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlbumDownloadState.NONE)
+        observeAlbumDownloadState(libraryRepository, downloadRepository, albumId)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AlbumDownloadState.NONE)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { libraryRepository.refreshAlbumDetail(albumId) }
@@ -118,39 +102,10 @@ class AlbumDetailScreenViewModel(
             }
         }
 
-    /**
-     * ALL/IN_PROGRESS -> cancel every track's download (matches
-     * [toggleDownload]'s own "cancel doubles as remove" semantics); NONE/SOME
-     * -> download whatever isn't already COMPLETE (previously enqueued every
-     * track unconditionally, silently re-downloading already-complete ones —
-     * the doc here already said "whatever isn't already complete," the code
-     * just didn't do that). Suspend, same reasoning as [toggleDownload]: the
-     * returned state is what just started, not a guess at what will
-     * eventually finish, so the action menu row can show real "in progress"
-     * feedback instead of claiming instant completion.
-     */
-    suspend fun toggleAlbumDownload(lightContext: SealedLightContext): AlbumDownloadState {
-        val currentTracks = tracks.value
-        return when (albumDownloadState.value) {
-            AlbumDownloadState.ALL, AlbumDownloadState.IN_PROGRESS -> {
-                currentTracks.forEach { downloadRepository.cancel(lightContext, it.id) }
-                AlbumDownloadState.NONE
-            }
-            AlbumDownloadState.NONE, AlbumDownloadState.SOME -> {
-                val completeIds = downloadRepository.observeAll().first()
-                    .filter { it.status == DownloadStatus.COMPLETE }
-                    .map { it.songId }
-                    .toSet()
-                currentTracks.filter { it.id !in completeIds }.forEach { downloadRepository.enqueue(lightContext, it) }
-                AlbumDownloadState.IN_PROGRESS
-            }
-        }
-    }
+    /** See AlbumDownload.kt's [toggleAlbumDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows. */
+    suspend fun toggleAlbumDownload(lightContext: SealedLightContext): AlbumDownloadState =
+        toggleAlbumDownload(lightContext, libraryRepository, downloadRepository, albumId)
 }
-
-enum class AlbumDownloadState { NONE, SOME, IN_PROGRESS, ALL }
-
-private val IN_PROGRESS_STATUSES = setOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING)
 
 /**
  * `activity` is retained as a property (same reasoning as PlayerScreen's
@@ -185,24 +140,6 @@ class AlbumDetailScreen(
         // still feeds the actions menu's subtitle below, which shouldn't
         // repeat state that's already the option being offered there.
         val topBarTitle = if (album?.isFavorite == true) "★ $title" else title
-
-        fun albumDownloadActionItem(state: AlbumDownloadState): ActionMenuItem = ActionMenuItem(
-            key = "download",
-            icon = when (state) {
-                AlbumDownloadState.ALL -> LightIcons.DOWNLOADED_ARROW
-                AlbumDownloadState.IN_PROGRESS -> LightIcons.REFRESH
-                AlbumDownloadState.SOME, AlbumDownloadState.NONE -> LightIcons.DOWNLOAD_ARROW
-            },
-            label = when (state) {
-                AlbumDownloadState.ALL -> "Downloaded — remove"
-                AlbumDownloadState.IN_PROGRESS -> "Downloading — tap to cancel"
-                AlbumDownloadState.SOME -> "Some tracks downloaded — download the rest"
-                AlbumDownloadState.NONE -> "Download album"
-            },
-            onSelect = ActionMenuSelection.Perform {
-                albumDownloadActionItem(viewModel.toggleAlbumDownload(lightContext))
-            },
-        )
 
         fun trackDownloadActionItem(track: Track, status: DownloadStatus?): ActionMenuItem = ActionMenuItem(
             key = "download",
@@ -267,8 +204,10 @@ class AlbumDetailScreen(
                                             favoriteActionItem(isFavorite) { favorite ->
                                                 AppGraph.from(lightContext).syncQueueRepository.setAlbumFavorite(albumId, favorite)
                                             },
-                                            albumDownloadActionItem(albumDownloadState).copy(
-                                                liveUpdates = viewModel.albumDownloadState.map { albumDownloadActionItem(it) },
+                                            albumDownloadActionItem(albumDownloadState) { viewModel.toggleAlbumDownload(lightContext) }.copy(
+                                                liveUpdates = viewModel.albumDownloadState.map { s ->
+                                                    albumDownloadActionItem(s) { viewModel.toggleAlbumDownload(lightContext) }
+                                                },
                                             ),
                                             addAlbumToQueueItem,
                                         ),

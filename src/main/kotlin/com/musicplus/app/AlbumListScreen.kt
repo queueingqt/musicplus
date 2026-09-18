@@ -8,12 +8,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
+import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -29,16 +33,20 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class AlbumListScreenViewModel(
     private val libraryRepository: LibraryRepository,
+    private val downloadRepository: DownloadRepository,
+    private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
     private val allAlbums: StateFlow<List<Album>> = libraryRepository.observeAlbums()
@@ -62,14 +70,27 @@ class AlbumListScreenViewModel(
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { libraryRepository.refreshAlbumList() }
     }
+
+    fun albumDownloadState(albumId: String): Flow<AlbumDownloadState> =
+        observeAlbumDownloadState(libraryRepository, downloadRepository, albumId)
+
+    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): AlbumDownloadState =
+        toggleAlbumDownload(lightContext, libraryRepository, downloadRepository, albumId)
+
+    suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
+
+    suspend fun tracksForAlbum(albumId: String): List<Track> = libraryRepository.observeTracksByAlbum(albumId).first()
 }
 
-class AlbumListScreen(activity: SealedLightActivity) :
+class AlbumListScreen(private val activity: SealedLightActivity) :
     LightScreen<Unit, AlbumListScreenViewModel>(activity) {
 
     override val viewModelClass = AlbumListScreenViewModel::class.java
 
-    override fun createViewModel() = AlbumListScreenViewModel(AppGraph.from(lightContext).libraryRepository)
+    override fun createViewModel(): AlbumListScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        return AlbumListScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository)
+    }
 
     @Composable
     override fun Content() {
@@ -106,9 +127,43 @@ class AlbumListScreen(activity: SealedLightActivity) :
                 uniformItemHeightGridUnits = 3f,
             ) {
                 items(albums, key = { it.id }) { album ->
-                    AlbumRow(lightContext, album) {
-                        navigateTo({ a -> AlbumDetailScreen(a, album.id, album) })
-                    }
+                    val downloadState by remember(album.id) { viewModel.albumDownloadState(album.id) }
+                        .collectAsState(initial = AlbumDownloadState.NONE)
+                    AlbumRow(
+                        lightContext = lightContext,
+                        album = album,
+                        onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
+                        onOpenActions = {
+                            navigateTo({ a ->
+                                lateinit var addToQueueItem: ActionMenuItem
+                                addToQueueItem = ActionMenuItem(
+                                    icon = LightIcons.ADD,
+                                    label = "Add album to queue",
+                                    onSelect = ActionMenuSelection.Perform {
+                                        val tracks = viewModel.tracksForAlbum(album.id)
+                                        val graph = AppGraph.from(lightContext)
+                                        PlaybackRepositoryHolder.get(activity, graph.apiHolder, lightContext.filesDir).addToQueue(tracks)
+                                        addToQueueItem
+                                    },
+                                )
+                                ActionsMenuScreen(
+                                    activity = a,
+                                    subtitle = album.name,
+                                    items = listOf(
+                                        favoriteActionItem(album.isFavorite) { favorite ->
+                                            viewModel.setAlbumFavorite(album.id, favorite)
+                                        },
+                                        albumDownloadActionItem(downloadState) { viewModel.toggleAlbumDownload(lightContext, album.id) }.copy(
+                                            liveUpdates = viewModel.albumDownloadState(album.id).map { s ->
+                                                albumDownloadActionItem(s) { viewModel.toggleAlbumDownload(lightContext, album.id) }
+                                            },
+                                        ),
+                                        addToQueueItem,
+                                    ),
+                                )
+                            })
+                        },
+                    )
                 }
             }
         }
@@ -116,11 +171,16 @@ class AlbumListScreen(activity: SealedLightActivity) :
 }
 
 @Composable
-private fun AlbumRow(lightContext: SealedLightContext, album: Album, onClick: () -> Unit) {
+private fun AlbumRow(
+    lightContext: SealedLightContext,
+    album: Album,
+    onClick: () -> Unit,
+    onOpenActions: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .lightClickable(onClick = onClick)
+            .lightCombinedClickable(onClick = onClick, onLongClick = onOpenActions)
             // end matches the SDK's own scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed
             // rather than conditional on whether a scrollbar happens to show.
