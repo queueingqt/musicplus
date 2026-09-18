@@ -19,6 +19,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
@@ -304,10 +308,34 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 }
 
                 Spacer(modifier = Modifier.height(0.5f.gridUnitsAsDp()))
-                LightProgressBar(
-                    colors = LightThemeTokens.colors,
-                    progress = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f,
-                )
+                // LightProgressBar (sdk/ui/.../LightProgressBar.kt) is two plain
+                // Boxes with a background color — no semantics{} block at all, so
+                // on its own it's fully decorative to a screen reader (confirmed
+                // by reading the SDK source, not assumed). The position/duration
+                // text right below it already makes this info available, but only
+                // as a fixed text node a screen reader has to separately land on;
+                // exposing it directly on the bar itself as real progress semantics
+                // (rather than leaving it silent) is the standard, low-risk fix —
+                // doesn't touch the SDK component, just what this screen wraps it
+                // with. Never checked against a screen reader before this pass
+                // (issue #36).
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics {
+                            progressBarRangeInfo = ProgressBarRangeInfo(
+                                current = state.positionMs.toFloat(),
+                                range = 0f..state.durationMs.toFloat().coerceAtLeast(0f),
+                            )
+                            contentDescription =
+                                "Playback position ${formatDuration(state.positionMs)} of ${formatDuration(state.durationMs)}"
+                        },
+                ) {
+                    LightProgressBar(
+                        colors = LightThemeTokens.colors,
+                        progress = if (state.durationMs > 0) state.positionMs.toFloat() / state.durationMs else 0f,
+                    )
+                }
                 LightText(
                     text = "${formatDuration(state.positionMs)} / ${formatDuration(state.durationMs)}",
                     variant = LightTextVariant.Fine,
@@ -342,7 +370,18 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                         // and there's no dedicated "repeat one" icon in LightIcons
                         // (confirmed via source) to tell them apart otherwise.
                         badge = if (state.repeatMode == RepeatMode.REPEAT_TRACK) "1" else null,
-                        contentDescription = "Repeat ${state.repeatMode.name.lowercase()}",
+                        // Was "Repeat ${state.repeatMode.name.lowercase()}" — for
+                        // REPEAT_QUEUE/REPEAT_TRACK that read the raw enum constant
+                        // with its underscore intact ("Repeat repeat_queue", "Repeat
+                        // repeat_track") to a screen reader instead of words. Purely
+                        // an accessibility bug — nothing on screen shows this string,
+                        // only TalkBack announcing this icon — and was never checked
+                        // against a screen reader before this pass (issue #36).
+                        contentDescription = when (state.repeatMode) {
+                            RepeatMode.OFF -> "Repeat off"
+                            RepeatMode.REPEAT_QUEUE -> "Repeat queue"
+                            RepeatMode.REPEAT_TRACK -> "Repeat track"
+                        },
                         onClick = { viewModel.cycleRepeatMode() },
                         modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),
                     )

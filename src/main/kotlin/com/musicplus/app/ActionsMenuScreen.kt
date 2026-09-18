@@ -255,7 +255,17 @@ private fun ActionRow(item: ActionMenuItem, onClick: () -> Unit) {
         LightIcon(
             icon = item.icon,
             size = 1.5f,
-            contentDescription = item.label,
+            // Decorative, not contentDescription = item.label: this Row is one
+            // merged accessibility node (ActionRow's own lightClickable merges
+            // its descendants' semantics — verified against the actual
+            // androidx.compose.foundation build this app depends on:
+            // AbstractClickableNode.shouldMergeDescendantSemantics() unconditionally
+            // returns true). The LightText right below already carries this exact
+            // same string as real text in that same merged node, so labelling the
+            // icon too added nothing a screen reader doesn't already get from the
+            // text — every row in every action menu app-wide (favorite/download/
+            // rename/delete/edit order/add to queue) shares this component. Issue #36.
+            contentDescription = null,
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )
         LightText(

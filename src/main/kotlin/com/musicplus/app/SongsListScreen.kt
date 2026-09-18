@@ -253,7 +253,14 @@ private fun SongRow(
             LightIcon(
                 icon = downloadStatusIcon(downloadStatus),
                 size = 1.2f,
-                contentDescription = "Download status",
+                // Was a static "Download status" — unlike PlaylistDetailScreen's
+                // and AlbumDetailScreen's identical row glyph, which already use
+                // downloadStatusLabel (TrackActionItems.kt) to say which of the
+                // 3 states this actually is. A screen reader landing on this icon
+                // heard the same generic phrase regardless of queued/downloading/
+                // downloaded/failed — never caught before since it's silent to
+                // sighted use (the icon glyph itself still changed). Issue #36.
+                contentDescription = downloadStatusLabel(downloadStatus),
                 modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
             )
         }
