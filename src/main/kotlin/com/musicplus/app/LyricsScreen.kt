@@ -239,9 +239,13 @@ private fun SyncedLyricsList(
         itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
             LightText(
                 // A blank line is real data (a timed pause in the lyrics, e.g. an
-                // instrumental break) — kept as a blank row rather than collapsed,
-                // so the sync timing around it still reads correctly.
-                text = line.text.ifBlank { " " },
+                // instrumental break) — kept as its own row rather than collapsed,
+                // so the sync timing around it still reads correctly. Some
+                // sources mark a pause with their own text (e.g. a literal "♪"),
+                // but not all do — an actually-empty line rendered as a plain
+                // space was invisible, giving no indication anything was even
+                // there while auto-scroll sat on it. Reported live.
+                text = line.text.ifBlank { "…" },
                 variant = LightTextVariant.Copy,
                 lighten = index != currentIndex,
                 modifier = Modifier
