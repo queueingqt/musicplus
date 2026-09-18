@@ -84,12 +84,23 @@ class ArtistDetailScreenViewModel(
     fun albumDownloadState(albumId: String): Flow<TrackListDownloadState> =
         observeTrackListDownloadState(libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
 
-    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): TrackListDownloadState =
-        toggleTrackListDownload(lightContext, libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
+    // See AlbumListScreenViewModel.toggleAlbumDownload — same fix, same root
+    // cause: this album's tracks are only cached in Room once something has
+    // called refreshAlbumDetail, which otherwise only ever happens from
+    // AlbumDetailScreen's own onScreenShow.
+    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): TrackListDownloadState {
+        libraryRepository.refreshAlbumDetail(albumId)
+        return toggleTrackListDownload(lightContext, libraryRepository.observeTracksByAlbum(albumId), downloadRepository)
+    }
 
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
 
-    suspend fun tracksForAlbum(albumId: String): List<Track> = libraryRepository.observeTracksByAlbum(albumId).first()
+    // Same fix as toggleAlbumDownload above — "Add album to queue" from this
+    // list has the identical dependency on the album's tracks already being cached.
+    suspend fun tracksForAlbum(albumId: String): List<Track> {
+        libraryRepository.refreshAlbumDetail(albumId)
+        return libraryRepository.observeTracksByAlbum(albumId).first()
+    }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     var scrollIndex = 0

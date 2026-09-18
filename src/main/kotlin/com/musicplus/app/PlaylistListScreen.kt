@@ -83,8 +83,15 @@ class PlaylistListScreenViewModel(
     fun playlistDownloadState(playlistId: String): Flow<TrackListDownloadState> =
         observeTrackListDownloadState(playlistRepository.observeTracks(playlistId), downloadRepository)
 
-    suspend fun togglePlaylistDownload(lightContext: SealedLightContext, playlistId: String): TrackListDownloadState =
-        toggleTrackListDownload(lightContext, playlistRepository.observeTracks(playlistId), downloadRepository)
+    // refreshPlaylistDetail first — same root cause as AlbumListScreenViewModel's
+    // toggleAlbumDownload: playlistRepository.observeTracks' Room cache is only
+    // ever populated by PlaylistDetailScreen's own onScreenShow, so choosing
+    // "Download playlist" here without ever opening that playlist first silently
+    // enqueued nothing.
+    suspend fun togglePlaylistDownload(lightContext: SealedLightContext, playlistId: String): TrackListDownloadState {
+        playlistRepository.refreshPlaylistDetail(playlistId)
+        return toggleTrackListDownload(lightContext, playlistRepository.observeTracks(playlistId), downloadRepository)
+    }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     var scrollIndex = 0
