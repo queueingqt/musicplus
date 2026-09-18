@@ -66,8 +66,8 @@ Albums, Artists, Songs, Search, Favorites, and Playlists.
 
 ### Everywhere else
 
-- A persistent mini-player on every screen except Now Playing, tapping it opens
-  Now Playing or the full queue
+- A persistent mini-player on every screen except Now Playing — tap it for Now
+  Playing, or its queue icon for the full queue
 - Scroll position is preserved when navigating into a list and back
 - Server connection is configurable in Settings, with support for saving more
   than one server
