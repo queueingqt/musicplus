@@ -9,9 +9,11 @@
 #   3. Commits that bump.
 #   4. Pulls the release keystore password from macOS Keychain (never
 #      hardcoded — see build.gradle.kts's signingConfigs block).
-#   5. Syncs this repo's source into a light-sdk checkout and builds a signed
-#      release APK via ./gradlew :tool:assembleRelease (see SETUP.md for why
-#      this repo can't build standalone).
+#   5. Syncs this repo's source and lighttool.toml into a light-sdk checkout
+#      and builds a signed release APK via ./gradlew :tool:assembleRelease
+#      (see SETUP.md for why this repo can't build standalone). The APK's own
+#      manifest is then read back, and the release stops here if it doesn't
+#      carry the version just bumped to.
 #   6. Tags the bump commit vX.Y.Z and pushes the commit + tag.
 #   7. Creates a GitHub Release for that tag with the APK attached and
 #      auto-generated release notes (commits since the last tag).
@@ -42,6 +44,15 @@ if [[ -n "$(git status --short)" ]]; then
   exit 1
 fi
 
+# Needed after the build, to read the version back out of the APK. Looked up
+# now so that a missing tool stops the release before anything is committed.
+ANDROID_SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/homebrew/share/android-commandlinetools}}"
+AAPT2="$(ls -d "$ANDROID_SDK_DIR"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)"
+if [[ -z "$AAPT2" ]]; then
+  echo "aapt2 not found under $ANDROID_SDK_DIR/build-tools — set ANDROID_HOME to your Android SDK." >&2
+  exit 1
+fi
+
 CURRENT_VERSION_NAME=$(grep '^versionName' lighttool.toml | sed -E 's/.*"([^"]+)".*/\1/')
 CURRENT_VERSION_CODE=$(grep '^versionCode' lighttool.toml | grep -oE '[0-9]+')
 NEW_VERSION_CODE=$((CURRENT_VERSION_CODE + 1))
@@ -59,8 +70,14 @@ export MUSICPLUS_RELEASE_KEYSTORE_PATH="$HOME/.android/keystores/musicplus-relea
 export MUSICPLUS_RELEASE_KEYSTORE_PASSWORD
 MUSICPLUS_RELEASE_KEYSTORE_PASSWORD="$(security find-generic-password -a musicplus-release -s musicplus-release-keystore-password -w)"
 
-echo "Syncing source into $LIGHT_SDK_PATH/tool..."
+echo "Syncing source and manifest into $LIGHT_SDK_PATH/tool..."
 rsync -a --delete "$REPO_ROOT/src/" "$LIGHT_SDK_PATH/tool/src/"
+# The light-sdk build plugin takes the manifest (id, version, permissions,
+# capabilities) from the checkout's own tool/lighttool.toml, not from this
+# repo's. That copy was made once, at setup, and never refreshed, so every
+# release APK up to v0.5.1 carried versionCode 1 / "0.1.0" whatever this
+# repo's toml said.
+cp "$REPO_ROOT/lighttool.toml" "$LIGHT_SDK_PATH/tool/lighttool.toml"
 
 echo "Building signed release APK..."
 JAVA_HOME="$(/usr/libexec/java_home -v 21)" \
@@ -71,6 +88,17 @@ if [[ ! -f "$BUILT_APK_PATH" ]]; then
   echo "Expected APK not found at $BUILT_APK_PATH" >&2
   exit 1
 fi
+
+# Read the version back out of the APK itself, since that is what the phone
+# sees, and stop before tagging or pushing if it isn't the one just bumped to.
+BUILT_PACKAGE_LINE="$("$AAPT2" dump badging "$BUILT_APK_PATH" | grep '^package:' || true)"
+if [[ "$BUILT_PACKAGE_LINE" != *"versionCode='$NEW_VERSION_CODE'"* || "$BUILT_PACKAGE_LINE" != *"versionName='$NEW_VERSION'"* ]]; then
+  echo "Built APK doesn't carry the new version (wanted code $NEW_VERSION_CODE, name $NEW_VERSION):" >&2
+  echo "  ${BUILT_PACKAGE_LINE:-<no package line from aapt2>}" >&2
+  exit 1
+fi
+echo "Built APK reports versionCode $NEW_VERSION_CODE / versionName $NEW_VERSION."
+
 # Copy to the real intended filename — `gh release create file#label` only
 # labels the asset on the page, it doesn't rename what actually downloads.
 APK_PATH="$(dirname "$BUILT_APK_PATH")/musicplus-v$NEW_VERSION.apk"

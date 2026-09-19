@@ -62,6 +62,14 @@ build/sign them server-side.
 per-app release key (not the shared SDK dev key), tags the commit, and
 publishes a GitHub Release with the APK attached.
 
+Before building, the script copies this repo's `src/` **and** `lighttool.toml`
+into the `light-sdk` checkout: the SDK build takes the app's id, version and
+permissions from the checkout's own `tool/lighttool.toml`, so a stale copy there
+makes the APK report the wrong version (v0.5.0 and v0.5.1 both shipped as
+versionCode 1 / 0.1.0 for that reason). After the build it reads the version back
+out of the APK with `aapt2` (from the Android SDK's build-tools, found via
+`ANDROID_HOME`) and stops before tagging or pushing if it doesn't match.
+
 The release keystore itself lives outside this repo
 (`~/.android/keystores/musicplus-release.jks`) and its password comes from
 macOS Keychain (`security find-generic-password -a musicplus-release -s
