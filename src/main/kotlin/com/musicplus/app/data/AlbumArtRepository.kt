@@ -3,6 +3,7 @@ package com.musicplus.app.data
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -115,6 +116,18 @@ class AlbumArtRepository(
                     memoryCache.put(key, bitmap)
                     bitmap
                 }
+            } catch (e: CancellationException) {
+                // Not a real failure — the caller (AlbumArt's LaunchedEffect)
+                // left composition mid-fetch (scrolled/navigated away), which
+                // is routine, not an error. Reported live, 2026-09-18: a
+                // plain `catch (e: Exception)` here also caught this and
+                // permanently blacklisted the coverArtId in [failedKeys]
+                // (no TTL/retry — see its own doc), so art that merely lost a
+                // race with navigation once stayed missing for the rest of
+                // the process's life, even on a perfectly healthy server.
+                // Rethrown, not swallowed — suppressing CancellationException
+                // breaks structured concurrency regardless of this bug.
+                throw e
             } catch (e: Exception) {
                 AppLogger.e("AlbumArtRepository", "fetchDecodeAndCache($coverArtId, $size) failed", e)
                 failedKeys += key
