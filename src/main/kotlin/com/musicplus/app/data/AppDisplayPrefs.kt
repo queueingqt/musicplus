@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Live mirror of [AppSettingsRepository.showAlbumArtwork], kept in sync by
- * [AppGraph.build] — same pattern as [AppHaptics], for the same reason: [AlbumArt]
+ * [AppGraph.build] — same pattern as [AppQualityPrefs], for the same reason: [AlbumArt]
  * is composed fresh constantly (every row scrolled into view, every screen
  * navigation), and each one reading the DataStore `Flow` directly via
  * `collectAsState(initial = true)` restarts at that hardcoded `true` default on

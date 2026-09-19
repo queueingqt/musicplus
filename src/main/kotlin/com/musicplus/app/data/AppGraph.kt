@@ -58,10 +58,10 @@ object AppGraph {
     }
 
     // Every AppSettingsRepository flow that just needs to keep a process-lifetime
-    // singleton (AppLogger, AppHaptics, AppDisplayPrefs, AppQualityPrefs, ...) in
-    // sync follows this exact shape — collapsed to one helper so build() reads as
-    // "mirror these six settings" plus the two genuinely special bootstrap steps,
-    // not eight same-shaped appScope.launch blocks.
+    // singleton (AppLogger, AppDisplayPrefs, AppQualityPrefs, ...) in sync follows
+    // this exact shape — collapsed to one helper so build() reads as "mirror these
+    // settings" plus the two genuinely special bootstrap steps, not a pile of
+    // same-shaped appScope.launch blocks.
     private fun <T> mirrorInto(flow: Flow<T>, sink: (T) -> Unit) {
         appScope.launch { flow.collect(sink) }
     }
@@ -88,7 +88,6 @@ object AppGraph {
             AppLogger.setEnabled(it)
             CrashReporter.setEnabled(it)
         }
-        mirrorInto(appSettingsRepository.hapticFeedbackEnabled, AppHaptics::setEnabled)
         mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs::setShowAlbumArtwork)
         mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs::setStreamQualityWifi)
         mirrorInto(appSettingsRepository.streamQualityCellular, AppQualityPrefs::setStreamQualityCellular)

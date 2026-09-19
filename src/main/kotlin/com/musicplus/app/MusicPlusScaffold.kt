@@ -11,20 +11,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
-import com.musicplus.app.data.AppHaptics
 import com.musicplus.app.data.PlaybackRepositoryHolder
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
-import com.thelightphone.sdk.ui.LocalHapticsEnabled
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 
@@ -54,44 +51,37 @@ fun MusicPlusScaffold(
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    // App-local haptics override (issue #21) — authoritative on its own, not
-    // ANDed with the OS-level LightActivity root's own LocalHapticsEnabled
-    // value. An earlier version ANDed the two (app can narrow, never widen
-    // past system), which is the more conservative accessibility-respecting
-    // choice, but confirmed on-device it meant the app's own toggle silently
-    // did nothing whenever the phone's system-wide Haptic Feedback setting
-    // happened to be off (logged: system=false app=true combined=false, zero
-    // vibration) — reported live as broken, not as expected layering. Someone
-    // toggling this on in Music+'s own Preferences expects it to just work.
-    val appHapticsEnabled by AppHaptics.enabled.collectAsState()
-
-    CompositionLocalProvider(LocalHapticsEnabled provides appHapticsEnabled) {
-        MusicPlusTheme {
+    // No app-local haptics override anymore (removed the "Haptic feedback"
+    // Settings toggle, issue #21's fix, and AppHaptics entirely) — LightOS
+    // has its own system-wide Haptic Feedback setting already; this just
+    // lets whatever LocalHapticsEnabled value LightActivity's own root
+    // already provides (reflecting that real OS setting) flow through
+    // unchanged, rather than shadowing it with a second, app-specific one.
+    MusicPlusTheme {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // Belt-and-suspenders, not itself the on-device-confirmed fix (see
+                // MusicPlusTheme.kt's doc comment for that — it's the LightTheme
+                // wrap, needed for Surface-based Material3 components like
+                // LightTextInputEditor). A plain Column doesn't pick up
+                // MaterialTheme's colorScheme.background on its own the way
+                // Surface/Scaffold-style components do, so this paints it
+                // explicitly rather than assuming whatever's behind it (the
+                // window/decor background) already matches.
+                .background(LightThemeTokens.colors.background),
+        ) {
+            topBar()
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    // Belt-and-suspenders, not itself the on-device-confirmed fix (see
-                    // MusicPlusTheme.kt's doc comment for that — it's the LightTheme
-                    // wrap, needed for Surface-based Material3 components like
-                    // LightTextInputEditor). A plain Column doesn't pick up
-                    // MaterialTheme's colorScheme.background on its own the way
-                    // Surface/Scaffold-style components do, so this paints it
-                    // explicitly rather than assuming whatever's behind it (the
-                    // window/decor background) already matches.
-                    .background(LightThemeTokens.colors.background),
-            ) {
-                topBar()
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    content = content,
-                )
-                if (showMiniPlayer) {
-                    MiniPlayerBar(onClick = onMiniPlayerClick)
-                }
-                bottomBar()
+                    .weight(1f)
+                    .fillMaxWidth(),
+                content = content,
+            )
+            if (showMiniPlayer) {
+                MiniPlayerBar(onClick = onMiniPlayerClick)
             }
+            bottomBar()
         }
     }
 }

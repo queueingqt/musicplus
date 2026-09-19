@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Live mirror of [AppSettingsRepository]'s streamQualityWifi/streamQualityCellular/
  * downloadQuality, kept in sync by [AppGraph.build] — same pattern as
- * [AppDisplayPrefs]/[AppHaptics], for the same reason: QualitySettingsScreen gets a
+ * [AppDisplayPrefs], for the same reason: QualitySettingsScreen gets a
  * fresh ViewModel (and a fresh `.stateIn(...)`) every time it's navigated to, and
  * that `.stateIn` has to start from *some* seed before the DataStore `Flow` behind
  * it actually emits — reading the raw repository `Flow` directly seeded every

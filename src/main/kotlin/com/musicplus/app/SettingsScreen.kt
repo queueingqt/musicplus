@@ -68,13 +68,6 @@ class SettingsScreenViewModel(
         viewModelScope.launch { appSettingsRepository.setDebugLoggingEnabled(!debugLoggingEnabled.value) }
     }
 
-    val hapticFeedbackEnabled: StateFlow<Boolean> = appSettingsRepository.hapticFeedbackEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
-
-    fun toggleHapticFeedback() {
-        viewModelScope.launch { appSettingsRepository.setHapticFeedbackEnabled(!hapticFeedbackEnabled.value) }
-    }
-
     fun clearAllLocalData() {
         viewModelScope.launch { localDataRepository.clearAll() }
     }
@@ -95,7 +88,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
     override fun Content() {
         val showAlbumArtwork by viewModel.showAlbumArtwork.collectAsState()
         val debugLoggingEnabled by viewModel.debugLoggingEnabled.collectAsState()
-        val hapticFeedbackEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
         val pendingSyncCount by viewModel.pendingSyncCount.collectAsState()
         val newerVersion by viewModel.newerVersion.collectAsState()
 
@@ -122,11 +114,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                         .fillMaxWidth()
                         .lightClickable { navigateTo(::QualitySettingsScreen) }
                         .padding(vertical = 1f.gridUnitsAsDp()),
-                )
-                ToggleRow(
-                    label = "Haptic feedback",
-                    isOn = hapticFeedbackEnabled,
-                    onToggle = { viewModel.toggleHapticFeedback() },
                 )
                 // Only shown when VersionCheckRepository actually found a
                 // newer GitHub release — mirrors the "*" on Home's Settings
