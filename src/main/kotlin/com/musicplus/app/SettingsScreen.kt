@@ -219,6 +219,17 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                         }
                         .padding(top = 2f.gridUnitsAsDp()),
                 )
+                // Which build this is. VERSION_NAME comes from lighttool.toml
+                // via the SDK build plugin (scripts/release.sh keeps the SDK
+                // checkout's copy in step with this repo's). 1 grid unit above
+                // it, not 2: at 2 the page overflowed the screen by a few
+                // pixels, so the footer opened half cut off.
+                LightText(
+                    text = "Version ${BuildConfig.VERSION_NAME}",
+                    variant = LightTextVariant.Fine,
+                    lighten = true,
+                    modifier = Modifier.padding(top = 1f.gridUnitsAsDp()),
+                )
             }
         }
     }
