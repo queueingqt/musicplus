@@ -27,6 +27,11 @@ data class SubsonicResponse(
     val starred2: SubsonicStarred? = null,
     val playlists: SubsonicPlaylists? = null,
     val playlist: SubsonicPlaylistDetail? = null,
+    // "Similar artists" section (ArtistDetailScreen) — see [SubsonicArtistInfo2]'s
+    // own doc for why this is `getArtistInfo2`, not `getSimilarSongs2`.
+    val artistInfo2: SubsonicArtistInfo2? = null,
+    // "Top songs" section (ArtistDetailScreen) — see [SubsonicTopSongs]'s doc.
+    val topSongs: SubsonicTopSongs? = null,
     // OpenSubsonic `getLyricsBySongId` (songLyrics extension) — absent entirely
     // (not merely an empty list) when the server has no lyrics data at all for a
     // track; confirmed directly against this project's real Navidrome instance
@@ -167,6 +172,50 @@ data class SubsonicPlaylistDetail(
     val duration: Int = 0,
     val coverArt: String? = null,
     val entry: List<SubsonicSong> = emptyList(),
+)
+
+/**
+ * `getArtistInfo2` response — the endpoint actually used for ArtistDetailScreen's
+ * "Similar artists" section, NOT `getSimilarSongs2` despite the more
+ * artist-sounding name of that other endpoint. Verified against the real
+ * OpenSubsonic spec docs (not guessed from the endpoint name alone), fetched
+ * 2026-09-18:
+ *  - https://opensubsonic.netlify.app/docs/endpoints/getsimilarsongs2/ — its
+ *    response (`similarSongs2`) holds a `song` list: "Returns a random
+ *    collection of songs from the given artist and similar artists." A *song*
+ *    list, not an artist list — the wrong shape for this section regardless
+ *    of the name.
+ *  - https://opensubsonic.netlify.app/docs/endpoints/getartistinfo2/ +
+ *    https://opensubsonic.netlify.app/docs/responses/artistinfo2/ —
+ *    `getArtistInfo2.view` (param `id` = the artist's own id, `count` = max
+ *    similar artists) returns `artistInfo2.similarArtist`, documented as
+ *    "Array of ArtistID3".
+ *  - https://opensubsonic.netlify.app/docs/responses/artistid3/ — ArtistID3's
+ *    fields (id, name, coverArt, albumCount, starred, plus some
+ *    OpenSubsonic-only extras this app doesn't use) are exactly the shape
+ *    [SubsonicArtist] already models, so `similarArtist` deserializes
+ *    straight into `List<SubsonicArtist>` with no new DTO needed for the
+ *    entries themselves — only this wrapper.
+ *
+ * `biography`/image-URL fields `getArtistInfo2` also returns aren't modeled
+ * here — unused by this app's "Similar artists" section, which only needs
+ * the artist list itself.
+ */
+@Serializable
+data class SubsonicArtistInfo2(
+    val similarArtist: List<SubsonicArtist> = emptyList(),
+)
+
+/**
+ * `getTopSongs` response wrapper — same flat single-list shape convention as
+ * [SubsonicAlbumList]/[SubsonicPlaylists]. Request param is `artist` (the
+ * artist's *name*, not id — see [SubsonicApi.getTopSongs]'s doc), confirmed
+ * https://opensubsonic.netlify.app/docs/endpoints/gettopsongs/, fetched
+ * 2026-09-18.
+ */
+@Serializable
+data class SubsonicTopSongs(
+    val song: List<SubsonicSong> = emptyList(),
 )
 
 /**

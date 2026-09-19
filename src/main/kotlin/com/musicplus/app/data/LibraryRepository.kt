@@ -172,6 +172,39 @@ class LibraryRepository(
         }
     }
 
+    /**
+     * ArtistDetailScreen's "Similar artists" section — fetched on demand
+     * (only when the section is actually expanded), not cached in Room: this
+     * doesn't need to survive offline the way the main library cache does.
+     * No `connectivity.currentStatus.isConnected` pre-check the way the
+     * refresh* functions above have — those guard a background cache
+     * refresh where silently staying on stale data offline is the right
+     * call; this is a direct, on-demand user action instead, so an offline/
+     * failed call just falls through the same try/catch every other network
+     * call here already uses. See [SubsonicApi.getSimilarArtists]'s doc for
+     * which real endpoint this is (`getArtistInfo2`, not `getSimilarSongs2`).
+     */
+    suspend fun getSimilarArtists(artistId: String): List<Artist> {
+        val api = apiHolder.get() ?: return emptyList()
+        return try {
+            api.getSimilarArtists(artistId).map { it.toEntity().toDomain() }
+        } catch (e: Exception) {
+            AppLogger.e("LibraryRepository", "getSimilarArtists($artistId) failed", e)
+            emptyList()
+        }
+    }
+
+    /** ArtistDetailScreen's "Top songs" section — same on-demand, not-Room-cached shape as [getSimilarArtists] above. [artistName] (not an id) — see [SubsonicApi.getTopSongs]'s doc for why. */
+    suspend fun getTopSongs(artistName: String): List<Track> {
+        val api = apiHolder.get() ?: return emptyList()
+        return try {
+            api.getTopSongs(artistName).map { it.toEntity().toDomain(downloaded = false, localFilePath = null) }
+        } catch (e: Exception) {
+            AppLogger.e("LibraryRepository", "getTopSongs(\"$artistName\") failed", e)
+            emptyList()
+        }
+    }
+
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { artistDao.setStarred(id, favorite) }
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { albumDao.setStarred(id, favorite) }
     suspend fun setTrackFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { trackDao.setStarred(id, favorite) }

@@ -29,16 +29,15 @@ import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextField
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -50,19 +49,13 @@ class ArtistDetailScreenViewModel(
     private val artistId: String,
 ) : LightViewModel<Unit>() {
 
-    private val allAlbums: StateFlow<List<Album>> = libraryRepository.observeAlbumsByArtist(artistId)
+    // Reported live, 2026-09-18: the search field above this list took up
+    // too much space on a screen that's already grown (similar artists/top
+    // songs sections, the album list itself) and wasn't worth it — removed
+    // rather than kept as dead weight. No filtering here anymore; every
+    // album always shows.
+    val albums: StateFlow<List<Album>> = libraryRepository.observeAlbumsByArtist(artistId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private val _filter = MutableStateFlow("")
-    val filter: StateFlow<String> = _filter
-
-    val albums: StateFlow<List<Album>> = combine(allAlbums, _filter) { albums, query ->
-        if (query.isBlank()) albums else albums.filter { it.name.contains(query, ignoreCase = true) }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    fun setFilter(query: String) {
-        _filter.value = query
-    }
 
     // Same caveat as AlbumDetailScreenViewModel's `album` state: depends on the
     // artist already being cached locally (true once refreshArtists() has run, e.g.
@@ -97,6 +90,65 @@ class ArtistDetailScreenViewModel(
     suspend fun tracksForAlbum(albumId: String): List<Track> =
         SelfLoadingTrackList.forAlbum(libraryRepository, albumId).tracks()
 
+    // --- Similar artists / top songs — both collapsed by default, fetched
+    // only on first expand (not eagerly in onScreenShow like albums/artist
+    // above): no network call happens until the person actually taps the
+    // section header. `*Loaded` guards a later collapse/re-expand from
+    // re-fetching — this data isn't expected to change mid-visit, same
+    // "search on submit, not as-you-type" spirit as SearchScreen's own
+    // one-shot fetches.
+
+    private val _similarArtistsExpanded = MutableStateFlow(false)
+    val similarArtistsExpanded: StateFlow<Boolean> = _similarArtistsExpanded
+
+    private val _similarArtistsLoading = MutableStateFlow(false)
+    val similarArtistsLoading: StateFlow<Boolean> = _similarArtistsLoading
+
+    private val _similarArtists = MutableStateFlow<List<Artist>>(emptyList())
+    val similarArtists: StateFlow<List<Artist>> = _similarArtists
+
+    private var similarArtistsLoaded = false
+
+    fun toggleSimilarArtists() {
+        _similarArtistsExpanded.value = !_similarArtistsExpanded.value
+        if (_similarArtistsExpanded.value && !similarArtistsLoaded) {
+            similarArtistsLoaded = true
+            _similarArtistsLoading.value = true
+            viewModelScope.launch {
+                _similarArtists.value = libraryRepository.getSimilarArtists(artistId)
+                _similarArtistsLoading.value = false
+            }
+        }
+    }
+
+    private val _topSongsExpanded = MutableStateFlow(false)
+    val topSongsExpanded: StateFlow<Boolean> = _topSongsExpanded
+
+    private val _topSongsLoading = MutableStateFlow(false)
+    val topSongsLoading: StateFlow<Boolean> = _topSongsLoading
+
+    private val _topSongs = MutableStateFlow<List<Track>>(emptyList())
+    val topSongs: StateFlow<List<Track>> = _topSongs
+
+    private var topSongsLoaded = false
+
+    fun toggleTopSongs() {
+        _topSongsExpanded.value = !_topSongsExpanded.value
+        if (_topSongsExpanded.value && !topSongsLoaded) {
+            topSongsLoaded = true
+            _topSongsLoading.value = true
+            viewModelScope.launch {
+                // getTopSongs.view is keyed by the artist's *name*, not id
+                // (see SubsonicApi.getTopSongs's doc) — read from the
+                // already-observed `artist` StateFlow rather than a second
+                // network round trip just to resolve the name.
+                val name = artist.value?.name
+                _topSongs.value = if (name.isNullOrBlank()) emptyList() else libraryRepository.getTopSongs(name)
+                _topSongsLoading.value = false
+            }
+        }
+    }
+
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
 }
@@ -117,7 +169,12 @@ class ArtistDetailScreen(
     override fun Content() {
         val albums by viewModel.albums.collectAsState()
         val artist by viewModel.artist.collectAsState()
-        val filter by viewModel.filter.collectAsState()
+        val similarArtistsExpanded by viewModel.similarArtistsExpanded.collectAsState()
+        val similarArtistsLoading by viewModel.similarArtistsLoading.collectAsState()
+        val similarArtists by viewModel.similarArtists.collectAsState()
+        val topSongsExpanded by viewModel.topSongsExpanded.collectAsState()
+        val topSongsLoading by viewModel.topSongsLoading.collectAsState()
+        val topSongs by viewModel.topSongs.collectAsState()
 
         // Favorite inline with the artist name — via LightTopBar's rightButton
         // slot, rather than a separate row, since the name is already the title
@@ -136,23 +193,28 @@ class ArtistDetailScreen(
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
         ) {
-            LightTextField(
-                label = "Search",
-                value = filter,
-                placeholder = "Filter albums",
-                onClick = {
-                    navigateTo({ a -> TextEditScreen(a, "Search albums", filter) }) { result ->
-                        viewModel.setFilter(result)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 1f.gridUnitsAsDp()),
-            )
-
-            // Inside, not Outside — see AlbumDetailScreen's identical call site
-            // for why (Outside's gutter width isn't known until after first
-            // layout, so the trailing favorite star briefly rendered full-width
-            // then jumped left once it appeared; AlbumRow reserves the same
-            // width itself, unconditionally, instead).
+            // Everything below — both collapsible sections' rows and the
+            // album list — lives in ONE LightLazyScrollView rather than a
+            // plain Column wrapping a separate nested lazy list.
+            // LightLazyScrollView's own LazyColumn
+            // measures itself against the full available height regardless of
+            // what precedes it (it's a plain `Box { LazyColumn(Modifier.fillMaxSize()) }`
+            // internally, no weight-based reduction — confirmed by reading the
+            // SDK source), so a plain Column with fixed content above it only
+            // stays safe as long as that fixed content is small. "Similar
+            // artists"/"Top songs" can each expand to their own 20-row cap —
+            // enough fixed content, stacked outside any scroll container, to
+            // push the entire album list (and the tail of the expanded
+            // sections themselves) off-screen with no way to scroll back up to
+            // it. Folding everything into this one lazy list's own items
+            // instead means the whole screen scrolls together, same as
+            // expanding a section on any real "list with header content" UI.
+            // uniformItemHeightGridUnits stays 3f (this component's own scroll-
+            // bar-thumb math only, per its doc — the real LazyColumn still
+            // measures each item's actual height correctly regardless), so the
+            // one cost is a slightly-imprecise scrollbar thumb size/position
+            // once heterogeneous-height header rows are mixed with the
+            // uniform-height album rows — cosmetic only, not a scrolling bug.
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(
                 modifier = Modifier.fillMaxWidth(),
@@ -160,6 +222,61 @@ class ArtistDetailScreen(
                 listState = listState,
                 uniformItemHeightGridUnits = 3f,
             ) {
+                // "About this artist" content — collapsed sections, fetched
+                // only once actually expanded (see the ViewModel's
+                // toggleSimilarArtists/toggleTopSongs doc).
+                item {
+                    CollapsibleSectionHeader(
+                        title = "Similar artists",
+                        expanded = similarArtistsExpanded,
+                        onClick = { viewModel.toggleSimilarArtists() },
+                    )
+                }
+                if (similarArtistsExpanded) {
+                    when {
+                        similarArtistsLoading -> item { SectionStatusText("Loading…") }
+                        similarArtists.isEmpty() -> item { SectionStatusText("No similar artists found") }
+                        else -> items(similarArtists, key = { "similar-${it.id}" }) { similarArtist ->
+                            SimilarArtistRow(
+                                artist = similarArtist,
+                                onClick = { navigateTo({ a -> ArtistDetailScreen(a, similarArtist.id) }) },
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    CollapsibleSectionHeader(
+                        title = "Top songs",
+                        expanded = topSongsExpanded,
+                        onClick = { viewModel.toggleTopSongs() },
+                    )
+                }
+                if (topSongsExpanded) {
+                    when {
+                        topSongsLoading -> item { SectionStatusText("Loading…") }
+                        topSongs.isEmpty() -> item { SectionStatusText("No top songs found") }
+                        else -> items(topSongs, key = { "top-${it.id}" }) { track ->
+                            TopSongRow(
+                                track = track,
+                                onPlay = {
+                                    // playAsync() updates title/art synchronously and
+                                    // continues loading on PlaybackRepository's own
+                                    // scope, so navigating away immediately after is
+                                    // safe — see PlaybackRepository.playAsync's doc.
+                                    playbackRepository(activity, lightContext).playAsync(listOf(track), 0)
+                                    navigateTo(::PlayerScreen)
+                                },
+                            )
+                        }
+                    }
+                }
+
+                // Inside, not Outside — see AlbumDetailScreen's identical call
+                // site for why (Outside's gutter width isn't known until after
+                // first layout, so the trailing favorite star briefly rendered
+                // full-width then jumped left once it appeared; AlbumRow
+                // reserves the same width itself, unconditionally, instead).
                 items(albums, key = { it.id }) { album ->
                     AlbumRow(
                         lightContext = lightContext,
@@ -234,5 +351,83 @@ private fun AlbumRow(
                 modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
             )
         }
+    }
+}
+
+/** Feature: similar artists / top songs — shared tappable header for both collapsible sections. No existing expand/collapse pattern elsewhere in this codebase (checked) — UP/DOWN chosen to match the icon vocabulary QueueScreen's reorder rows already use, rather than introducing a new glyph concept. */
+@Composable
+private fun CollapsibleSectionHeader(title: String, expanded: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onClick)
+            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LightText(text = title, variant = LightTextVariant.Heading, modifier = Modifier.weight(1f))
+        // Standard disclosure-triangle convention (collapsed points at its
+        // content, expanded points down at what's now revealed below it) —
+        // not UP/DOWN, which already means "reorder" elsewhere in this app
+        // (QueueScreen's move-up/move-down rows) and, reported live
+        // (2026-09-18), read as "already open" even when collapsed.
+        LightIcon(
+            icon = if (expanded) LightIcons.ARROW_DOWN else LightIcons.ARROW_RIGHT,
+            size = 1.5f,
+            contentDescription = if (expanded) "Collapse" else "Expand",
+        )
+    }
+}
+
+/** Loading/empty placeholder inside an expanded section — same shape as SongsListScreen's "No songs yet" empty state. */
+@Composable
+private fun SectionStatusText(text: String) {
+    LightText(
+        text = text,
+        variant = LightTextVariant.Fine,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
+    )
+}
+
+/** A similar artist — tap navigates to that artist's own ArtistDetailScreen, same call shape as ArtistListScreen/SearchScreen's identical row. */
+@Composable
+private fun SimilarArtistRow(artist: Artist, onClick: () -> Unit) {
+    LightText(
+        text = artist.name,
+        variant = LightTextVariant.Copy,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onClick)
+            .padding(top = 0.75f.gridUnitsAsDp(), bottom = 0.75f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+    )
+}
+
+/** A top song — tap plays it, same convention as SongsListScreen's SongRow (play-on-tap; no long-press actions menu here, matching the "playable rows" scope this section was asked for). */
+@Composable
+private fun TopSongRow(track: Track, onPlay: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .lightClickable(onClick = onPlay)
+            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LightText(
+            text = track.title,
+            variant = LightTextVariant.Copy,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        LightText(
+            text = track.artistName ?: "Unknown artist",
+            variant = LightTextVariant.Fine,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+        )
     }
 }
