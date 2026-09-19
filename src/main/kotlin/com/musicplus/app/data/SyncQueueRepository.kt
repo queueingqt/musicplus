@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 import kotlin.time.Duration.Companion.minutes
 
-private const val PLACEHOLDER_PREFIX = "pending:"
+internal const val PLACEHOLDER_PREFIX = "pending:"
 
 /**
  * Adding a new mutation type now touches 2 spots, both compiler-enforced —

@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
@@ -23,6 +24,7 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
@@ -44,7 +46,16 @@ class AlbumListScreenViewModel(
     private val libraryRepository: LibraryRepository,
     private val downloadRepository: DownloadRepository,
     private val syncQueueRepository: SyncQueueRepository,
+    private val listRefresher: ListRefresher,
 ) : LightViewModel<Unit>() {
+
+    // The page opens straight from the cache; this re-checks the server in the
+    // background and any additions or deletions arrive through the cache
+    // itself — no spinner. See ListRefresher's doc.
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        listRefresher.refreshOnOpen(ListRefresher.Target.ALBUMS)
+    }
+
 
     // Reads the already-live, process-lifetime cache instead of re-subscribing
     // to libraryRepository.observeAlbums() itself — see AppLibraryCache's own
@@ -96,7 +107,7 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
 
     override fun createViewModel(): AlbumListScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return AlbumListScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository)
+        return AlbumListScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, graph.listRefresher)
     }
 
     @Composable

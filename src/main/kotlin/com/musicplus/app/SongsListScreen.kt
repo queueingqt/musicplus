@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
@@ -19,6 +20,7 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -42,14 +44,25 @@ import kotlinx.coroutines.flow.stateIn
  * as complete as whichever albums/playlists/searches happen to have been
  * visited, so [LibraryRepository.refreshAllSongs] — the one real "fetch
  * everything" sync this app does, since Subsonic has no direct getAllSongs
- * endpoint — is driven from [AppGraph]'s reconnect-observer instead of from
- * this screen's own onScreenShow (see AppLibraryCache's doc for why).
+ * endpoint — runs at app start and on reconnect, and again in the background
+ * each time this page opens. The page itself never waits for it: it reads
+ * the warmed cache (see AppLibraryCache's doc) and the refresh's additions and
+ * deletions reach the list through the cache (see ListRefresher's doc).
  */
 class SongsListScreenViewModel(
     private val libraryRepository: LibraryRepository,
     private val downloadRepository: DownloadRepository,
     private val syncQueueRepository: SyncQueueRepository,
+    private val listRefresher: ListRefresher,
 ) : LightViewModel<Unit>() {
+
+    // The page opens straight from the cache; this re-checks the server in the
+    // background and any additions or deletions arrive through the cache
+    // itself — no spinner. See ListRefresher's doc.
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        listRefresher.refreshOnOpen(ListRefresher.Target.SONGS)
+    }
+
 
     // See AppLibraryCache's doc — reads the already-live, process-lifetime
     // cache instead of re-subscribing to libraryRepository.observeAllTracks()
@@ -97,7 +110,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
 
     override fun createViewModel(): SongsListScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return SongsListScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository)
+        return SongsListScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, graph.listRefresher)
     }
 
     @Composable

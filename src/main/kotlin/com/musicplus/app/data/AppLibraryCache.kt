@@ -32,6 +32,12 @@ import com.musicplus.app.Track
  * collections now just reads an already-resolved `StateFlow.value` — no
  * fresh query, no fresh mapping, no flash of empty state, whether it's the
  * first visit or the fifth.
+ *
+ * Opening one of these pages also starts a silent background re-check against
+ * the server ([ListRefresher]) — deliberately *not* awaited by the page, so it
+ * never brings back the per-visit wait this cache exists to remove; whatever
+ * it finds flows in through the same Room invalidation that keeps this cache
+ * current.
  */
 object AppLibraryCache {
     val artists = WarmedFlow<List<Artist>>(emptyList())

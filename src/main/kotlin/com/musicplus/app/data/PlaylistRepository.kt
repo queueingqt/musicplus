@@ -4,6 +4,7 @@ import com.musicplus.app.Playlist
 import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
 import com.thelightphone.sdk.LightConnectivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -67,14 +68,29 @@ class PlaylistRepository(
         val api = apiHolder.get() ?: return
         try {
             action(api)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // Cache left as-is deliberately — see this function's own doc above.
             AppLogger.e("PlaylistRepository", "$label failed", e)
         }
     }
 
+    /**
+     * Additions, renames and deletions on the server — see [mirrorFromServer].
+     * A playlist created offline (a `pending:` placeholder id) isn't on the
+     * server yet, so it is never mistaken for one the server deleted.
+     */
     suspend fun refreshPlaylists() = refresh("refreshPlaylists") { api ->
-        playlistDao.upsertAll(api.getPlaylists().map { it.toEntity() })
+        mirrorFromServer(
+            label = "playlists",
+            idOf = PlaylistEntity::id,
+            cached = { playlistDao.getAll().associateBy { it.id } },
+            fetchAll = { onPage -> onPage(api.getPlaylists().map { it.toEntity() }) },
+            write = { playlistDao.upsertAll(it) },
+            remove = { playlistDao.deleteWithTracks(it) },
+            keep = { candidates -> candidates.filterTo(HashSet()) { it.startsWith(PLACEHOLDER_PREFIX) } },
+        )
     }
 
     suspend fun refreshPlaylistDetail(playlistId: String) = refresh("refreshPlaylistDetail($playlistId)") { api ->

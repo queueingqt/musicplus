@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
@@ -22,6 +23,7 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -42,7 +44,16 @@ class FavoritesScreenViewModel(
     private val libraryRepository: LibraryRepository,
     private val syncQueueRepository: SyncQueueRepository,
     private val downloadRepository: DownloadRepository,
+    private val listRefresher: ListRefresher,
 ) : LightViewModel<Unit>() {
+
+    // The page opens straight from the cache; this re-checks the server in the
+    // background and any additions or deletions arrive through the cache
+    // itself — no spinner. See ListRefresher's doc.
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        listRefresher.refreshOnOpen(ListRefresher.Target.FAVORITES)
+    }
+
 
     // See AppLibraryCache's doc — reads the already-live, process-lifetime
     // cache instead of re-subscribing to libraryRepository.observeFavorite*()
@@ -116,7 +127,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
 
     override fun createViewModel(): FavoritesScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return FavoritesScreenViewModel(graph.libraryRepository, graph.syncQueueRepository, graph.downloadRepository)
+        return FavoritesScreenViewModel(graph.libraryRepository, graph.syncQueueRepository, graph.downloadRepository, graph.listRefresher)
     }
 
     @Composable

@@ -9,12 +9,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -31,7 +33,16 @@ import kotlinx.coroutines.launch
 class PlaylistPickerScreenViewModel(
     private val playlistRepository: PlaylistRepository,
     private val syncQueueRepository: SyncQueueRepository,
+    private val listRefresher: ListRefresher,
 ) : LightViewModel<Unit>() {
+
+    // The page opens straight from the cache; this re-checks the server in the
+    // background and any additions or deletions arrive through the cache
+    // itself — no spinner. See ListRefresher's doc.
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        listRefresher.refreshOnOpen(ListRefresher.Target.PLAYLISTS)
+    }
+
 
     // See AppLibraryCache's doc — reads the already-live, process-lifetime
     // cache instead of re-subscribing to playlistRepository.observePlaylists()
@@ -72,7 +83,7 @@ class PlaylistPickerScreen(
 
     override fun createViewModel(): PlaylistPickerScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistPickerScreenViewModel(graph.playlistRepository, graph.syncQueueRepository)
+        return PlaylistPickerScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.listRefresher)
     }
 
     @Composable

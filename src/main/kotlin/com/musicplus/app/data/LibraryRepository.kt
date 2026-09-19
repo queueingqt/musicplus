@@ -5,6 +5,7 @@ import com.musicplus.app.Artist
 import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
 import com.thelightphone.sdk.LightConnectivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -12,6 +13,9 @@ import kotlinx.coroutines.flow.map
 
 /** How many songs [LibraryRepository.refreshAllSongs] asks for per page — large enough that a typical library finishes in a small handful of requests, small enough that each individual request/upsert stays quick. */
 private const val ALL_SONGS_PAGE_SIZE = 500
+
+/** Same idea for [LibraryRepository.refreshAlbumList]; 500 is also the most Navidrome's `getAlbumList2` will return per call. */
+private const val ALBUM_LIST_PAGE_SIZE = 500
 
 /**
  * Cache-then-network access to the server's ID3 library. Room is the source of
@@ -34,6 +38,7 @@ class LibraryRepository(
     private val artistDao: ArtistDao,
     private val albumDao: AlbumDao,
     private val trackDao: TrackDao,
+    private val pendingMutationDao: PendingMutationDao,
     private val connectivity: LightConnectivity,
     private val downloadRepository: DownloadRepository,
 ) {
@@ -112,18 +117,60 @@ class LibraryRepository(
         val api = apiHolder.get() ?: return
         try {
             action(api)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             // Cache left as-is deliberately — see this function's own doc above.
             AppLogger.e("LibraryRepository", "$label failed", e)
         }
     }
 
+    // The four list refreshes below (and PlaylistRepository.refreshPlaylists)
+    // all go through mirrorFromServer — see its doc for what they share: only
+    // changed rows are written, and what the server has stopped listing is
+    // removed, conservatively. ListRefresher decides *when* they run.
+
+    /** Favorites the person toggled offline that are still waiting to sync — a refresh must not overwrite them with the server's older answer. */
+    private suspend fun pendingFavoriteIds(): Set<String> =
+        pendingMutationDao.getTargetIdsByType("FAVORITE").toHashSet()
+
     suspend fun refreshArtists() = refresh("refreshArtists") { api ->
-        artistDao.upsertAll(api.getArtists().map { it.toEntity() })
+        val pending = pendingFavoriteIds()
+        mirrorFromServer(
+            label = "artists",
+            idOf = ArtistEntity::id,
+            cached = { artistDao.getAll().associateBy { it.id } },
+            fetchAll = { onPage -> onPage(api.getArtists().map { it.toEntity() }) },
+            write = { artistDao.upsertAll(it) },
+            remove = { artistDao.deleteByIds(it) },
+            merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
+        )
     }
 
-    suspend fun refreshAlbumList(type: String = "alphabeticalByName") = refresh("refreshAlbumList") { api ->
-        albumDao.upsertAll(api.getAlbumList(type).map { it.toEntity() })
+    /**
+     * Every album, not a first page of them — this used to ask for 50 and stop,
+     * so an album list past that size only ever held whatever else had been
+     * pulled in by visiting artists. Always the full alphabetical listing:
+     * anything else (newest, recent, ...) is a subset, and [mirrorFromServer]
+     * would take everything outside the subset for deleted.
+     */
+    suspend fun refreshAlbumList() = refresh("refreshAlbumList") { api ->
+        val pending = pendingFavoriteIds()
+        mirrorFromServer(
+            label = "albums",
+            idOf = AlbumEntity::id,
+            cached = { albumDao.getAll().associateBy { it.id } },
+            fetchAll = { onPage ->
+                pageThrough(
+                    idOf = AlbumEntity::id,
+                    fetchPage = { offset -> api.getAlbumList("alphabeticalByName", ALBUM_LIST_PAGE_SIZE, offset).map { it.toEntity() } },
+                    onPage = onPage,
+                )
+            },
+            write = { albumDao.upsertAll(it) },
+            remove = { albumDao.deleteByIds(it) },
+            merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
+        )
     }
 
     suspend fun refreshArtistDetail(artistId: String) = refresh("refreshArtistDetail($artistId)") { api ->
@@ -137,24 +184,76 @@ class LibraryRepository(
     }
 
     /**
-     * Pages through [SubsonicApi.getSongsPage] until a short page confirms
-     * the end, upserting as it goes — needed because [observeAllTracks]'s
-     * flat "Songs" list is otherwise only as complete as whichever albums/
-     * playlists/searches happen to have been visited already, unlike Albums/
-     * Artists (each backed by their own dedicated real "list everything"
-     * refresh). A real library can be a few thousand tracks; upserting page
-     * by page means the list is already populating while later pages are
-     * still loading, rather than one long wait before anything shows.
+     * Pages through [SubsonicApi.getSongsPage] to the end (see [pageThrough]),
+     * writing as it goes — needed because [observeAllTracks]'s flat "Songs"
+     * list is otherwise only as complete as whichever albums/playlists/
+     * searches happen to have been visited already. A real library can be
+     * several thousand tracks; writing page by page means the list is already
+     * populating while later pages are still loading, rather than one long
+     * wait before anything shows. Songs the person has downloaded are never
+     * removed, even if the server no longer lists them — the file is theirs.
      */
     suspend fun refreshAllSongs() = refresh("refreshAllSongs") { api ->
-        var offset = 0
-        while (true) {
-            val page = api.getSongsPage(songCount = ALL_SONGS_PAGE_SIZE, songOffset = offset)
-            if (page.isEmpty()) break
-            trackDao.upsertAll(page.map { it.toTrackEntity() })
-            if (page.size < ALL_SONGS_PAGE_SIZE) break
-            offset += ALL_SONGS_PAGE_SIZE
-        }
+        val pending = pendingFavoriteIds()
+        mirrorFromServer(
+            label = "songs",
+            idOf = TrackEntity::id,
+            cached = { trackDao.getAll().associateBy { it.id } },
+            fetchAll = { onPage ->
+                pageThrough(
+                    idOf = TrackEntity::id,
+                    fetchPage = { offset -> api.getSongsPage(songCount = ALL_SONGS_PAGE_SIZE, songOffset = offset).map { it.toTrackEntity() } },
+                    onPage = onPage,
+                )
+            },
+            write = { trackDao.upsertAll(it) },
+            remove = { trackDao.deleteByIds(it) },
+            merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
+            keep = { candidates ->
+                val downloaded = downloadRepository.observeAll().first().mapTo(HashSet()) { it.songId }
+                candidates.filterTo(HashSet()) { it in downloaded }
+            },
+        )
+    }
+
+    /**
+     * The Favorites page's refresh: one `getStarred2` call gives every starred
+     * artist, album and song, so favorites made (or undone) from another
+     * client show up without walking the whole library — see [mirrorStarred].
+     */
+    suspend fun refreshFavorites() = refresh("refreshFavorites") { api ->
+        val starred = api.getStarred()
+        val pending = pendingFavoriteIds()
+        mirrorStarred(
+            label = "favorite artists",
+            fetched = starred.artist.map { it.toEntity().copy(starred = true) },
+            idOf = ArtistEntity::id,
+            cachedByIds = { artistDao.getByIds(it) },
+            write = { artistDao.upsertAll(it) },
+            localStarredIds = { artistDao.getStarredIds() },
+            clearStarred = { artistDao.clearStarred(it) },
+            pending = pending,
+        )
+        mirrorStarred(
+            label = "favorite albums",
+            fetched = starred.album.map { it.toEntity().copy(starred = true) },
+            idOf = AlbumEntity::id,
+            cachedByIds = { albumDao.getByIds(it) },
+            write = { albumDao.upsertAll(it) },
+            localStarredIds = { albumDao.getStarredIds() },
+            clearStarred = { albumDao.clearStarred(it) },
+            pending = pending,
+        )
+        mirrorStarred(
+            label = "favorite songs",
+            fetched = starred.song.map { it.toTrackEntity().copy(starred = true) },
+            idOf = TrackEntity::id,
+            cachedByIds = { trackDao.getByIds(it) },
+            write = { trackDao.upsertAll(it) },
+            localStarredIds = { trackDao.getStarredIds() },
+            clearStarred = { trackDao.clearStarred(it) },
+            pending = pending,
+        )
     }
 
     /**

@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.PlaylistRepository
@@ -29,6 +30,7 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -50,7 +52,16 @@ class PlaylistListScreenViewModel(
     private val playlistRepository: PlaylistRepository,
     private val syncQueueRepository: SyncQueueRepository,
     private val downloadRepository: DownloadRepository,
+    private val listRefresher: ListRefresher,
 ) : LightViewModel<Unit>() {
+
+    // The page opens straight from the cache; this re-checks the server in the
+    // background and any additions or deletions arrive through the cache
+    // itself — no spinner. See ListRefresher's doc.
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        listRefresher.refreshOnOpen(ListRefresher.Target.PLAYLISTS)
+    }
+
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
@@ -120,7 +131,7 @@ class PlaylistListScreen(activity: SealedLightActivity) :
 
     override fun createViewModel(): PlaylistListScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistListScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.downloadRepository)
+        return PlaylistListScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.downloadRepository, graph.listRefresher)
     }
 
     @Composable

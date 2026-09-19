@@ -28,6 +28,22 @@ interface ArtistDao {
     @Query("UPDATE artists SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
 
+    /** Whole-table snapshot for [mirrorFromServer]'s diff — never observed, only read once per refresh pass. */
+    @Query("SELECT * FROM artists")
+    suspend fun getAll(): List<ArtistEntity>
+
+    @Query("SELECT * FROM artists WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<ArtistEntity>
+
+    @Query("SELECT id FROM artists WHERE starred = 1")
+    suspend fun getStarredIds(): List<String>
+
+    @Query("UPDATE artists SET starred = 0 WHERE id IN (:ids)")
+    suspend fun clearStarred(ids: List<String>)
+
+    @Query("DELETE FROM artists WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
     @Query("DELETE FROM artists")
     suspend fun deleteAll()
 }
@@ -55,6 +71,22 @@ interface AlbumDao {
 
     @Query("UPDATE albums SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
+
+    /** See [ArtistDao.getAll]. */
+    @Query("SELECT * FROM albums")
+    suspend fun getAll(): List<AlbumEntity>
+
+    @Query("SELECT * FROM albums WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<String>): List<AlbumEntity>
+
+    @Query("SELECT id FROM albums WHERE starred = 1")
+    suspend fun getStarredIds(): List<String>
+
+    @Query("UPDATE albums SET starred = 0 WHERE id IN (:ids)")
+    suspend fun clearStarred(ids: List<String>)
+
+    @Query("DELETE FROM albums WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
 
     @Query("DELETE FROM albums")
     suspend fun deleteAll()
@@ -99,6 +131,19 @@ interface TrackDao {
     @Query("UPDATE tracks SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
 
+    /** See [ArtistDao.getAll]. */
+    @Query("SELECT * FROM tracks")
+    suspend fun getAll(): List<TrackEntity>
+
+    @Query("SELECT id FROM tracks WHERE starred = 1")
+    suspend fun getStarredIds(): List<String>
+
+    @Query("UPDATE tracks SET starred = 0 WHERE id IN (:ids)")
+    suspend fun clearStarred(ids: List<String>)
+
+    @Query("DELETE FROM tracks WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
     @Query("DELETE FROM tracks")
     suspend fun deleteAll()
 }
@@ -122,6 +167,23 @@ interface PlaylistDao {
 
     @Query("DELETE FROM playlists WHERE id = :id")
     suspend fun delete(id: String)
+
+    /** See [ArtistDao.getAll]. */
+    @Query("SELECT * FROM playlists")
+    suspend fun getAll(): List<PlaylistEntity>
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId IN (:ids)")
+    suspend fun clearTracksFor(ids: List<String>)
+
+    @Query("DELETE FROM playlists WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<String>)
+
+    /** Playlists the server no longer lists, with their membership rows — see [mirrorFromServer]. */
+    @Transaction
+    suspend fun deleteWithTracks(ids: List<String>) {
+        clearTracksFor(ids)
+        deleteByIds(ids)
+    }
 
     @Query(
         """
@@ -195,6 +257,10 @@ interface PendingMutationDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM pending_mutations WHERE type = :type AND targetId = :targetId)")
     fun observePendingForTarget(type: String, targetId: String): Flow<Boolean>
+
+    /** Every target with a still-queued mutation of [type] — a refresh must not overwrite (or undo) what the user just did offline. */
+    @Query("SELECT targetId FROM pending_mutations WHERE type = :type")
+    suspend fun getTargetIdsByType(type: String): List<String>
 
     @Insert
     suspend fun insert(mutation: PendingMutationEntity): Long

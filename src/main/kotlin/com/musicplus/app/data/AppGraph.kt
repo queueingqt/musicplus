@@ -29,6 +29,7 @@ object AppGraph {
         val database: MusicPlusDatabase,
         val libraryRepository: LibraryRepository,
         val playlistRepository: PlaylistRepository,
+        val listRefresher: ListRefresher,
         val downloadRepository: DownloadRepository,
         val albumArtRepository: AlbumArtRepository,
         val lyricsRepository: LyricsRepository,
@@ -115,6 +116,7 @@ object AppGraph {
             artistDao = database.artistDao(),
             albumDao = database.albumDao(),
             trackDao = database.trackDao(),
+            pendingMutationDao = database.pendingMutationDao(),
             connectivity = connectivity,
             downloadRepository = downloadRepository,
         )
@@ -125,6 +127,10 @@ object AppGraph {
             connectivity = connectivity,
             downloadRepository = downloadRepository,
         )
+        // Starts every list refresh — on app start / reconnect just below, and
+        // whenever a list page is opened (each list screen's onScreenShow). See
+        // ListRefresher's own doc.
+        val listRefresher = ListRefresher(appScope, libraryRepository, playlistRepository)
         // See AppLibraryCache's own doc — every list screen previously paid
         // a fresh Room-query-plus-mapping cost on every single visit (a
         // fresh ViewModel every time, confirmed live 2026-09-18 as multiple
@@ -197,7 +203,10 @@ object AppGraph {
         // is also why the 4 library refreshes below live here rather than as
         // a separate one-shot block: this one collector already covers both
         // "fresh launch, online" and "was offline at launch, came back
-        // later" without doing it twice.
+        // later" without doing it twice. (List pages also refresh themselves
+        // each time they're opened — ListRefresher skips a list that is
+        // already being refreshed, so this and a page opened right after
+        // launch don't double up.)
         //
         // Distinct `tag` from the periodic schedule above, even though both
         // point at the same job — `LightWork.enqueue`'s one-time request uses
@@ -214,17 +223,11 @@ object AppGraph {
                 .collect { isConnected ->
                     if (isConnected) {
                         LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
-                        // Each its own child launch, not awaited in sequence —
-                        // refreshAllSongs in particular can be a multi-page
-                        // fetch, and none of these should make the others (or
-                        // the next reconnect event) wait. Replaces the
-                        // identical calls every list screen's own
-                        // onScreenShow used to make on every single visit —
-                        // see AppLibraryCache's doc for why that moved here.
-                        appScope.launch { libraryRepository.refreshArtists() }
-                        appScope.launch { libraryRepository.refreshAlbumList() }
-                        appScope.launch { libraryRepository.refreshAllSongs() }
-                        appScope.launch { playlistRepository.refreshPlaylists() }
+                        // Each list on its own coroutine, not awaited in
+                        // sequence — refreshAllSongs in particular can be a
+                        // multi-page fetch, and none of these should make the
+                        // others (or the next reconnect event) wait.
+                        listRefresher.refreshAll()
                     }
                 }
         }
@@ -237,6 +240,7 @@ object AppGraph {
             database = database,
             libraryRepository = libraryRepository,
             playlistRepository = playlistRepository,
+            listRefresher = listRefresher,
             downloadRepository = downloadRepository,
             albumArtRepository = albumArtRepository,
             lyricsRepository = lyricsRepository,
