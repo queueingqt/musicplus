@@ -427,10 +427,6 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                     ToggleableIcon(
                         icon = LightIcons.ALARM,
                         active = sleepTimerState != null,
-                        // Live "MM:SS left" badge, same chip PlayerScreen's own
-                        // REPEAT_TRACK "1" already uses — only for Countdown;
-                        // EndOfTrack has no fixed duration to count down.
-                        badge = (sleepTimerState as? SleepTimerState.Countdown)?.let { formatSleepTimerRemaining(it.remainingMs) },
                         contentDescription = if (sleepTimerState != null) "Sleep timer running" else "Sleep timer",
                         onClick = { navigateTo(::SleepTimerPickerScreen) },
                         modifier = Modifier.padding(horizontal = 1f.gridUnitsAsDp()),

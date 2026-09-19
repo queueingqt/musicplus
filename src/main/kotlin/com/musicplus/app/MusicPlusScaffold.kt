@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import com.musicplus.app.data.PlaybackRepositoryHolder
-import com.musicplus.app.data.SleepTimerState
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
@@ -146,9 +144,8 @@ private fun MiniPlayerBar(onClick: () -> Unit, onSleepTimerClick: () -> Unit) {
         // SleepTimerPickerScreen (reported live, 2026-09-18 — tapping it was
         // expected to jump straight there, not just open Now Playing like
         // the rest of the bar), same nested-clickable-region pattern the
-        // Next/Play-Pause icons below already use. Live "MM:SS left" badge,
-        // same chip treatment as PlayerScreen's own REPEAT_TRACK "1" badge —
-        // only for Countdown (EndOfTrack has no fixed duration to count down).
+        // Next/Play-Pause icons below already use. Icon only, no live
+        // countdown badge — tried, reported live as not wanted.
         val sleepTimerState by playback.sleepTimerState.collectAsState()
         if (sleepTimerState != null) {
             // Sized/centered the same as the Next and Play/Pause boxes below
@@ -166,17 +163,6 @@ private fun MiniPlayerBar(onClick: () -> Unit, onSleepTimerClick: () -> Unit) {
                     size = 1.5f,
                     contentDescription = "Sleep timer active",
                 )
-                val countdown = sleepTimerState as? SleepTimerState.Countdown
-                if (countdown != null) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .background(LightThemeTokens.colors.background, CircleShape)
-                            .padding(horizontal = 0.15f.gridUnitsAsDp()),
-                    ) {
-                        LightText(text = formatSleepTimerRemaining(countdown.remainingMs), variant = LightTextVariant.Superfine)
-                    }
-                }
             }
         }
         Box(
