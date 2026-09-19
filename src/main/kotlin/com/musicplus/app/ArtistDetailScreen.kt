@@ -366,12 +366,19 @@ private fun CollapsibleSectionHeader(title: String, expanded: Boolean, onClick: 
     ) {
         LightText(text = title, variant = LightTextVariant.Heading, modifier = Modifier.weight(1f))
         // Standard disclosure-triangle convention (collapsed points at its
-        // content, expanded points down at what's now revealed below it) —
-        // not UP/DOWN, which already means "reorder" elsewhere in this app
-        // (QueueScreen's move-up/move-down rows) and, reported live
-        // (2026-09-18), read as "already open" even when collapsed.
+        // content, expanded points down at what's now revealed below it).
+        // DOWN, not ARROW_DOWN — checked both drawables directly: ARROW_DOWN
+        // is an arrow-with-stem, the same shape family as DOWNLOAD_ARROW
+        // (already a loaded glyph in this app, used for the real download
+        // rows), and reported live (2026-09-18) as reading like a download
+        // button once expanded. DOWN/ARROW_RIGHT share the exact same plain
+        // chevron path (just rotated/mirrored — confirmed in the SDK's own
+        // vector XML), a properly matched pair with no such collision. Also
+        // not UP/DOWN as a pair — UP already means "reorder" elsewhere in
+        // this app (QueueScreen's move-up rows), and DOWN for the collapsed
+        // state read as "already open" (reported live, same session).
         LightIcon(
-            icon = if (expanded) LightIcons.ARROW_DOWN else LightIcons.ARROW_RIGHT,
+            icon = if (expanded) LightIcons.DOWN else LightIcons.ARROW_RIGHT,
             size = 1.5f,
             contentDescription = if (expanded) "Collapse" else "Expand",
         )

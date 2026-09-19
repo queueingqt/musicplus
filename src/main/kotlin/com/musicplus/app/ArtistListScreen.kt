@@ -13,11 +13,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
@@ -38,6 +40,7 @@ import kotlinx.coroutines.launch
 
 class ArtistListScreenViewModel(
     private val libraryRepository: LibraryRepository,
+    private val downloadRepository: DownloadRepository,
     private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
@@ -61,6 +64,11 @@ class ArtistListScreenViewModel(
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
 
+    /** See [downloadEntireArtist] (TrackListDownload.kt) — moved here from a standalone row on ArtistDetailScreen itself (reported live, 2026-09-18). */
+    fun downloadEntireArtist(lightContext: SealedLightContext, artistId: String) {
+        viewModelScope.launch { downloadEntireArtist(lightContext, libraryRepository, downloadRepository, artistId) }
+    }
+
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
 }
@@ -72,7 +80,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
 
     override fun createViewModel(): ArtistListScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return ArtistListScreenViewModel(graph.libraryRepository, graph.syncQueueRepository)
+        return ArtistListScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository)
     }
 
     @Composable
@@ -123,6 +131,23 @@ class ArtistListScreen(activity: SealedLightActivity) :
                                         favoriteActionItem(artist.isFavorite) { favorite ->
                                             viewModel.setArtistFavorite(artist.id, favorite)
                                         },
+                                        // Moved here from a standalone row on
+                                        // ArtistDetailScreen itself (reported
+                                        // live, 2026-09-18: that screen was
+                                        // too crowded) — no aggregate
+                                        // download-state indicator, same
+                                        // reasoning as before the move (see
+                                        // downloadEntireArtist's own doc,
+                                        // TrackListDownload.kt).
+                                        confirmActionItem(
+                                            icon = LightIcons.DOWNLOAD_ARROW,
+                                            label = "Download entire artist",
+                                            confirmTitle = "Download entire artist?",
+                                            confirmMessage = "Downloads every track across ${artist.albumCount} " +
+                                                (if (artist.albumCount == 1) "album" else "albums") + " to this device.",
+                                            confirmContentDescription = "Download entire artist",
+                                            onConfirm = { viewModel.downloadEntireArtist(lightContext, artist.id) },
+                                        ),
                                     ),
                                 )
                             })

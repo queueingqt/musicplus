@@ -2,6 +2,7 @@ package com.musicplus.app
 
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
+import com.musicplus.app.data.LibraryRepository
 import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -95,3 +96,34 @@ fun trackListDownloadActionItem(
         trackListDownloadActionItem(noun, toggle(), toggle)
     },
 )
+
+/**
+ * Bulk "download entire artist" — reached from ArtistListScreen's long-press
+ * menu (moved there from a standalone row on ArtistDetailScreen itself,
+ * reported live 2026-09-18: the row plus its own search field took up too
+ * much of that screen). Enqueues every track across every one of the
+ * artist's albums. Tracks already COMPLETE are skipped via the same
+ * completeIds-filtering approach [toggleTrackListDownload] above uses —
+ * reused directly here rather than the whole album-level toggle function,
+ * since that also handles "cancel if already downloading," which doesn't
+ * apply at artist granularity: there's deliberately no artist-level
+ * aggregate download state to cancel (see [TrackListDownloadState]'s own
+ * doc for why that was considered and rejected). No progress UI of its own —
+ * individual track download progress is still visible the normal way
+ * (Downloads screen, per-track glyphs elsewhere) once this enqueues them.
+ */
+suspend fun downloadEntireArtist(
+    lightContext: SealedLightContext,
+    libraryRepository: LibraryRepository,
+    downloadRepository: DownloadRepository,
+    artistId: String,
+) {
+    val completeIds = downloadRepository.observeAll().first()
+        .filter { it.status == DownloadStatus.COMPLETE }
+        .map { it.songId }
+        .toSet()
+    val tracks = libraryRepository.observeAlbumsByArtist(artistId).first().flatMap { album ->
+        SelfLoadingTrackList.forAlbum(libraryRepository, album.id).tracks()
+    }
+    tracks.filter { it.id !in completeIds }.forEach { downloadRepository.enqueue(lightContext, it) }
+}
