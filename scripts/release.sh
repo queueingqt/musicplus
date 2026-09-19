@@ -15,6 +15,10 @@
 #   6. Tags the bump commit vX.Y.Z and pushes the commit + tag.
 #   7. Creates a GitHub Release for that tag with the APK attached and
 #      auto-generated release notes (commits since the last tag).
+#   8. Re-points the rolling "latest" release/tag at this same commit, with
+#      the APK re-uploaded under a fixed filename (musicplus-latest.apk) —
+#      gives a permanent download link that never needs updating by hand:
+#      github.com/<repo>/releases/download/latest/musicplus-latest.apk
 #
 # Requires LIGHT_SDK_PATH to point at a real light-sdk checkout (JDK 21 is
 # used for the build regardless of the active `java` on PATH, matching the
@@ -87,4 +91,18 @@ gh release create "v$NEW_VERSION" "$APK_PATH" \
   --title "v$NEW_VERSION" \
   --generate-notes
 
-echo "Done: v$NEW_VERSION released."
+echo "Re-pointing rolling 'latest' release at v$NEW_VERSION..."
+LATEST_APK_PATH="$(dirname "$BUILT_APK_PATH")/musicplus-latest.apk"
+cp "$BUILT_APK_PATH" "$LATEST_APK_PATH"
+# Delete-and-recreate rather than `gh release edit` + `upload --clobber` —
+# the tag itself needs to move to this commit too, and `gh release delete
+# --cleanup-tag` is the simplest way to do both the release and the tag in
+# one step. Ignore failure the first time this ever runs (nothing to delete
+# yet).
+gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+gh release create latest "$LATEST_APK_PATH" \
+  --title "Latest build ($NEW_VERSION)" \
+  --notes "Always points at the most recently released build — currently v$NEW_VERSION. See the versioned release (v$NEW_VERSION) for real release notes; this one exists only so github.com/queueingqt/musicplus/releases/download/latest/musicplus-latest.apk never needs updating by hand." \
+  --target "$(git rev-parse HEAD)"
+
+echo "Done: v$NEW_VERSION released, 'latest' repointed at it."
