@@ -69,7 +69,11 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
                     center = LightTopBarCenter.Text("Sleep Timer"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            // Reached from Now Playing's own alarm icon — a mini-player row
+            // here would just duplicate that same screen one tap away, same
+            // reasoning QueueScreen's identical showMiniPlayer = false uses.
+            // Reported live, 2026-09-18.
+            showMiniPlayer = false,
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 // Live status line, same "second line shows the live value"
@@ -128,8 +132,12 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
                     label = if (customMinutes != null) "Custom ($customMinutes min)" else "Custom…",
                     selected = customMinutes != null,
                     onClick = {
+                        // NumericEntryScreen, not TextEditScreen — see its own
+                        // doc for why (opens straight to digits, no QWERTY
+                        // default to confuse a minutes-only field). Reported
+                        // live, 2026-09-18.
                         navigateTo({ a ->
-                            TextEditScreen(a, "Sleep timer (minutes)", customMinutes?.toString().orEmpty())
+                            NumericEntryScreen(a, "Sleep timer", customMinutes?.toString().orEmpty(), unitSuffix = "min")
                         }) { result ->
                             result.toIntOrNull()?.takeIf { it > 0 }?.let {
                                 viewModel.startCountdown(it)

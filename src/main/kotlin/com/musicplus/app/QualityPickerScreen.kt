@@ -82,7 +82,12 @@ class QualityPickerScreen(
                     label = if (isCustom) "Custom ($current kbps)" else "Custom…",
                     selected = isCustom,
                     onClick = {
-                        navigateTo({ a -> TextEditScreen(a, "$title (kbps)", current?.toString().orEmpty()) }) { result ->
+                        // NumericEntryScreen, not TextEditScreen — see its own
+                        // doc for why (this field is kbps-only; no reason to
+                        // open on a QWERTY layout). Reported live, 2026-09-18,
+                        // against the sleep timer's identical Custom row;
+                        // fixed here too since it's the same underlying gap.
+                        navigateTo({ a -> NumericEntryScreen(a, title, current?.toString().orEmpty(), unitSuffix = "kbps") }) { result ->
                             result.toIntOrNull()?.takeIf { it > 0 }?.let { goBack(QualitySelection(it)) }
                         }
                     },
