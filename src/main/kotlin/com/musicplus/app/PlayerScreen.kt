@@ -28,12 +28,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.DownloadRepository
+import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
 import com.musicplus.app.data.SleepTimerState
 import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightBottomBar
@@ -87,6 +90,7 @@ class PlayerScreenViewModel(
     private val playback: PlaybackRepository,
     private val libraryRepository: com.musicplus.app.data.LibraryRepository,
     private val syncQueueRepository: com.musicplus.app.data.SyncQueueRepository,
+    private val downloadRepository: DownloadRepository,
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
@@ -121,6 +125,32 @@ class PlayerScreenViewModel(
         .distinctUntilChanged()
         .flatMapLatest { trackId -> trackId?.let { syncQueueRepository.isFavoritePending(it) } ?: flowOf(false) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** The current track's download state, live — drives the download icon (issue #48). */
+    val downloadStatus: StateFlow<DownloadStatus?> = state
+        .map { it.currentTrack?.id }
+        .distinctUntilChanged()
+        .flatMapLatest { trackId ->
+            trackId?.let { downloadRepository.observeStatus(it).map { entity -> entity?.status } } ?: flowOf(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Same tap semantics as every list's per-track download row (see
+     * AlbumDetailScreenViewModel.toggleDownload): queued/downloading/complete
+     * -> cancel or remove; failed/not downloaded -> start.
+     */
+    fun toggleDownloadCurrentTrack(lightContext: SealedLightContext) {
+        val track = state.value.currentTrack ?: return
+        val status = downloadStatus.value
+        viewModelScope.launch {
+            when (status) {
+                DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE ->
+                    downloadRepository.cancel(lightContext, track.id)
+                DownloadStatus.FAILED, null -> downloadRepository.enqueue(lightContext, track)
+            }
+        }
+    }
 
     fun togglePlayPause() = playback.togglePlayPause()
     fun skipBack() = playback.skipBack()
@@ -175,7 +205,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
     override fun createViewModel(): PlayerScreenViewModel {
         val graph = AppGraph.from(lightContext)
         val playback = playbackRepository(sealedActivity, lightContext)
-        return PlayerScreenViewModel(playback, graph.libraryRepository, graph.syncQueueRepository)
+        return PlayerScreenViewModel(playback, graph.libraryRepository, graph.syncQueueRepository, graph.downloadRepository)
     }
 
     @Composable
@@ -183,6 +213,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val state by viewModel.state.collectAsState()
         val albumArtUrl by viewModel.albumArtUrl.collectAsState()
         val isFavoritePending by viewModel.isFavoritePending.collectAsState()
+        val downloadStatus by viewModel.downloadStatus.collectAsState()
         val sleepTimerState by viewModel.sleepTimerState.collectAsState()
         val showArtwork by AppDisplayPrefs.showAlbumArtwork.value.collectAsState()
         val track = state.currentTrack
@@ -412,6 +443,17 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                             contentDescription = "Lyrics",
                             modifier = Modifier
                                 .lightClickable { navigateTo(::LyricsScreen) }
+                                .padding(horizontal = 1f.gridUnitsAsDp()),
+                        )
+                        // Download the playing song (issue #48) — same icon, label
+                        // and tap behaviour as every list's per-track download row
+                        // (TrackActionItems.kt's downloadStatusIcon/Label).
+                        LightIcon(
+                            icon = downloadStatusIcon(downloadStatus),
+                            size = 1.5f,
+                            contentDescription = downloadStatusLabel(downloadStatus),
+                            modifier = Modifier
+                                .lightClickable { viewModel.toggleDownloadCurrentTrack(lightContext) }
                                 .padding(horizontal = 1f.gridUnitsAsDp()),
                         )
                     }
