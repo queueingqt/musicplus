@@ -132,7 +132,12 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                     scrollBarPosition = LightScrollBarPosition.Inside,
                     uniformItemHeightGridUnits = 3f,
                 ) {
-                    itemsIndexed(state.queue, key = { _, track -> track.id }) { i, track ->
+                    // Keyed by position as well as id: the same track can be in the
+                    // queue more than once (an album added twice, a playlist that
+                    // repeats a song), and a bare track.id key crashed the whole app
+                    // with "Key ... was already used" on the second copy (issue #51).
+                    // PlaylistDetailScreen already keys its rows this way.
+                    itemsIndexed(state.queue, key = { index, track -> "$index-${track.id}" }) { i, track ->
                         val isCurrent = i == state.currentIndex
                         val upcomingIndex = i - state.currentIndex - 1
                         QueueScreenRow(
