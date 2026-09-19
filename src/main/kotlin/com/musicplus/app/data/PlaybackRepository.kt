@@ -332,6 +332,59 @@ class PlaybackRepository(
     private var lastHandledCompletionIndex = -1
     private var lastHandledSleepTimerIndex = -1
 
+    // Scrobbling — off by default (see AppSettingsRepository.scrobblingEnabled's
+    // doc). "Now playing" notification (submission=false) fires once a track
+    // starts; the real scrobble (submission=true) fires once it's played past
+    // the standard Last.fm threshold: half its duration or 4 minutes, whichever
+    // is smaller, and never at all for a track under 30s — the same rule
+    // Last.fm's own clients use, not something Subsonic's scrobble.view itself
+    // enforces (it'll happily record a scrobble at any position if asked).
+    // lastNowPlayingIndex/lastScrobbledIndex are edge-detectors, same shape as
+    // nearEndCompletionWatcher's own — a manual seek backward past an
+    // already-scrobbled position correctly does NOT re-fire, since both
+    // compare against currentIndex, not position.
+    private val scrobbleWatcher = scope.launch {
+        combine(state, appSettingsRepository.scrobblingEnabled) { s, enabled -> s to enabled }
+            .collect { (s, enabled) ->
+                if (!enabled || !s.isPlaying || s.durationMs <= 0L) return@collect
+                val track = s.currentTrack ?: return@collect
+
+                if (lastNowPlayingIndex != s.currentIndex) {
+                    lastNowPlayingIndex = s.currentIndex
+                    sendScrobble(track.id, submission = false)
+                }
+
+                if (s.durationMs < MIN_SCROBBLE_DURATION_MS) return@collect
+                val thresholdMs = minOf(s.durationMs / 2, SCROBBLE_THRESHOLD_MS)
+                if (s.positionMs >= thresholdMs && lastScrobbledIndex != s.currentIndex) {
+                    lastScrobbledIndex = s.currentIndex
+                    sendScrobble(track.id, submission = true)
+                }
+            }
+    }
+    private var lastNowPlayingIndex = -1
+    private var lastScrobbledIndex = -1
+
+    /**
+     * Fire-and-forget on its own child coroutine — scrobbling must never block
+     * or otherwise affect actual playback. Failures are logged AND surfaced to
+     * [AppScrobblePrefs.lastError] (cleared on the next success): required,
+     * not swallowed — see that property's own doc for why.
+     */
+    private fun sendScrobble(songId: String, submission: Boolean) {
+        scope.launch {
+            val api = apiHolder.get() ?: return@launch
+            try {
+                api.scrobble(songId, submission)
+                AppLogger.d("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) succeeded")
+                AppScrobblePrefs.setLastError(null)
+            } catch (e: Exception) {
+                AppLogger.e("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) failed", e)
+                AppScrobblePrefs.setLastError(e.message ?: "Scrobble failed")
+            }
+        }
+    }
+
     // Restore must finish (including its Room/DataStore reads) before the
     // queue-persistence collector below starts — both run in one coroutine,
     // sequentially, specifically so the collector's first emission is never
@@ -1102,6 +1155,12 @@ class PlaybackRepository(
 
         /** See [startSleepTimer]'s doc — how often the live countdown's [SleepTimerState.Countdown.remainingMs] ticks. */
         const val SLEEP_TIMER_TICK_MS = 1_000L
+
+        /** See [scrobbleWatcher]'s doc — Last.fm's own "don't scrobble anything shorter than this" rule. */
+        const val MIN_SCROBBLE_DURATION_MS = 30_000L
+
+        /** See [scrobbleWatcher]'s doc — Last.fm's own "half the track, or this, whichever is smaller" scrobble threshold. */
+        const val SCROBBLE_THRESHOLD_MS = 240_000L
     }
 }
 

@@ -204,4 +204,21 @@ class SubsonicApi(private val client: SubsonicClient) {
             "getTopSongs.view",
             listOf("artist" to artistName, "count" to count.toString()),
         ).topSongs?.song ?: emptyList()
+
+    /**
+     * `submission = false` is a "now playing" notification (fired once a track
+     * starts); `true` is the real scrobble (fired once a track has played past
+     * the standard threshold — see [PlaybackRepository]'s scrobble watcher for
+     * where each is triggered). Navidrome itself just relays this to whatever
+     * Last.fm/ListenBrainz account is linked server-side — this app never talks
+     * to either directly. [SubsonicClient.call] already throws
+     * [SubsonicApiException] on any non-"ok" response, so a server with no
+     * linked account — if that's surfaced as a real error rather than a silent
+     * no-op, genuinely unconfirmed either way, since this is the one thing
+     * only the live server can answer — propagates as a normal exception here,
+     * not swallowed.
+     */
+    suspend fun scrobble(songId: String, submission: Boolean) {
+        client.call("scrobble.view", listOf("id" to songId, "submission" to submission.toString()))
+    }
 }

@@ -96,6 +96,7 @@ object AppGraph {
         mirrorInto(serverConfigRepository.servers, AppServerPrefs::setServers)
         mirrorInto(serverConfigRepository.activeServerId, AppServerPrefs::setActiveServerId)
         mirrorInto(serverConfigRepository.serverConfig.map { it != null }, AppServerPrefs::setIsConfigured)
+        mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs::setScrobblingEnabled)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         val database = MusicPlusDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible

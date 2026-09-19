@@ -21,6 +21,7 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
     private object Keys {
         val SHOW_ALBUM_ARTWORK = booleanPreferencesKey("show_album_artwork")
         val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
+        val SCROBBLING_ENABLED = booleanPreferencesKey("scrobbling_enabled")
         // Int, not a serialized enum — see StreamQuality's doc: this is a
         // plain kbps value (or absent = original/uncapped), not a closed set
         // of tiers. A sentinel rather than a second "is this original"
@@ -63,6 +64,20 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setDebugLoggingEnabled(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[Keys.DEBUG_LOGGING_ENABLED] = enabled }
+    }
+
+    /**
+     * Off by default — unlike the other toggles here, this one sends personal
+     * listening history to a linked Last.fm/ListenBrainz account (relayed via
+     * Navidrome itself; this app never talks to either service directly), so
+     * it's opt-in rather than opt-out.
+     */
+    val scrobblingEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[Keys.SCROBBLING_ENABLED] ?: false
+    }
+
+    suspend fun setScrobblingEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[Keys.SCROBBLING_ENABLED] = enabled }
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppDebugPrefs
 import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppScrobblePrefs
 import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.LocalDataRepository
 import com.musicplus.app.data.NewerVersion
@@ -75,6 +77,15 @@ class SettingsScreenViewModel(
         viewModelScope.launch { appSettingsRepository.setDebugLoggingEnabled(!debugLoggingEnabled.value) }
     }
 
+    val scrobblingEnabled: StateFlow<Boolean> = AppScrobblePrefs.scrobblingEnabled
+
+    fun toggleScrobbling() {
+        viewModelScope.launch { appSettingsRepository.setScrobblingEnabled(!scrobblingEnabled.value) }
+    }
+
+    /** See [AppScrobblePrefs.lastError]'s doc — set by PlaybackRepository's own scrobble watcher, not this screen. */
+    val scrobblingError: StateFlow<String?> = AppScrobblePrefs.lastError
+
     fun clearAllLocalData() {
         viewModelScope.launch { localDataRepository.clearAll() }
     }
@@ -95,6 +106,8 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
     override fun Content() {
         val showAlbumArtwork by viewModel.showAlbumArtwork.collectAsState()
         val debugLoggingEnabled by viewModel.debugLoggingEnabled.collectAsState()
+        val scrobblingEnabled by viewModel.scrobblingEnabled.collectAsState()
+        val scrobblingError by viewModel.scrobblingError.collectAsState()
         val pendingSyncCount by viewModel.pendingSyncCount.collectAsState()
         val newerVersion by viewModel.newerVersion.collectAsState()
 
@@ -139,6 +152,21 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                             .padding(vertical = 1f.gridUnitsAsDp()),
                     )
                 }
+                // Off by default (see AppSettingsRepository.scrobblingEnabled's
+                // doc) — unlike every other toggle on this screen, this one
+                // sends personal listening history to a linked Last.fm/
+                // ListenBrainz account, relayed via the Navidrome server
+                // itself. [scrobblingError] surfaces the real server error
+                // from the last failed attempt (see AppScrobblePrefs.lastError's
+                // doc for why this can't just fail silently) — most likely
+                // cause is no account actually linked server-side, but this
+                // shows whatever the server itself said, not a guess.
+                ToggleRow(
+                    label = "Scrobbling",
+                    isOn = scrobblingEnabled,
+                    onToggle = { viewModel.toggleScrobbling() },
+                    subtitle = scrobblingError,
+                )
                 // Always last — the least likely to be touched day-to-day.
                 ToggleRow(
                     // Also gates local debug logging (AppLogger), not just
@@ -216,7 +244,7 @@ private fun SettingsMenuRow(label: String, onClick: () -> Unit) {
 // phone's own LightOS Settings app (General > Haptic Feedback): its toggle
 // icon leads the label the same way Airplane Mode's key icon does.
 @Composable
-private fun ToggleRow(label: String, isOn: Boolean, onToggle: () -> Unit) {
+private fun ToggleRow(label: String, isOn: Boolean, onToggle: () -> Unit, subtitle: String? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -230,6 +258,15 @@ private fun ToggleRow(label: String, isOn: Boolean, onToggle: () -> Unit) {
             contentDescription = if (isOn) "On" else "Off",
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )
-        LightText(text = label, variant = LightTextVariant.Copy, modifier = Modifier.weight(1f))
+        Column(modifier = Modifier.weight(1f)) {
+            LightText(text = label, variant = LightTextVariant.Copy)
+            // Only ever populated by scrobbling's own real-server error right
+            // now (see AppScrobblePrefs.lastError's doc) — a generic slot
+            // rather than a scrobbling-specific one since any future toggle
+            // that can genuinely fail server-side has the identical need.
+            if (subtitle != null) {
+                LightText(text = subtitle, variant = LightTextVariant.Fine, lighten = true)
+            }
+        }
     }
 }
