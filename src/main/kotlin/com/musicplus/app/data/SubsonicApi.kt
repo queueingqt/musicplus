@@ -176,4 +176,32 @@ class SubsonicApi(private val client: SubsonicClient) {
      */
     suspend fun getLyricsBySongId(songId: String): List<SubsonicStructuredLyrics> =
         client.call("getLyricsBySongId.view", listOf("id" to songId)).lyricsList?.structuredLyrics ?: emptyList()
+
+    /**
+     * ArtistDetailScreen's "Similar artists" section — `getArtistInfo2.view`,
+     * not `getSimilarSongs2.view`. Despite the name, `getSimilarSongs2`
+     * returns *songs* by similar artists, the wrong shape for a list of
+     * artists to link into; `getArtistInfo2`'s `similarArtist` field is the
+     * one that's actually artist-shaped. See [SubsonicArtistInfo2]'s doc
+     * (SubsonicDtos.kt) for the full spec citation this was verified against.
+     * [artistId] is the artist's own id, per spec.
+     */
+    suspend fun getSimilarArtists(artistId: String, count: Int = 20): List<SubsonicArtist> =
+        client.call(
+            "getArtistInfo2.view",
+            listOf("id" to artistId, "count" to count.toString()),
+        ).artistInfo2?.similarArtist ?: emptyList()
+
+    /**
+     * ArtistDetailScreen's "Top songs" section — `getTopSongs.view`.
+     * [artistName] is the artist's *name*, not id: this is the one Subsonic
+     * endpoint keyed by name instead of id (confirmed against the spec, see
+     * [SubsonicTopSongs]'s doc) — the OpenSubsonic `topSongsByArtistId`
+     * extension would allow an id instead, but isn't assumed supported here.
+     */
+    suspend fun getTopSongs(artistName: String, count: Int = 20): List<SubsonicSong> =
+        client.call(
+            "getTopSongs.view",
+            listOf("artist" to artistName, "count" to count.toString()),
+        ).topSongs?.song ?: emptyList()
 }
