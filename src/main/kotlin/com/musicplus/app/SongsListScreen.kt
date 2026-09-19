@@ -160,8 +160,8 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                             },
                             onOpenActions = {
                                 navigateTo({ a ->
-                                    val addToQueueItem = addToQueueActionItem("Add to queue") {
-                                        playbackRepository(activity, lightContext).addToQueue(listOf(track))
+                                    val addToQueueItem = addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) {
+                                        listOf(track)
                                     }
                                     ActionsMenuScreen(
                                         activity = a,

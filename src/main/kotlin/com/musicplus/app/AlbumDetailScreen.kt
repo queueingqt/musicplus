@@ -183,8 +183,8 @@ class AlbumDetailScreen(
                             onLongClick = {
                                 navigateTo({ a ->
                                     val isFavorite = album?.isFavorite == true
-                                    val addAlbumToQueueItem = addToQueueActionItem("Add album to queue") {
-                                        playbackRepository(activity, lightContext).addToQueue(tracks)
+                                    val addAlbumToQueueItem = addToQueueActionItem("Add album to queue", playbackRepository(activity, lightContext)) {
+                                        tracks
                                     }
                                     ActionsMenuScreen(
                                         activity = a,
@@ -241,8 +241,8 @@ class AlbumDetailScreen(
                         },
                         onOpenActions = {
                             navigateTo({ a ->
-                                val addTrackToQueueItem = addToQueueActionItem("Add to queue") {
-                                    playbackRepository(activity, lightContext).addToQueue(listOf(track))
+                                val addTrackToQueueItem = addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) {
+                                    listOf(track)
                                 }
                                 ActionsMenuScreen(
                                     activity = a,

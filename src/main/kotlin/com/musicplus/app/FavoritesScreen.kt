@@ -188,9 +188,8 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
                         onOpenActions = {
                             navigateTo({ a ->
-                                val addToQueueItem = addToQueueActionItem("Add album to queue") {
-                                    val tracks = viewModel.tracksForAlbum(album.id)
-                                    playbackRepository(activity, lightContext).addToQueue(tracks)
+                                val addToQueueItem = addToQueueActionItem("Add album to queue", playbackRepository(activity, lightContext)) {
+                                    viewModel.tracksForAlbum(album.id)
                                 }
                                 ActionsMenuScreen(
                                     activity = a,
@@ -235,8 +234,8 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                         },
                         onOpenActions = {
                             navigateTo({ a ->
-                                val addToQueueItem = addToQueueActionItem("Add to queue") {
-                                    playbackRepository(activity, lightContext).addToQueue(listOf(track))
+                                val addToQueueItem = addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) {
+                                    listOf(track)
                                 }
                                 ActionsMenuScreen(
                                     activity = a,

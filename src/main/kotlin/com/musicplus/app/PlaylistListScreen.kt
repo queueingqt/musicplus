@@ -24,6 +24,7 @@ import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
+import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -88,6 +89,10 @@ class PlaylistListScreenViewModel(
 
     suspend fun togglePlaylistDownload(lightContext: SealedLightContext, playlistId: String): TrackListDownloadState =
         SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).toggleDownload(lightContext, downloadRepository)
+
+    /** The playlist's tracks, refreshed first — for "Add to queue" (issue #46), which needs the real list rather than whatever happened to already be cached. */
+    suspend fun playlistTracks(playlistId: String): List<Track> =
+        SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId).tracks()
 
     // Same actions as PlaylistDetailScreenViewModel's own rename/delete —
     // reported live: this list's long-press menu only offered Download,
@@ -167,9 +172,10 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                         onClick = { navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) }) },
                         onOpenActions = {
                             navigateTo({ a ->
-                                // Same 4 items, same order, as PlaylistDetailScreen's own
+                                // Same items, same order, as PlaylistDetailScreen's own
                                 // long-press menu — reported live: this list's menu only had
-                                // Download, unlike the one reached from inside a playlist.
+                                // Download, unlike the one reached from inside a playlist —
+                                // plus "Add to queue" first (issue #46).
                                 val deleteItem = confirmActionItem(
                                     icon = LightIcons.TRASH,
                                     label = "Delete playlist",
@@ -182,6 +188,9 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                                     activity = a,
                                     subtitle = playlist.name,
                                     items = listOf(
+                                        addToQueueActionItem("Add to queue", playbackRepository(a, lightContext)) {
+                                            viewModel.playlistTracks(playlist.id)
+                                        },
                                         ActionMenuItem(
                                             icon = LightIcons.PENCIL,
                                             label = "Rename playlist",

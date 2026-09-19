@@ -238,9 +238,8 @@ class ArtistDetailScreen(
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
                         onOpenActions = {
                             navigateTo({ a ->
-                                val addToQueueItem = addToQueueActionItem("Add album to queue") {
-                                    val tracks = viewModel.tracksForAlbum(album.id)
-                                    playbackRepository(activity, lightContext).addToQueue(tracks)
+                                val addToQueueItem = addToQueueActionItem("Add album to queue", playbackRepository(activity, lightContext)) {
+                                    viewModel.tracksForAlbum(album.id)
                                 }
                                 ActionsMenuScreen(
                                     activity = a,
