@@ -125,6 +125,7 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             // Inside, not Outside — see AlbumDetailScreen's identical call site
             // for why (Outside's gutter width isn't known until after first

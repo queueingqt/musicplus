@@ -132,6 +132,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             if (tracks.isEmpty()) {
                 LightText(

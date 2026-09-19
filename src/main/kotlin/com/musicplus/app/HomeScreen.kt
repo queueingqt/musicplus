@@ -101,6 +101,7 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             if (!isConfigured) {
                 SetUpServerSplash { navigateTo(::SettingsScreen) }

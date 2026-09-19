@@ -47,6 +47,7 @@ class VersionAvailableScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 LightText(

@@ -151,6 +151,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightTextField(
                 label = "Search",

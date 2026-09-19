@@ -145,6 +145,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 LightTextField(

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -17,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.musicplus.app.data.SleepTimerState
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
@@ -47,6 +49,13 @@ import com.thelightphone.sdk.ui.lightClickable
 fun MusicPlusScaffold(
     topBar: @Composable () -> Unit,
     onMiniPlayerClick: () -> Unit = {},
+    // Own tap target on the mini-player's sleep timer icon, straight to
+    // SleepTimerPickerScreen — reported live, 2026-09-18: tapping it was
+    // expected to jump straight there, not just open Now Playing like the
+    // rest of the bar. Defaults to onMiniPlayerClick (same as the rest of
+    // the bar) rather than a silent no-op, so a screen that forgets to wire
+    // this explicitly still does something sensible.
+    onSleepTimerClick: () -> Unit = onMiniPlayerClick,
     showMiniPlayer: Boolean = true,
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
@@ -79,7 +88,7 @@ fun MusicPlusScaffold(
                 content = content,
             )
             if (showMiniPlayer) {
-                MiniPlayerBar(onClick = onMiniPlayerClick)
+                MiniPlayerBar(onClick = onMiniPlayerClick, onSleepTimerClick = onSleepTimerClick)
             }
             bottomBar()
         }
@@ -102,7 +111,7 @@ fun MusicPlusScaffold(
  * track has actually been played at least once in this process.
  */
 @Composable
-private fun MiniPlayerBar(onClick: () -> Unit) {
+private fun MiniPlayerBar(onClick: () -> Unit, onSleepTimerClick: () -> Unit) {
     val playback = PlaybackRepositoryHolder.peek() ?: return
     val state by playback.state.collectAsState(initial = playback.currentSnapshot())
     val track = state.currentTrack ?: return
@@ -130,6 +139,45 @@ private fun MiniPlayerBar(onClick: () -> Unit) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        // Sleep timer indicator — visible from anywhere in the app, not just
+        // Now Playing's own alarm icon, since the mini-player is the one
+        // thing shown on every screen. Own tap target straight to
+        // SleepTimerPickerScreen (reported live, 2026-09-18 — tapping it was
+        // expected to jump straight there, not just open Now Playing like
+        // the rest of the bar), same nested-clickable-region pattern the
+        // Next/Play-Pause icons below already use. Live "MM:SS left" badge,
+        // same chip treatment as PlayerScreen's own REPEAT_TRACK "1" badge —
+        // only for Countdown (EndOfTrack has no fixed duration to count down).
+        val sleepTimerState by playback.sleepTimerState.collectAsState()
+        if (sleepTimerState != null) {
+            // Sized/centered the same as the Next and Play/Pause boxes below
+            // — a bare LightIcon here has no internal padding of its own, so
+            // it sat visibly closer to its neighbors than they sit to each
+            // other despite the same Row-level spacedBy gap. Reported live.
+            Box(
+                modifier = Modifier
+                    .size(2.5f.gridUnitsAsDp())
+                    .lightClickable(onClick = onSleepTimerClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                LightIcon(
+                    icon = LightIcons.ALARM,
+                    size = 1.5f,
+                    contentDescription = "Sleep timer active",
+                )
+                val countdown = sleepTimerState as? SleepTimerState.Countdown
+                if (countdown != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .background(LightThemeTokens.colors.background, CircleShape)
+                            .padding(horizontal = 0.15f.gridUnitsAsDp()),
+                    ) {
+                        LightText(text = formatSleepTimerRemaining(countdown.remainingMs), variant = LightTextVariant.Superfine)
+                    }
+                }
+            }
         }
         Box(
             modifier = Modifier

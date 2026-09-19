@@ -192,6 +192,7 @@ class ArtistDetailScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             // Everything below — both collapsible sections' rows and the
             // album list — lives in ONE LightLazyScrollView rather than a

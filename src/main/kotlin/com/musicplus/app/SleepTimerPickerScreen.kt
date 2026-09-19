@@ -157,7 +157,10 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
     }
 }
 
-private fun formatSleepTimerRemaining(ms: Long): String {
+// Not private — reused by PlayerScreen's and MusicPlusScaffold's own live
+// "MM:SS left" badges on the sleep timer icon (Now Playing's icon row and
+// the mini-player), same formatting as this screen's own "Pausing in..." line.
+fun formatSleepTimerRemaining(ms: Long): String {
     val totalSeconds = (ms / 1000).coerceAtLeast(0)
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60

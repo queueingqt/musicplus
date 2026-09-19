@@ -106,6 +106,7 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 SettingsMenuRow("Server") { navigateTo(::ServerSettingsScreen) }

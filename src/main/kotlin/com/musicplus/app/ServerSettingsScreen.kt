@@ -97,6 +97,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             if (servers.isEmpty()) {
                 LightText(

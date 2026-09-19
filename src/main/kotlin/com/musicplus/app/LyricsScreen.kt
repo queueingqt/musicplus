@@ -126,6 +126,7 @@ class LyricsScreen(private val sealedActivity: SealedLightActivity) :
             // Playing until every duplicate pair had been popped. Reported
             // live, 2026-09-18.
             onMiniPlayerClick = { goBack() },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             // Three real, honestly-distinguished states plus loading/error —
             // never fakes timing data that isn't there:

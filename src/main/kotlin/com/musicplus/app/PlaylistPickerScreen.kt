@@ -96,6 +96,7 @@ class PlaylistPickerScreen(
                 )
             },
             onMiniPlayerClick = { navigateTo(::PlayerScreen) },
+            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightText(
                 text = "New playlist",
