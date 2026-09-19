@@ -7,10 +7,12 @@ import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.audio.LightAudio
+import com.thelightphone.sdk.audio.LightAudioErrorKind
 import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayback
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,8 +24,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Sleep timer state — ephemeral, in-memory only, by design (see
@@ -149,6 +154,17 @@ class PlaybackRepository(
     // player has genuinely loaded this queue."
     private val playerQueueLoaded = MutableStateFlow(false)
 
+    // False only while the player holds just the *starting* track of a longer
+    // queue: play() loads that one track first so audio starts at once, and
+    // extendToFullQueue swaps the whole queue in later — 30-100 s later when the
+    // rest has to be downloaded. In that window the player's own index is
+    // relative to its one-item list (always 0), not to `queue`, so anything that
+    // read it as a queue index showed queue position 0 as "now playing" — the
+    // wrong title, the marker on row 0, the wrong track scrobbled — while the
+    // audio was the track that was tapped (issue #47, seen on the phone
+    // 2026-09-19). See [playerQueueIndex].
+    private val playerHoldsFullQueue = MutableStateFlow(true)
+
     // True only for the real network-bound window inside `play()` — distinct
     // from `resolvedIndex.isPending` below, which is also true for the
     // (non-loading) "restored from disk, waiting for the user to press play"
@@ -176,6 +192,20 @@ class PlaybackRepository(
     // with a new List (same tracks, one's isFavorite patched) for reasons
     // that have nothing to do with superseding an in-flight play.
     private var playGeneration = 0
+
+    // The background full-queue rebuild started by play() — kept so the next
+    // beginPlay() can cancel it outright instead of leaving a superseded run
+    // downloading a whole queue behind the new one (issue #47).
+    private var extendJob: Job? = null
+
+    // One lock per stream-cache file name, so two callers that want the same
+    // track (a re-tapped queue row while the previous rebuild is still fetching
+    // it) share one download instead of both writing the same file (issue #47).
+    private val streamFileLocks = ConcurrentHashMap<String, Mutex>()
+
+    // Completed once restoreFromDisk() has finished or been skipped — see
+    // awaitQueueRestored().
+    private val restoreDone = CompletableDeferred<Unit>()
 
     // Nested combines rather than one wide call — kotlinx.coroutines only has typed
     // `combine` overloads up to 5 flows; this keeps every step on solid ground
@@ -214,17 +244,36 @@ class PlaybackRepository(
      * `pendingIndex` coerced into the queue's valid range; otherwise the real
      * player's index is trustworthy as-is.
      */
-    private fun resolveIndex(queueSize: Int, realIndex: Int, pendingIndex: Int, playerQueueLoaded: Boolean): ResolvedIndex {
-        return if (playerQueueLoaded && realIndex in 0 until queueSize) {
-            ResolvedIndex(realIndex, isPending = false)
-        } else {
-            ResolvedIndex(pendingIndex.coerceIn(0, (queueSize - 1).coerceAtLeast(0)), isPending = true)
+    private fun resolveIndex(
+        queueSize: Int,
+        realIndex: Int,
+        pendingIndex: Int,
+        playerQueueLoaded: Boolean,
+        playerHoldsFullQueue: Boolean,
+    ): ResolvedIndex {
+        val coercedPending = pendingIndex.coerceIn(0, (queueSize - 1).coerceAtLeast(0))
+        return when {
+            // The player holds only the starting track, so its own index is 0 no
+            // matter where that track sits in the queue — see playerHoldsFullQueue.
+            // Playback state (position, playing) is real here; only the index isn't.
+            playerQueueLoaded && !playerHoldsFullQueue -> ResolvedIndex(coercedPending, isPending = false)
+            playerQueueLoaded && realIndex in 0 until queueSize -> ResolvedIndex(realIndex, isPending = false)
+            else -> ResolvedIndex(coercedPending, isPending = true)
         }
     }
 
-    private val resolvedIndex = combine(queue, player.currentMediaItemIndex, pendingIndex, playerQueueLoaded) { q, realIndex, pending, loaded ->
-        resolveIndex(queueSize = q.size, realIndex = realIndex, pendingIndex = pending, playerQueueLoaded = loaded)
+    private val resolvedIndex = combine(queue, player.currentMediaItemIndex, pendingIndex, playerQueueLoaded, playerHoldsFullQueue) { q, realIndex, pending, loaded, holdsFull ->
+        resolveIndex(queueSize = q.size, realIndex = realIndex, pendingIndex = pending, playerQueueLoaded = loaded, playerHoldsFullQueue = holdsFull)
     }
+
+    /**
+     * The queue index the player is really on. Everything that edits or reads the
+     * queue relative to "what is playing" (remove, move, shuffle, the repeat wrap,
+     * persistence) must use this rather than `player.currentMediaItemIndex`, which
+     * is relative to whatever list the player holds — see [playerHoldsFullQueue].
+     */
+    private fun playerQueueIndex(): Int =
+        if (playerHoldsFullQueue.value) player.currentMediaItemIndex.value else pendingIndex.value
 
     private val playerCore = combine(
         resolvedIndex, player.isPlaying, player.positionMs, player.durationMs, isActivelyLoading,
@@ -358,6 +407,39 @@ class PlaybackRepository(
                     scrobbledEdge.fireOnce(s.currentIndex) { sendScrobble(track.id, submission = true) }
                 }
             }
+    }
+
+    // Playback errors (issues #47/#50). The SDK's LightAudioError only ever
+    // reached the screen as Now Playing's "Playback error: ..." line — nothing
+    // recorded it, so an ERROR_CODE_IO_UNSPECIFIED that hit right as a track
+    // started left no trace anywhere and its cause could not be worked out
+    // afterward. Logs every distinct error with the track and queue position it
+    // hit and, because a Source (I/O) failure at the very start of a track has
+    // been seen to clear on a fresh attempt, retries the current track once —
+    // at most once per AUTO_RETRY_COOLDOWN_MS per track, and only within the
+    // first AUTO_RETRY_MAX_POSITION_MS of it, so a failure mid-song never yanks
+    // the listener back to 0:00.
+    private val lastAutoRetryAtMs = HashMap<String, Long>()
+    private val playerErrorWatcher = scope.launch {
+        player.error.collect { err ->
+            if (err == null) return@collect
+            val s = currentSnapshot()
+            val track = s.currentTrack
+            AppLogger.e(
+                "PlaybackRepository",
+                "player error ${err.kind}: ${err.diagnostic} (item ${err.itemIndex}); track=${track?.id} " +
+                    "\"${track?.title}\" queueIndex=${s.currentIndex} of ${s.queue.size} position=${s.positionMs}ms",
+            )
+            if (err.kind != LightAudioErrorKind.Source || track == null) return@collect
+            if (s.positionMs > AUTO_RETRY_MAX_POSITION_MS) return@collect
+            val now = System.currentTimeMillis()
+            val last = lastAutoRetryAtMs[track.id]
+            if (last != null && now - last < AUTO_RETRY_COOLDOWN_MS) return@collect
+            lastAutoRetryAtMs[track.id] = now
+            AppLogger.d("PlaybackRepository", "auto-retrying ${track.id} once after ${err.diagnostic}")
+            delay(AUTO_RETRY_DELAY_MS)
+            if (s.currentIndex in s.queue.indices) playAsync(s.queue, s.currentIndex, currentAlbumArtUrl.value)
+        }
     }
 
     /**
@@ -507,7 +589,11 @@ class PlaybackRepository(
     // restoreFromDisk's doc for the restore itself.
     init {
         scope.launch {
-            restoreFromDisk()
+            try {
+                restoreFromDisk()
+            } finally {
+                restoreDone.complete(Unit)
+            }
             queue.collect { tracks -> queueDao.replaceQueue(tracks.map { it.id }) }
         }
     }
@@ -588,7 +674,7 @@ class PlaybackRepository(
         if (!playerQueueLoaded.value) return
         val tracks = queue.value
         if (tracks.isEmpty()) return
-        val index = player.currentMediaItemIndex.value.coerceIn(0, tracks.lastIndex)
+        val index = playerQueueIndex().coerceIn(0, tracks.lastIndex)
         playbackStateRepository.save(
             PlaybackStateRepository.Saved(
                 currentIndex = index,
@@ -622,6 +708,7 @@ class PlaybackRepository(
             realIndex = player.currentMediaItemIndex.value,
             pendingIndex = pendingIndex.value,
             playerQueueLoaded = playerQueueLoaded.value,
+            playerHoldsFullQueue = playerHoldsFullQueue.value,
         )
         val isPending = resolved.isPending
         val index = resolved.index
@@ -670,6 +757,11 @@ class PlaybackRepository(
             val startItem = tracks[startIndex].toAudioItem(api)
             AppLogger.d("PlaybackRepository", "play(): starting track resolved, calling setMediaQueue")
             player.setMediaQueue(listOf(startItem), 0)
+            // Only the starting track is in the player for now, unless it is the
+            // whole queue — extendToFullQueue flips this once the full queue lands.
+            // Set before playerQueueLoaded so there is no moment where the player's
+            // one-item index 0 is read as a queue index.
+            playerHoldsFullQueue.value = tracks.size <= 1
             playerQueueLoaded.value = true
             player.play()
         } finally {
@@ -682,7 +774,7 @@ class PlaybackRepository(
         persistScalarStateIfLoaded()
 
         if (tracks.size > 1) {
-            scope.launch { extendToFullQueue(tracks, startIndex, api, myGeneration) }
+            extendJob = scope.launch { extendToFullQueue(tracks, startIndex, api, myGeneration) }
         }
     }
 
@@ -705,13 +797,30 @@ class PlaybackRepository(
      * now-stale extension landing after it.
      */
     private suspend fun extendToFullQueue(tracks: List<Track>, startIndex: Int, api: SubsonicApi, generation: Int) {
-        val items = tracks.map { it.toAudioItem(api) }
+        // Resolved one track at a time, checking the generation before each:
+        // for a track that isn't cached yet, toAudioItem is a full download, and
+        // the old all-at-once `tracks.map { ... }` only checked after every track
+        // was fetched — so a superseded run kept downloading an entire queue (35
+        // tracks was ~100 s on the phone) after a later tap had already replaced
+        // it, racing the newer run over the same cache files (issue #47).
+        // beginPlay() also cancels extendJob outright; this check covers the gap
+        // between two downloads.
+        val items = ArrayList<LightAudioItem>(tracks.size)
+        for (track in tracks) {
+            if (playGeneration != generation) return
+            items += track.toAudioItem(api)
+        }
         if (playGeneration != generation) return // superseded while resolving — nothing to extend anymore
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
         queue.value = tracks
         pendingIndex.value = startIndex
         player.setMediaQueue(items, startIndex)
+        // The player now holds the whole queue. Flip only once its own index has
+        // caught up to startIndex, so the switch from pendingIndex to the player's
+        // index changes nothing on screen (issue #47).
+        withTimeoutOrNull(FULL_QUEUE_SWAP_WAIT_MS) { player.currentMediaItemIndex.first { it == startIndex } }
+        if (playGeneration == generation) playerHoldsFullQueue.value = true
         withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
             player.durationMs.first { it > 0L }
         }
@@ -742,6 +851,9 @@ class PlaybackRepository(
         // just the `queue.value =` write two lines down.
         hasStartedRealPlay = true
         playGeneration++
+        // Whatever full-queue rebuild the previous play() left running is now
+        // superseded — stop it instead of letting it keep downloading (issue #47).
+        extendJob?.cancel()
         queue.value = tracks
         pendingIndex.value = startIndex
         currentAlbumArtUrl.value = albumArtUrl
@@ -793,11 +905,40 @@ class PlaybackRepository(
      */
     suspend fun addToQueue(tracks: List<Track>) {
         if (tracks.isEmpty()) return
+        // A queue that is still being restored from disk looks empty. Without
+        // waiting, the first "add to queue" after the app starts took the
+        // empty-queue branch below, started playing, and threw away the saved
+        // queue (seen on the phone, 2026-09-19: a saved 35-track queue became 1).
+        awaitQueueRestored()
         if (queue.value.isEmpty()) {
             play(tracks, 0)
             return
         }
         rebuildQueue(queue.value + tracks)
+    }
+
+    /**
+     * [addToQueue] on this repository's own [scope], for a caller that isn't a
+     * suspend function (a confirmation dialog's callback) and must not depend on
+     * a screen's scope, which is cancelled once that screen is covered. [onDone]
+     * runs after the tracks are queued.
+     */
+    fun addToQueueAsync(tracks: List<Track>, onDone: () -> Unit = {}) {
+        scope.launch {
+            addToQueue(tracks)
+            onDone()
+        }
+    }
+
+    /**
+     * Suspends until the persisted queue has been restored (or restore was
+     * skipped because a real play already started), for at most
+     * [RESTORE_WAIT_MS]. Anything that inspects [queue] on behalf of the user —
+     * the "already in the queue" check, [addToQueue] — has to wait for this, or
+     * right after launch it sees an empty queue.
+     */
+    suspend fun awaitQueueRestored() {
+        withTimeoutOrNull(RESTORE_WAIT_MS) { restoreDone.await() }
     }
 
     /**
@@ -814,7 +955,7 @@ class PlaybackRepository(
     suspend fun clearQueue() {
         val current = queue.value
         if (current.isEmpty()) return
-        val currentIndex = player.currentMediaItemIndex.value.coerceIn(0, current.lastIndex)
+        val currentIndex = playerQueueIndex().coerceIn(0, current.lastIndex)
         rebuildQueue(listOf(current[currentIndex]))
     }
 
@@ -841,7 +982,7 @@ class PlaybackRepository(
      */
     suspend fun removeFromQueue(index: Int) {
         val current = queue.value
-        val currentIndex = player.currentMediaItemIndex.value
+        val currentIndex = playerQueueIndex()
         if (index !in current.indices || index <= currentIndex) return
         rebuildQueue(current.toMutableList().also { it.removeAt(index) })
     }
@@ -853,7 +994,7 @@ class PlaybackRepository(
      */
     suspend fun moveQueueItem(index: Int, delta: Int) {
         val current = queue.value
-        val currentIndex = player.currentMediaItemIndex.value
+        val currentIndex = playerQueueIndex()
         val targetIndex = index + delta
         if (index !in current.indices || targetIndex !in current.indices) return
         if (index <= currentIndex || targetIndex <= currentIndex) return
@@ -897,7 +1038,7 @@ class PlaybackRepository(
     private suspend fun rebuildQueue(newQueue: List<Track>, explicitIndex: Int? = null) {
         if (!player.awaitReady()) return
         val api = apiHolder.get() ?: return
-        val currentIndex = explicitIndex ?: player.currentMediaItemIndex.value.coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
+        val currentIndex = explicitIndex ?: playerQueueIndex().coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
         queue.value = newQueue
@@ -906,6 +1047,9 @@ class PlaybackRepository(
         withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
             player.durationMs.first { it > 0L }
         }
+        // A queue edit loads the whole queue into the player, even if it happened
+        // while only the starting track was loaded — see playerHoldsFullQueue.
+        playerHoldsFullQueue.value = true
         player.seekTo(savedPositionMs)
         if (wasPlaying) player.play()
     }
@@ -936,6 +1080,18 @@ class PlaybackRepository(
         if (player.isPlaying.value) {
             player.pause()
             scope.launch { persistScalarStateIfLoaded() }
+        } else if (player.error.value != null) {
+            // After a playback error the player sits idle until it is prepared
+            // again, so a bare play() does nothing — pressing play left the error
+            // on screen for good (seen on the phone, 2026-09-19, issue #50).
+            // Restart the current track instead, exactly as tapping it in the
+            // queue does.
+            val s = currentSnapshot()
+            if (s.currentIndex in s.queue.indices) {
+                playAsync(s.queue, s.currentIndex, currentAlbumArtUrl.value)
+            } else {
+                player.play()
+            }
         } else {
             player.play()
         }
@@ -956,7 +1112,7 @@ class PlaybackRepository(
      */
     fun skipToNext() {
         val current = queue.value
-        if (repeatMode.value == RepeatMode.REPEAT_QUEUE && player.currentMediaItemIndex.value == current.lastIndex) {
+        if (repeatMode.value == RepeatMode.REPEAT_QUEUE && playerQueueIndex() == current.lastIndex) {
             scope.launch { play(current, 0) }
         } else {
             player.skipToNext()
@@ -966,7 +1122,7 @@ class PlaybackRepository(
     /** Same fix as [skipToNext], the other direction — tapping "previous" on the first track under REPEAT_QUEUE wraps to the last one instead of doing nothing. */
     fun skipToPrevious() {
         val current = queue.value
-        if (repeatMode.value == RepeatMode.REPEAT_QUEUE && player.currentMediaItemIndex.value == 0) {
+        if (repeatMode.value == RepeatMode.REPEAT_QUEUE && playerQueueIndex() == 0) {
             scope.launch { play(current, current.lastIndex) }
         } else {
             player.skipToPrevious()
@@ -1036,7 +1192,7 @@ class PlaybackRepository(
 
     private suspend fun applyShuffle(enabled: Boolean) {
         val current = queue.value
-        val currentIndex = player.currentMediaItemIndex.value.coerceIn(0, (current.size - 1).coerceAtLeast(0))
+        val currentIndex = playerQueueIndex().coerceIn(0, (current.size - 1).coerceAtLeast(0))
         if (currentIndex !in current.indices) return
         val currentTrack = current[currentIndex]
         val rest = current.filterIndexed { i, _ -> i != currentIndex }
@@ -1101,6 +1257,7 @@ class PlaybackRepository(
         preShuffleOrder.value = null
         currentAlbumArtUrl.value = null
         playerQueueLoaded.value = false
+        playerHoldsFullQueue.value = true
         restoredPositionMs = 0L
         cancelSleepTimer()
     }
@@ -1124,8 +1281,15 @@ class PlaybackRepository(
      */
     private suspend fun Track.toAudioItem(api: SubsonicApi): LightAudioItem {
         val maxBitRateKbps = currentStreamMaxBitRateKbps()
+        // The queue keeps the Track it was built (or restored) with, so a download
+        // removed afterwards leaves localFilePath pointing at a file that is gone —
+        // jumping back to that song then failed with ERROR_CODE_IO_FILE_NOT_FOUND
+        // (seen on the phone, 2026-09-19, after removing a download from Now
+        // Playing). Trust the path only while the file is really there; otherwise
+        // play it the way an undownloaded song is played.
+        val downloadedFile = localFilePath?.let { File(it) }?.takeIf { it.isFile }
         val source = when {
-            localFilePath != null -> LightAudioSource.FileSource(File(localFilePath))
+            downloadedFile != null -> LightAudioSource.FileSource(downloadedFile)
             api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
             else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps))
         }
@@ -1170,28 +1334,46 @@ class PlaybackRepository(
      */
     private suspend fun Track.cachedStreamFile(api: SubsonicApi, maxBitRateKbps: Int?): File {
         val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
-        val cached = File(cacheDir, "$id-${maxBitRateKbps ?: "orig"}.mp3")
-        if (!cached.exists()) {
+        val name = "$id-${maxBitRateKbps ?: "orig"}.mp3"
+        val cached = File(cacheDir, name)
+        if (cached.exists()) {
+            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")
+            return cached
+        }
+        // One download per file at a time, and written under a temporary name
+        // then moved into place (issue #47): a file at `cached`'s path is now
+        // always a finished one. Before, the download wrote straight to that
+        // path, so a second caller arriving mid-download (the rebuild a queue
+        // tap superseded, still running beside the new one — both visible in the
+        // 2026-09-19 12:00 log) saw "already cached" on a half-written file, or
+        // started a second download writing into the same file, and a cancelled
+        // download deleted whatever was at that path.
+        return streamFileLocks.getOrPut(name) { Mutex() }.withLock {
+            if (cached.exists()) {
+                AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")
+                return@withLock cached
+            }
             AppLogger.d("PlaybackRepository", "cachedStreamFile($id): not cached, downloading")
+            val part = File(cacheDir, "$name.part")
             try {
                 // Streams straight to disk — see SubsonicClient.downloadToFile's
                 // doc: the old `cached.writeBytes(api.streamBytes(id))` briefly
                 // held the whole track as one in-memory ByteArray, which crashed
                 // the app outright (OutOfMemoryError) on a real ~30MB track.
-                api.streamToFile(id, cached, maxBitRateKbps)
+                api.streamToFile(id, part, maxBitRateKbps)
+                if (!part.renameTo(cached)) throw java.io.IOException("could not move $name.part into place")
                 AppLogger.d("PlaybackRepository", "cachedStreamFile($id): write complete")
             } catch (e: Exception) {
-                // A failed/interrupted download can leave a truncated file at
-                // `cached`'s path — the exists() check above would otherwise
-                // treat that as a legitimate cache hit forever after, playing
-                // back a corrupt partial file instead of ever retrying.
-                cached.delete()
+                // A failed, interrupted or cancelled download now only ever
+                // leaves its own .part file, never something at `cached`'s path
+                // that the exists() check above would treat as a cache hit —
+                // which is what used to play back a corrupt partial file instead
+                // of ever retrying.
+                part.delete()
                 throw e
             }
-        } else {
-            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")
+            cached
         }
-        return cached
     }
 
     private companion object {
@@ -1200,6 +1382,21 @@ class PlaybackRepository(
 
         /** See [nearEndCompletionWatcher]'s doc — how close to the end counts as "finished" for the REPEAT_TRACK/REPEAT_QUEUE workaround. */
         const val NEAR_END_THRESHOLD_MS = 500L
+
+        /** See [awaitQueueRestored] — the longest anything waits for the saved queue to be restored. */
+        const val RESTORE_WAIT_MS = 3_000L
+
+        /** See [extendToFullQueue] — the longest it waits for the player's own index to reach the start index after the full queue is swapped in. */
+        const val FULL_QUEUE_SWAP_WAIT_MS = 2_000L
+
+        /** See [playerErrorWatcher]'s doc — only an error this early in a track is retried automatically. */
+        const val AUTO_RETRY_MAX_POSITION_MS = 3_000L
+
+        /** See [playerErrorWatcher]'s doc — the same track is auto-retried at most once per this long. */
+        const val AUTO_RETRY_COOLDOWN_MS = 30_000L
+
+        /** See [playerErrorWatcher]'s doc — a beat before retrying, so the player has settled after the error. */
+        const val AUTO_RETRY_DELAY_MS = 750L
 
         /** See [statePersistenceWatcher]'s doc — how often the resume position is checkpointed to disk during ordinary playback. */
         const val STATE_PERSIST_INTERVAL_MS = 5_000L
