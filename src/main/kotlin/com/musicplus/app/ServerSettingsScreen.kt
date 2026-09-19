@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.ServerConfigRepository
 import com.musicplus.app.data.ServerProfile
 import com.thelightphone.sdk.LightScreen
@@ -29,9 +30,7 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -46,11 +45,14 @@ class ServerSettingsScreenViewModel(
     private val serverConfigRepository: ServerConfigRepository,
 ) : LightViewModel<Unit>() {
 
-    val servers: StateFlow<List<ServerProfile>> = serverConfigRepository.servers
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // AppServerPrefs, not serverConfigRepository directly — this screen gets
+    // a fresh ViewModel (and a fresh `.stateIn(...)`) every time it's
+    // navigated to, seeded emptyList()/null before the real DataStore Flow
+    // catches up — briefly flashed "No servers yet" even with servers
+    // already saved. Reported live, 2026-09-18. See AppServerPrefs's own doc.
+    val servers: StateFlow<List<ServerProfile>> = AppServerPrefs.servers
 
-    val activeServerId: StateFlow<String?> = serverConfigRepository.activeServerId
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val activeServerId: StateFlow<String?> = AppServerPrefs.activeServerId
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {}
 

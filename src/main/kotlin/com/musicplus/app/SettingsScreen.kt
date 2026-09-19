@@ -9,6 +9,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppDebugPrefs
+import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.LocalDataRepository
@@ -54,15 +56,20 @@ class SettingsScreenViewModel(
     val pendingSyncCount: StateFlow<Int> = syncQueueRepository.pendingCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    val showAlbumArtwork: StateFlow<Boolean> = appSettingsRepository.showAlbumArtwork
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    // AppDisplayPrefs/AppDebugPrefs, not appSettingsRepository directly — this
+    // screen gets a fresh ViewModel (and a fresh `.stateIn(...)`) every time
+    // it's opened, seeded from a hardcoded default before the real DataStore
+    // Flow catches up. Same root cause as Server's "No servers yet" flash
+    // (see AppServerPrefs's doc) — only visible here for someone who's
+    // actually toggled either off, since the seed happens to match the
+    // default otherwise, but the same gap.
+    val showAlbumArtwork: StateFlow<Boolean> = AppDisplayPrefs.showAlbumArtwork
 
     fun toggleShowAlbumArtwork() {
         viewModelScope.launch { appSettingsRepository.setShowAlbumArtwork(!showAlbumArtwork.value) }
     }
 
-    val debugLoggingEnabled: StateFlow<Boolean> = appSettingsRepository.debugLoggingEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val debugLoggingEnabled: StateFlow<Boolean> = AppDebugPrefs.debugLoggingEnabled
 
     fun toggleDebugLogging() {
         viewModelScope.launch { appSettingsRepository.setDebugLoggingEnabled(!debugLoggingEnabled.value) }

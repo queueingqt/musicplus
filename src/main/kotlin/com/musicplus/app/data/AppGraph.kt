@@ -87,11 +87,15 @@ object AppGraph {
         mirrorInto(appSettingsRepository.debugLoggingEnabled) {
             AppLogger.setEnabled(it)
             CrashReporter.setEnabled(it)
+            AppDebugPrefs.setDebugLoggingEnabled(it)
         }
         mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs::setShowAlbumArtwork)
         mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs::setStreamQualityWifi)
         mirrorInto(appSettingsRepository.streamQualityCellular, AppQualityPrefs::setStreamQualityCellular)
         mirrorInto(appSettingsRepository.downloadQuality, AppQualityPrefs::setDownloadQuality)
+        mirrorInto(serverConfigRepository.servers, AppServerPrefs::setServers)
+        mirrorInto(serverConfigRepository.activeServerId, AppServerPrefs::setActiveServerId)
+        mirrorInto(serverConfigRepository.serverConfig.map { it != null }, AppServerPrefs::setIsConfigured)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         val database = MusicPlusDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible

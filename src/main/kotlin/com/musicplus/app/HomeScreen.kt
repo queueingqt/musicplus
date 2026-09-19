@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.VersionCheckRepository
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
@@ -35,9 +36,14 @@ import kotlinx.coroutines.launch
 class HomeScreenViewModel(
     private val graph: AppGraph.Graph,
 ) : LightViewModel<Unit>() {
-    val isConfigured: StateFlow<Boolean> = graph.serverConfigRepository.serverConfig
-        .map { it != null }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    // AppServerPrefs, not graph.serverConfigRepository.serverConfig directly —
+    // this screen gets a fresh ViewModel (and a fresh `.stateIn(...)`) every
+    // time it's navigated back to, seeded `false` before the real DataStore
+    // Flow catches up — briefly hid the search icon even with a server
+    // already configured. Reported live, 2026-09-18 — same root cause as
+    // Settings' "Server" row flashing "No servers yet" (see AppServerPrefs's
+    // own doc), already fixed once before for AppDisplayPrefs/AppQualityPrefs.
+    val isConfigured: StateFlow<Boolean> = AppServerPrefs.isConfigured
 
     // Drives the "*" marker on the Settings row below — VersionCheckRepository
     // itself decides whether newerVersion is non-null (a real newer release).
