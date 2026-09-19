@@ -8,14 +8,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -26,9 +25,7 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class PlaylistPickerScreenViewModel(
@@ -36,12 +33,10 @@ class PlaylistPickerScreenViewModel(
     private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
-    val playlists: StateFlow<List<Playlist>> = playlistRepository.observePlaylists()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch { playlistRepository.refreshPlaylists() }
-    }
+    // See AppLibraryCache's doc — reads the already-live, process-lifetime
+    // cache instead of re-subscribing to playlistRepository.observePlaylists()
+    // on every fresh per-visit ViewModel.
+    val playlists: StateFlow<List<Playlist>> = AppLibraryCache.playlists.value
 
     suspend fun addToExisting(playlistId: String, songId: String) {
         syncQueueRepository.addTrack(playlistId, songId)
@@ -86,6 +81,7 @@ class PlaylistPickerScreen(
         val playlists by viewModel.playlists.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(
@@ -95,8 +91,6 @@ class PlaylistPickerScreen(
                     center = LightTopBarCenter.Text("Add to playlist"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightText(
                 text = "New playlist",

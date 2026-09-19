@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.playbackRepository
@@ -22,7 +23,6 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
@@ -37,10 +37,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 
 class AlbumListScreenViewModel(
     private val libraryRepository: LibraryRepository,
@@ -48,8 +46,11 @@ class AlbumListScreenViewModel(
     private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
-    private val allAlbums: StateFlow<List<Album>> = libraryRepository.observeAlbums()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // Reads the already-live, process-lifetime cache instead of re-subscribing
+    // to libraryRepository.observeAlbums() itself — see AppLibraryCache's own
+    // doc for why a fresh per-visit stateIn() here was the actual root cause
+    // of Albums' reported per-visit load delay, not just a cold-start cost.
+    private val allAlbums: StateFlow<List<Album>> = AppLibraryCache.albums.value
 
     private val _filter = MutableStateFlow("")
     val filter: StateFlow<String> = _filter
@@ -57,17 +58,12 @@ class AlbumListScreenViewModel(
     // Client-side filter over the already-cached list — a search-within-this-screen
     // affordance, distinct in purpose from SearchScreen's server-side search3 call
     // across all categories.
-    val albums: StateFlow<List<Album>> = combine(allAlbums, _filter) { albums, query ->
-        if (query.isBlank()) albums
-        else albums.filter { it.name.contains(query, ignoreCase = true) || it.artistName?.contains(query, ignoreCase = true) == true }
+    val albums: StateFlow<List<Album>> = filteredBy(allAlbums, _filter) { album, query ->
+        album.name.contains(query, ignoreCase = true) || album.artistName?.contains(query, ignoreCase = true) == true
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setFilter(query: String) {
         _filter.value = query
-    }
-
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch { libraryRepository.refreshAlbumList() }
     }
 
     // See SelfLoadingTrackList.kt — reported live: choosing "Download album" from
@@ -109,6 +105,7 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
         val filter by viewModel.filter.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -124,8 +121,6 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
                     ),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             // Inside, not Outside — see AlbumDetailScreen's identical call site
             // for why (Outside's gutter width isn't known until after first

@@ -60,9 +60,21 @@ class DownloadRepository(
         )
     }
 
+    /**
+     * Reads the real on-disk path off the entity's own [DownloadEntity.localFilePath]
+     * — not reconstructed by guessing an extension. Reported live: this used to call
+     * a [localFile] helper that always assumed `.mp3`, but [downloadTrack] only ever
+     * writes `.mp3` when a quality cap forces server-side transcoding; a track
+     * downloaded at "Original" quality (the default) is saved under its real source
+     * suffix (flac/ogg/m4a/wav/...). Cancelling one of those silently deleted the
+     * wrong (nonexistent) file, leaving the real audio orphaned on disk forever while
+     * the DB row — and therefore the UI — reported it as removed. The entity already
+     * has the one true path (written by [downloadTrack] on COMPLETE); this just reads
+     * it back instead of re-deriving a guess.
+     */
     suspend fun cancel(lightContext: SealedLightContext, songId: String) {
         LightWork.cancel(lightContext, jobKeyOrTag = songId)
-        localFile(lightContext, songId)?.delete()
+        downloadDao.getBySongId(songId)?.localFilePath?.let { File(it).delete() }
         downloadDao.delete(songId)
     }
 
@@ -86,11 +98,6 @@ class DownloadRepository(
                 tag = entity.songId,
             )
         }
-    }
-
-    fun localFile(lightContext: SealedLightContext, songId: String, suffix: String = "mp3"): File? {
-        val dir = File(lightContext.filesDir, "downloads")
-        return File(dir, "$songId.$suffix")
     }
 }
 

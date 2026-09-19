@@ -74,6 +74,7 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
         val state by viewModel.state.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

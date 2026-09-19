@@ -18,6 +18,10 @@ interface ArtistDao {
     @Query("SELECT * FROM artists WHERE starred = 1 ORDER BY name COLLATE NOCASE")
     fun observeFavorites(): Flow<List<ArtistEntity>>
 
+    /** See [TrackDao.search]'s doc — same local-cache fallback, same LIKE-match shape. */
+    @Query("SELECT * FROM artists WHERE name LIKE '%' || :query || '%' LIMIT :limit")
+    suspend fun search(query: String, limit: Int = 50): List<ArtistEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(artists: List<ArtistEntity>)
 
@@ -41,6 +45,10 @@ interface AlbumDao {
 
     @Query("SELECT * FROM albums WHERE starred = 1 ORDER BY name COLLATE NOCASE")
     fun observeFavorites(): Flow<List<AlbumEntity>>
+
+    /** See [TrackDao.search]'s doc — same local-cache fallback, same LIKE-match shape. */
+    @Query("SELECT * FROM albums WHERE name LIKE '%' || :query || '%' OR artistName LIKE '%' || :query || '%' LIMIT :limit")
+    suspend fun search(query: String, limit: Int = 50): List<AlbumEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(albums: List<AlbumEntity>)
@@ -69,6 +77,19 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE starred = 1 ORDER BY title COLLATE NOCASE")
     fun observeFavorites(): Flow<List<TrackEntity>>
 
+    /**
+     * [LibraryRepository.search]'s offline/failed-request fallback — the live
+     * search hits Subsonic's own `search3` (relevance-ranked, full-catalog,
+     * not just what's already cached), but that's unusable when offline or
+     * when the configured server is unreachable (e.g. a Tailscale-hosted
+     * server with Tailscale disconnected — the exact case reported live,
+     * 2026-09-18, that this fallback exists for). A plain `LIKE` match
+     * against whatever's already in Room is worse (substring-only, no
+     * relevance ranking, and only covers tracks/albums/artists actually
+     * cached locally) but far better than the blank results this screen
+     * showed before. `limit` matches search3's own default page size so the
+     * two code paths feel similar in scale.
+     */
     @Query("SELECT * FROM tracks WHERE title LIKE '%' || :query || '%' OR artistName LIKE '%' || :query || '%' LIMIT :limit")
     suspend fun search(query: String, limit: Int = 50): List<TrackEntity>
 

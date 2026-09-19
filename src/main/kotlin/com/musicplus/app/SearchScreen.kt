@@ -14,7 +14,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.DownloadRepository
+import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
+import com.musicplus.app.data.SyncQueueRepository
 import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -35,11 +38,31 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class SearchScreenViewModel(
     private val libraryRepository: LibraryRepository,
+    private val downloadRepository: DownloadRepository,
+    private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
+
+    // Also missing entirely before — track results had no favorite action
+    // and Track.isFavorite (already correctly populated by search()) was
+    // never even read by the row.
+    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
+
+    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
+        when (currentStatus) {
+            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
+                downloadRepository.cancel(lightContext, track.id)
+                null
+            }
+            DownloadStatus.FAILED, null -> {
+                downloadRepository.enqueue(lightContext, track)
+                DownloadStatus.QUEUED
+            }
+        }
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
@@ -98,7 +121,10 @@ class SearchScreen(private val activity: SealedLightActivity) :
 
     override val viewModelClass = SearchScreenViewModel::class.java
 
-    override fun createViewModel() = SearchScreenViewModel(AppGraph.from(lightContext).libraryRepository)
+    override fun createViewModel(): SearchScreenViewModel {
+        val graph = AppGraph.from(lightContext)
+        return SearchScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository)
+    }
 
     @Composable
     override fun Content() {
@@ -144,14 +170,13 @@ class SearchScreen(private val activity: SealedLightActivity) :
         if (!hadAlreadyOpened || leavingBlank) return
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Search"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightTextField(
                 label = "Search",
@@ -169,7 +194,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
 
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc
-            // (issue #39): ResultRowWithArt's/TrackResultRow's maxLines=1/
+            // (issue #39): ResultRowWithArt's/TrackRow's maxLines=1/
             // Ellipsis titles are width-dependent, so on Outside they briefly
             // rendered wider (less truncated) on the first frame, then
             // visibly snapped narrower once the scrollbar's real gutter was
@@ -194,9 +219,17 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 }
                 item { SectionHeader("Tracks") }
                 items(tracks, key = { "track-${it.id}" }) { track ->
-                    TrackResultRow(
-                        lightContext = lightContext,
+                    TrackRow(
                         track = track,
+                        downloadStatus = track.downloadStatus,
+                        leading = {
+                            AlbumArt(
+                                lightContext = lightContext,
+                                url = track.coverArtUrl,
+                                size = 2.5f.gridUnitsAsDp(),
+                                modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
+                            )
+                        },
                         onPlay = {
                             // playAsync() updates title/art synchronously and
                             // continues loading on PlaybackRepository's own scope,
@@ -208,25 +241,31 @@ class SearchScreen(private val activity: SealedLightActivity) :
                         },
                         onOpenActions = {
                             navigateTo({ a ->
-                                lateinit var addToQueueItem: ActionMenuItem
-                                addToQueueItem = ActionMenuItem(
-                                    icon = LightIcons.ADD,
-                                    label = "Add to queue",
-                                    onSelect = ActionMenuSelection.Perform {
-                                        playbackRepository(activity, lightContext).addToQueue(listOf(track))
-                                        addToQueueItem
-                                    },
-                                )
+                                val addToQueueItem = addToQueueActionItem("Add to queue") {
+                                    playbackRepository(activity, lightContext).addToQueue(listOf(track))
+                                }
                                 ActionsMenuScreen(
                                     activity = a,
                                     subtitle = track.title,
                                     items = listOf(
+                                        favoriteActionItem(track.isFavorite) { favorite ->
+                                            viewModel.setTrackFavorite(track.id, favorite)
+                                        },
                                         addToQueueItem,
                                         ActionMenuItem(
                                             icon = LightIcons.LIST,
                                             label = "Add to playlist",
                                             onSelect = ActionMenuSelection.Navigate {
                                                 navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
+                                            },
+                                        ),
+                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
+                                            viewModel.toggleDownload(lightContext, track, newStatus)
+                                        }.copy(
+                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
+                                                trackDownloadActionItem(entity?.status) { newStatus ->
+                                                    viewModel.toggleDownload(lightContext, track, newStatus)
+                                                }
                                             },
                                         ),
                                     ),
@@ -289,36 +328,4 @@ private fun ResultRowWithArt(lightContext: SealedLightContext, label: String, co
     }
 }
 
-/** Tap to play (unchanged); long-press for the action menu (add to queue, add to playlist — issue #16). */
-@Composable
-private fun TrackResultRow(
-    lightContext: SealedLightContext,
-    track: Track,
-    onPlay: () -> Unit,
-    onOpenActions: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
-            // end matches the SDK's own scrollbar track width — see the
-            // LightLazyScrollView call site above for why this is fixed
-            // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AlbumArt(
-            lightContext = lightContext,
-            url = track.coverArtUrl,
-            size = 2.5f.gridUnitsAsDp(),
-            modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
-        )
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
+// Track rows moved to the shared TrackRow.kt module — see its doc.

@@ -55,9 +55,9 @@ class QualitySettingsScreenViewModel(
     // as the settings "glitching" on open. AppQualityPrefs is warmed once at app
     // start (see AppGraph.build), so by the time this screen mounts it already
     // reflects the real values — same fix already used for AppDisplayPrefs.
-    val wifiQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityWifi
-    val cellularQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityCellular
-    val downloadQuality: StateFlow<Int?> = AppQualityPrefs.downloadQuality
+    val wifiQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityWifi.value
+    val cellularQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityCellular.value
+    val downloadQuality: StateFlow<Int?> = AppQualityPrefs.downloadQuality.value
 
     fun setWifiQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityWifi(maxBitRateKbps) }
     fun setCellularQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityCellular(maxBitRateKbps) }
@@ -78,14 +78,13 @@ class QualitySettingsScreen(activity: SealedLightActivity) :
         val downloadQuality by viewModel.downloadQuality.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Quality Settings"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 QualityMenuRow(label = "Wi-Fi", current = wifiQuality) {

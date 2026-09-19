@@ -79,6 +79,7 @@ class AlbumArtScreen(private val sealedActivity: SealedLightActivity) :
         // a mini-player row at the bottom would just eat into that space for
         // a control that's a single tap of the top-bar back button away.
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

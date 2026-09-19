@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.SyncQueueRepository
@@ -20,7 +21,6 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
@@ -34,7 +34,6 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -44,22 +43,20 @@ class ArtistListScreenViewModel(
     private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
-    private val allArtists: StateFlow<List<Artist>> = libraryRepository.observeArtists()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // See AppLibraryCache's doc — reads the already-live, process-lifetime
+    // cache instead of re-subscribing to libraryRepository.observeArtists()
+    // on every fresh per-visit ViewModel.
+    private val allArtists: StateFlow<List<Artist>> = AppLibraryCache.artists.value
 
     private val _filter = MutableStateFlow("")
     val filter: StateFlow<String> = _filter
 
-    val artists: StateFlow<List<Artist>> = combine(allArtists, _filter) { artists, query ->
-        if (query.isBlank()) artists else artists.filter { it.name.contains(query, ignoreCase = true) }
+    val artists: StateFlow<List<Artist>> = filteredBy(allArtists, _filter) { artist, query ->
+        artist.name.contains(query, ignoreCase = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setFilter(query: String) {
         _filter.value = query
-    }
-
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch { libraryRepository.refreshArtists() }
     }
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
@@ -89,6 +86,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
         val filter by viewModel.filter.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -104,8 +102,6 @@ class ArtistListScreen(activity: SealedLightActivity) :
                     ),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc

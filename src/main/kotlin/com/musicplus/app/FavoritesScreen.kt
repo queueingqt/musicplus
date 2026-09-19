@@ -12,7 +12,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
+import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.SyncQueueRepository
@@ -20,7 +22,6 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -34,7 +35,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -44,28 +44,26 @@ class FavoritesScreenViewModel(
     private val downloadRepository: DownloadRepository,
 ) : LightViewModel<Unit>() {
 
-    private val allArtists: StateFlow<List<Artist>> = libraryRepository.observeFavoriteArtists()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private val allAlbums: StateFlow<List<Album>> = libraryRepository.observeFavoriteAlbums()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private val allTracks: StateFlow<List<Track>> = libraryRepository.observeFavoriteTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // See AppLibraryCache's doc — reads the already-live, process-lifetime
+    // cache instead of re-subscribing to libraryRepository.observeFavorite*()
+    // on every fresh per-visit ViewModel.
+    private val allArtists: StateFlow<List<Artist>> = AppLibraryCache.favoriteArtists.value
+    private val allAlbums: StateFlow<List<Album>> = AppLibraryCache.favoriteAlbums.value
+    private val allTracks: StateFlow<List<Track>> = AppLibraryCache.favoriteTracks.value
 
     private val _filter = MutableStateFlow("")
     val filter: StateFlow<String> = _filter
 
-    val artists: StateFlow<List<Artist>> = combine(allArtists, _filter) { list, q ->
-        if (q.isBlank()) list else list.filter { it.name.contains(q, ignoreCase = true) }
+    val artists: StateFlow<List<Artist>> = filteredBy(allArtists, _filter) { artist, q ->
+        artist.name.contains(q, ignoreCase = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val albums: StateFlow<List<Album>> = combine(allAlbums, _filter) { list, q ->
-        if (q.isBlank()) list else list.filter { it.name.contains(q, ignoreCase = true) }
+    val albums: StateFlow<List<Album>> = filteredBy(allAlbums, _filter) { album, q ->
+        album.name.contains(q, ignoreCase = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val tracks: StateFlow<List<Track>> = combine(allTracks, _filter) { list, q ->
-        if (q.isBlank()) list else list.filter { it.title.contains(q, ignoreCase = true) }
+    val tracks: StateFlow<List<Track>> = filteredBy(allTracks, _filter) { track, q ->
+        track.title.contains(q, ignoreCase = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setFilter(query: String) {
@@ -95,11 +93,17 @@ class FavoritesScreenViewModel(
     suspend fun tracksForAlbum(albumId: String): List<Track> =
         SelfLoadingTrackList.forAlbum(libraryRepository, albumId).tracks()
 
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        // No-op — favorites are derived from the local `starred` cache column, kept
-        // current by the various refresh*() calls elsewhere and by setXFavorite's own
-        // optimistic write. LibraryRepository has no separate "refresh favorites" call.
-    }
+    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
+        when (currentStatus) {
+            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
+                downloadRepository.cancel(lightContext, track.id)
+                null
+            }
+            DownloadStatus.FAILED, null -> {
+                downloadRepository.enqueue(lightContext, track)
+                DownloadStatus.QUEUED
+            }
+        }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
@@ -123,6 +127,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
         val filter by viewModel.filter.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -138,8 +143,6 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                     ),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc
@@ -213,8 +216,14 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 }
                 item { SectionHeader("Tracks") }
                 items(tracks, key = { "track-${it.id}" }) { track ->
-                    FavoriteTrackRow(
+                    TrackRow(
                         track = track,
+                        downloadStatus = track.downloadStatus,
+                        // Every row on this screen is definitionally favorited
+                        // already (it's the Favorites list) — a star here would
+                        // be redundant, not a gap. The download glyph is a real
+                        // gap fix: this row previously showed neither.
+                        showFavorite = false,
                         onPlay = {
                             // playAsync() updates title/art synchronously and
                             // continues loading on PlaybackRepository's own scope,
@@ -242,6 +251,17 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                                             label = "Add to playlist",
                                             onSelect = ActionMenuSelection.Navigate {
                                                 navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
+                                            },
+                                        ),
+                                        // Wasn't here before — reported live, same
+                                        // gap as the missing row glyph.
+                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
+                                            viewModel.toggleDownload(lightContext, track, newStatus)
+                                        }.copy(
+                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
+                                                trackDownloadActionItem(entity?.status) { newStatus ->
+                                                    viewModel.toggleDownload(lightContext, track, newStatus)
+                                                }
                                             },
                                         ),
                                     ),
@@ -282,32 +302,8 @@ private fun FavoriteRow(label: String, onClick: () -> Unit, onOpenActions: () ->
     )
 }
 
-/** Tap to play (unchanged); long-press for the action menu (add to queue, add to playlist — issue #16). */
-@Composable
-private fun FavoriteTrackRow(
-    track: Track,
-    onPlay: () -> Unit,
-    onOpenActions: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
-            // end matches the SDK's own scrollbar track width — see the
-            // LightLazyScrollView call site above for why this is fixed
-            // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
+// TrackRow (TrackRow.kt) is now the shared module for the Tracks section
+// above — see its call site for why showFavorite = false here specifically.
 
 /** Favorite album rows — the ones with cover art (see issue #9 scope; artist rows stay [FavoriteRow]). Tap to open; long-press for the action menu (see FavoriteRow's doc — same gap, same fix). */
 @Composable

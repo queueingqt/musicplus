@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import com.musicplus.app.data.PlaybackRepositoryHolder
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
@@ -42,18 +43,25 @@ import com.thelightphone.sdk.ui.lightClickable
  * the remaining space, mirroring how `LightActivity`'s own root `Column` weights
  * the screen slot), a persistent mini-player row when [showMiniPlayer] and
  * something is loaded, then [bottomBar].
+ *
+ * [onMiniPlayerClick]/[onSleepTimerClick] default to the one navigation every
+ * screen but two (LyricsScreen's intentional `goBack()` override, so repeated
+ * Now Playing/Lyrics round trips don't build up duplicate PlayerScreen
+ * instances — see its own call site) actually wants: straight to
+ * [PlayerScreen]/[SleepTimerPickerScreen] via [screen]. Confirmed live,
+ * 2026-09-18 architecture review: this was hand-copied at all 19 call sites
+ * that show the mini-player, identically except for that one screen.
  */
 @Composable
 fun MusicPlusScaffold(
+    screen: SimpleLightScreen<*>,
     topBar: @Composable () -> Unit,
-    onMiniPlayerClick: () -> Unit = {},
+    onMiniPlayerClick: () -> Unit = { screen.navigateTo(::PlayerScreen) },
     // Own tap target on the mini-player's sleep timer icon, straight to
     // SleepTimerPickerScreen — reported live, 2026-09-18: tapping it was
     // expected to jump straight there, not just open Now Playing like the
-    // rest of the bar. Defaults to onMiniPlayerClick (same as the rest of
-    // the bar) rather than a silent no-op, so a screen that forgets to wire
-    // this explicitly still does something sensible.
-    onSleepTimerClick: () -> Unit = onMiniPlayerClick,
+    // rest of the bar.
+    onSleepTimerClick: () -> Unit = { screen.navigateTo(::SleepTimerPickerScreen) },
     showMiniPlayer: Boolean = true,
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,

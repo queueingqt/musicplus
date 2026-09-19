@@ -50,9 +50,9 @@ class ServerSettingsScreenViewModel(
     // navigated to, seeded emptyList()/null before the real DataStore Flow
     // catches up — briefly flashed "No servers yet" even with servers
     // already saved. Reported live, 2026-09-18. See AppServerPrefs's own doc.
-    val servers: StateFlow<List<ServerProfile>> = AppServerPrefs.servers
+    val servers: StateFlow<List<ServerProfile>> = AppServerPrefs.servers.value
 
-    val activeServerId: StateFlow<String?> = AppServerPrefs.activeServerId
+    val activeServerId: StateFlow<String?> = AppServerPrefs.activeServerId.value
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {}
 
@@ -85,6 +85,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
         val activeServerId by viewModel.activeServerId.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -96,8 +97,6 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                     ),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             if (servers.isEmpty()) {
                 LightText(

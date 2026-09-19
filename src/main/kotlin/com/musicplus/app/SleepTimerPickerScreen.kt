@@ -1,12 +1,10 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.musicplus.app.data.PlaybackRepository
 import com.musicplus.app.data.SleepTimerState
@@ -15,7 +13,6 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
-import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
@@ -23,7 +20,6 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.StateFlow
 
 /** Fixed quick-pick durations — same role as [STREAM_QUALITY_PRESETS] plays for QualityPickerScreen. */
@@ -63,6 +59,7 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
         val countdown = timerState as? SleepTimerState.Countdown
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -103,7 +100,7 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
                 // so it's the first thing seen re-opening this screen mid-
                 // countdown to check on/change it.
                 if (timerState != null) {
-                    SleepTimerRow(
+                    SelectableRow(
                         label = "Cancel timer",
                         selected = false,
                         onClick = { viewModel.cancel(); goBack() },
@@ -111,7 +108,7 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
                 }
 
                 for (preset in SLEEP_TIMER_PRESET_MINUTES) {
-                    SleepTimerRow(
+                    SelectableRow(
                         label = "$preset min",
                         selected = countdown?.totalMs == preset * 60_000L,
                         onClick = { viewModel.startCountdown(preset); goBack() },
@@ -128,7 +125,7 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
                     ?.totalMs
                     ?.let { (it / 60_000L).toInt() }
                     ?.takeIf { it !in SLEEP_TIMER_PRESET_MINUTES }
-                SleepTimerRow(
+                SelectableRow(
                     label = if (customMinutes != null) "Custom ($customMinutes min)" else "Custom…",
                     selected = customMinutes != null,
                     onClick = {
@@ -147,7 +144,7 @@ class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :
                     },
                 )
 
-                SleepTimerRow(
+                SelectableRow(
                     label = "End of current track",
                     selected = timerState is SleepTimerState.EndOfTrack,
                     onClick = { viewModel.startEndOfTrack(); goBack() },
@@ -164,25 +161,3 @@ private fun formatSleepTimerRemaining(ms: Long): String {
     return "%d:%02d".format(minutes, seconds)
 }
 
-// Same leading-SELECT_ON-indicator shape as QualityPickerScreen's QualityRow
-// — the established "which one of these is current" convention in this app.
-@Composable
-private fun SleepTimerRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightClickable(onClick = onClick)
-            .padding(vertical = 0.75f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (selected) {
-            LightIcon(
-                icon = LightIcons.SELECT_ON,
-                size = 1.5f,
-                contentDescription = "Selected",
-                modifier = Modifier.padding(end = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        LightText(text = label, variant = LightTextVariant.Copy)
-    }
-}

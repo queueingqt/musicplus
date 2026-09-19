@@ -9,6 +9,7 @@ import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.util.UUID
@@ -16,14 +17,82 @@ import kotlin.time.Duration.Companion.minutes
 
 private const val PLACEHOLDER_PREFIX = "pending:"
 
-@Serializable private data class FavoritePayload(val favoriteType: String, val favorite: Boolean)
-@Serializable private data class PlaylistCreatePayload(val name: String)
-@Serializable private data class PlaylistRenamePayload(val name: String)
-@Serializable private data class PlaylistAddTrackPayload(val songId: String)
-@Serializable private data class PlaylistRemoveTrackPayload(val position: Int)
-@Serializable private data class PlaylistReorderPayload(val songIds: List<String>)
+/**
+ * Adding a new mutation type now touches 2 spots, both compiler-enforced —
+ * down from 5 (2 enforced) before this session's own /grilling pass turned
+ * a `MutationType` enum + separate per-type `@Serializable` payload classes
+ * + [SyncQueueRepository]'s own hand-written `encode()` dispatch `when`
+ * into this single sealed hierarchy with polymorphic kotlinx.serialization
+ * (automatic for a `@Serializable sealed class` whose `@Serializable`
+ * subclasses live in the same compilation unit — no `SerializersModule`
+ * wiring needed). The old `encode()` function's whole per-type `when` is
+ * gone entirely: `Json.encodeToString(mutation)` already knows how to emit
+ * the right shape — including a `"type"` discriminator — for whichever
+ * subclass it's handed, polymorphically, with zero per-type code here.
+ * 1. Add the subclass below.
+ * 2. Add its branch to [SyncQueueRepository.replay]'s exhaustive `when`
+ *    (compiler-enforced) and to [typeTag] just below it (also
+ *    compiler-enforced — a second exhaustive `when`, kept deliberately
+ *    separate from serialization's own discriminator so a DB-column query
+ *    like [SyncQueueRepository.isFavoritePending] doesn't have to decode
+ *    JSON just to filter by type).
+ * 3. Actually call `enqueue(...)` from the wrapper method that attempts the
+ *    write live and queues it on [WriteOutcome.FAILED] — nothing forces
+ *    this one; skipping it means a failed write is silently never retried.
+ *
+ * [PendingMutationEntity.payloadJson] now holds the *whole* polymorphically
+ * serialized mutation (its own embedded discriminator included), not just
+ * the bare per-type fields the old payload classes held — a genuine
+ * on-disk shape change, which is exactly why this stayed a checklist
+ * instead of a remodel until it was actually grilled with the person,
+ * 2026-09-18. Old-shaped rows (written before this change) can't decode
+ * against the new shape — [SyncQueueRepository.drainQueue] treats that as
+ * unfixable-by-retry and drops the row rather than blocking the FIFO queue
+ * on it forever; accepted as low-risk given this table is normally
+ * near-empty with no cross-install durability requirement.
+ */
+@Serializable
+sealed class PendingMutation {
+    @Serializable
+    @SerialName("FAVORITE")
+    data class Favorite(val favoriteType: String, val favorite: Boolean) : PendingMutation()
 
-private enum class MutationType { FAVORITE, PLAYLIST_CREATE, PLAYLIST_RENAME, PLAYLIST_DELETE, PLAYLIST_ADD_TRACK, PLAYLIST_REMOVE_TRACK, PLAYLIST_REORDER }
+    @Serializable
+    @SerialName("PLAYLIST_CREATE")
+    data class PlaylistCreate(val name: String) : PendingMutation()
+
+    @Serializable
+    @SerialName("PLAYLIST_RENAME")
+    data class PlaylistRename(val name: String) : PendingMutation()
+
+    @Serializable
+    @SerialName("PLAYLIST_DELETE")
+    data object PlaylistDelete : PendingMutation()
+
+    @Serializable
+    @SerialName("PLAYLIST_ADD_TRACK")
+    data class PlaylistAddTrack(val songId: String) : PendingMutation()
+
+    @Serializable
+    @SerialName("PLAYLIST_REMOVE_TRACK")
+    data class PlaylistRemoveTrack(val position: Int) : PendingMutation()
+
+    @Serializable
+    @SerialName("PLAYLIST_REORDER")
+    data class PlaylistReorder(val songIds: List<String>) : PendingMutation()
+}
+
+/** See [PendingMutation]'s own doc for why this exists as a second exhaustive `when` rather than reading serialization's own discriminator. */
+private val PendingMutation.typeTag: String
+    get() = when (this) {
+        is PendingMutation.Favorite -> "FAVORITE"
+        is PendingMutation.PlaylistCreate -> "PLAYLIST_CREATE"
+        is PendingMutation.PlaylistRename -> "PLAYLIST_RENAME"
+        PendingMutation.PlaylistDelete -> "PLAYLIST_DELETE"
+        is PendingMutation.PlaylistAddTrack -> "PLAYLIST_ADD_TRACK"
+        is PendingMutation.PlaylistRemoveTrack -> "PLAYLIST_REMOVE_TRACK"
+        is PendingMutation.PlaylistReorder -> "PLAYLIST_REORDER"
+    }
 
 /**
  * Offline sync queue for the server writes [LibraryRepository]/[PlaylistRepository]
@@ -64,7 +133,7 @@ class SyncQueueRepository(
     val pendingCount: Flow<Int> = pendingMutationDao.observeCount()
 
     fun isFavoritePending(id: String): Flow<Boolean> =
-        pendingMutationDao.observePendingForTarget(MutationType.FAVORITE.name, id)
+        pendingMutationDao.observePendingForTarget("FAVORITE", id)
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) =
         favorite("artist", id, favorite) { libraryRepository.setArtistFavorite(id, favorite) }
@@ -77,7 +146,7 @@ class SyncQueueRepository(
 
     private suspend inline fun favorite(type: String, id: String, favorite: Boolean, attempt: () -> WriteOutcome) {
         if (attempt() == WriteOutcome.FAILED) {
-            enqueue(MutationType.FAVORITE, id, FavoritePayload(type, favorite))
+            enqueue(id, PendingMutation.Favorite(type, favorite))
         }
     }
 
@@ -89,7 +158,7 @@ class SyncQueueRepository(
             CreatePlaylistResult.Failed -> {
                 val placeholderId = PLACEHOLDER_PREFIX + UUID.randomUUID()
                 playlistRepository.adoptLocalPlaylist(placeholderId, name)
-                enqueue(MutationType.PLAYLIST_CREATE, placeholderId, PlaylistCreatePayload(name))
+                enqueue(placeholderId, PendingMutation.PlaylistCreate(name))
                 placeholderId
             }
         }
@@ -97,7 +166,7 @@ class SyncQueueRepository(
 
     suspend fun renamePlaylist(playlistId: String, name: String) {
         if (playlistRepository.renamePlaylist(playlistId, name) == WriteOutcome.FAILED) {
-            enqueue(MutationType.PLAYLIST_RENAME, playlistId, PlaylistRenamePayload(name))
+            enqueue(playlistId, PendingMutation.PlaylistRename(name))
         }
     }
 
@@ -108,19 +177,19 @@ class SyncQueueRepository(
         // pointless to replay, whether or not the delete itself is queued below.
         pendingMutationDao.deleteForTarget(playlistId)
         if (outcome == WriteOutcome.FAILED) {
-            enqueue(MutationType.PLAYLIST_DELETE, playlistId, payload = null)
+            enqueue(playlistId, PendingMutation.PlaylistDelete)
         }
     }
 
     suspend fun addTrack(playlistId: String, songId: String) {
         if (playlistRepository.addTrack(playlistId, songId) == WriteOutcome.FAILED) {
-            enqueue(MutationType.PLAYLIST_ADD_TRACK, playlistId, PlaylistAddTrackPayload(songId))
+            enqueue(playlistId, PendingMutation.PlaylistAddTrack(songId))
         }
     }
 
     suspend fun removeTrack(playlistId: String, position: Int) {
         if (playlistRepository.removeTrack(playlistId, position) == WriteOutcome.FAILED) {
-            enqueue(MutationType.PLAYLIST_REMOVE_TRACK, playlistId, PlaylistRemoveTrackPayload(position))
+            enqueue(playlistId, PendingMutation.PlaylistRemoveTrack(position))
         }
     }
 
@@ -138,38 +207,40 @@ class SyncQueueRepository(
      */
     private suspend inline fun move(playlistId: String, attempt: () -> WriteOutcome) {
         if (attempt() == WriteOutcome.FAILED) {
-            enqueue(MutationType.PLAYLIST_REORDER, playlistId, PlaylistReorderPayload(playlistRepository.currentSongIds(playlistId)))
+            enqueue(playlistId, PendingMutation.PlaylistReorder(playlistRepository.currentSongIds(playlistId)))
         }
     }
 
-    private suspend fun enqueue(type: MutationType, targetId: String, payload: Any?) {
+    private suspend fun enqueue(targetId: String, mutation: PendingMutation) {
         pendingMutationDao.insert(
             PendingMutationEntity(
-                type = type.name,
+                type = mutation.typeTag,
                 targetId = targetId,
-                payloadJson = payload?.let { encode(type, it) } ?: "",
+                payloadJson = Json.encodeToString(mutation),
                 createdAtEpochMs = System.currentTimeMillis(),
             ),
         )
     }
 
-    private fun encode(type: MutationType, payload: Any): String = when (type) {
-        MutationType.FAVORITE -> Json.encodeToString(payload as FavoritePayload)
-        MutationType.PLAYLIST_CREATE -> Json.encodeToString(payload as PlaylistCreatePayload)
-        MutationType.PLAYLIST_RENAME -> Json.encodeToString(payload as PlaylistRenamePayload)
-        MutationType.PLAYLIST_ADD_TRACK -> Json.encodeToString(payload as PlaylistAddTrackPayload)
-        MutationType.PLAYLIST_REMOVE_TRACK -> Json.encodeToString(payload as PlaylistRemoveTrackPayload)
-        MutationType.PLAYLIST_REORDER -> Json.encodeToString(payload as PlaylistReorderPayload)
-        MutationType.PLAYLIST_DELETE -> ""
-    }
-
     /**
      * Replays every pending mutation in FIFO order, stopping at the first
-     * failure (see class doc). Returns true if the queue fully drained.
+     * genuine failure (see class doc). Returns true if the queue fully
+     * drained. A row whose [PendingMutationEntity.payloadJson] can't even
+     * decode (see [PendingMutation]'s own doc — an old-shaped row from
+     * before this session's sealed-class remodel) is dropped instead of
+     * treated as a failure: retrying can never fix a shape mismatch, and
+     * leaving it as the queue's own FIFO head would otherwise block every
+     * subsequent mutation forever.
      */
     suspend fun drainQueue(): Boolean {
         for (row in pendingMutationDao.getAllInOrder()) {
-            val outcome = replay(row)
+            val outcome = try {
+                replay(row)
+            } catch (e: Exception) {
+                AppLogger.e("SyncQueueRepository", "row ${row.id} (type=${row.type}) undecodable, dropping", e)
+                pendingMutationDao.delete(row.id)
+                continue
+            }
             if (outcome == WriteOutcome.FAILED) {
                 pendingMutationDao.recordFailure(row.id, "attempt ${row.attemptCount + 1} failed")
                 return false
@@ -179,43 +250,26 @@ class SyncQueueRepository(
         return true
     }
 
-    private suspend fun replay(row: PendingMutationEntity): WriteOutcome = when (MutationType.valueOf(row.type)) {
-        MutationType.FAVORITE -> {
-            val payload = Json.decodeFromString<FavoritePayload>(row.payloadJson)
-            when (payload.favoriteType) {
-                "artist" -> libraryRepository.setArtistFavorite(row.targetId, payload.favorite)
-                "album" -> libraryRepository.setAlbumFavorite(row.targetId, payload.favorite)
-                else -> libraryRepository.setTrackFavorite(row.targetId, payload.favorite)
+    private suspend fun replay(row: PendingMutationEntity): WriteOutcome =
+        when (val mutation = Json.decodeFromString<PendingMutation>(row.payloadJson)) {
+            is PendingMutation.Favorite -> when (mutation.favoriteType) {
+                "artist" -> libraryRepository.setArtistFavorite(row.targetId, mutation.favorite)
+                "album" -> libraryRepository.setAlbumFavorite(row.targetId, mutation.favorite)
+                else -> libraryRepository.setTrackFavorite(row.targetId, mutation.favorite)
             }
-        }
-        MutationType.PLAYLIST_CREATE -> {
-            val payload = Json.decodeFromString<PlaylistCreatePayload>(row.payloadJson)
-            when (val result = playlistRepository.createPlaylist(payload.name)) {
+            is PendingMutation.PlaylistCreate -> when (val result = playlistRepository.createPlaylist(mutation.name)) {
                 is CreatePlaylistResult.Created -> {
                     reassignPlaceholder(row.targetId, result.id)
                     WriteOutcome.SUCCESS
                 }
                 CreatePlaylistResult.NotConfigured, CreatePlaylistResult.Failed -> WriteOutcome.FAILED
             }
+            is PendingMutation.PlaylistRename -> playlistRepository.renamePlaylist(row.targetId, mutation.name)
+            PendingMutation.PlaylistDelete -> playlistRepository.deletePlaylist(row.targetId)
+            is PendingMutation.PlaylistAddTrack -> playlistRepository.addTrack(row.targetId, mutation.songId)
+            is PendingMutation.PlaylistRemoveTrack -> playlistRepository.replayRemoveTrack(row.targetId, mutation.position)
+            is PendingMutation.PlaylistReorder -> playlistRepository.reorderTo(row.targetId, mutation.songIds)
         }
-        MutationType.PLAYLIST_RENAME -> {
-            val payload = Json.decodeFromString<PlaylistRenamePayload>(row.payloadJson)
-            playlistRepository.renamePlaylist(row.targetId, payload.name)
-        }
-        MutationType.PLAYLIST_DELETE -> playlistRepository.deletePlaylist(row.targetId)
-        MutationType.PLAYLIST_ADD_TRACK -> {
-            val payload = Json.decodeFromString<PlaylistAddTrackPayload>(row.payloadJson)
-            playlistRepository.addTrack(row.targetId, payload.songId)
-        }
-        MutationType.PLAYLIST_REMOVE_TRACK -> {
-            val payload = Json.decodeFromString<PlaylistRemoveTrackPayload>(row.payloadJson)
-            playlistRepository.replayRemoveTrack(row.targetId, payload.position)
-        }
-        MutationType.PLAYLIST_REORDER -> {
-            val payload = Json.decodeFromString<PlaylistReorderPayload>(row.payloadJson)
-            playlistRepository.reorderTo(row.targetId, payload.songIds)
-        }
-    }
 
     /** A placeholder playlist finally has a real server id — move its row, its track rows, and every other queued mutation against it over in one go, so draining can continue against the real id right away. */
     private suspend fun reassignPlaceholder(placeholderId: String, realId: String) {

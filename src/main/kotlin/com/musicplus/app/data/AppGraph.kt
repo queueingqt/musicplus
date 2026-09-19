@@ -58,7 +58,7 @@ object AppGraph {
     }
 
     // Every AppSettingsRepository flow that just needs to keep a process-lifetime
-    // singleton (AppLogger, AppDisplayPrefs, AppQualityPrefs, ...) in sync follows
+    // WarmedFlow (AppLogger, AppDisplayPrefs, AppQualityPrefs, ...) in sync follows
     // this exact shape — collapsed to one helper so build() reads as "mirror these
     // settings" plus the two genuinely special bootstrap steps, not a pile of
     // same-shaped appScope.launch blocks.
@@ -87,39 +87,58 @@ object AppGraph {
         mirrorInto(appSettingsRepository.debugLoggingEnabled) {
             AppLogger.setEnabled(it)
             CrashReporter.setEnabled(it)
-            AppDebugPrefs.setDebugLoggingEnabled(it)
+            AppDebugPrefs.debugLoggingEnabled.set(it)
         }
-        mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs::setShowAlbumArtwork)
-        mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs::setStreamQualityWifi)
-        mirrorInto(appSettingsRepository.streamQualityCellular, AppQualityPrefs::setStreamQualityCellular)
-        mirrorInto(appSettingsRepository.downloadQuality, AppQualityPrefs::setDownloadQuality)
-        mirrorInto(serverConfigRepository.servers, AppServerPrefs::setServers)
-        mirrorInto(serverConfigRepository.activeServerId, AppServerPrefs::setActiveServerId)
-        mirrorInto(serverConfigRepository.serverConfig.map { it != null }, AppServerPrefs::setIsConfigured)
-        mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs::setScrobblingEnabled)
+        mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs.showAlbumArtwork::set)
+        mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs.streamQualityWifi::set)
+        mirrorInto(appSettingsRepository.streamQualityCellular, AppQualityPrefs.streamQualityCellular::set)
+        mirrorInto(appSettingsRepository.downloadQuality, AppQualityPrefs.downloadQuality::set)
+        mirrorInto(serverConfigRepository.servers, AppServerPrefs.servers::set)
+        mirrorInto(serverConfigRepository.activeServerId, AppServerPrefs.activeServerId::set)
+        mirrorInto(serverConfigRepository.serverConfig.map { it != null }, AppServerPrefs.isConfigured::set)
+        mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs.scrobblingEnabled::set)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         val database = MusicPlusDatabase.create(lightContext)
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible
         // to a consumer module like this one) — it already exposes a `connectivity`
         // property built from it for exactly this reason.
         val connectivity = lightContext.connectivity
+        // Built before libraryRepository/playlistRepository — both now take
+        // this as a dependency (see LibraryRepository's own class doc for
+        // why) to join live download status into every Track they hand out.
+        val downloadRepository = DownloadRepository(
+            downloadDao = database.downloadDao(),
+            trackDao = database.trackDao(),
+        )
         val libraryRepository = LibraryRepository(
             apiHolder = apiHolder,
             artistDao = database.artistDao(),
             albumDao = database.albumDao(),
             trackDao = database.trackDao(),
             connectivity = connectivity,
+            downloadRepository = downloadRepository,
         )
         val playlistRepository = PlaylistRepository(
             apiHolder = apiHolder,
             playlistDao = database.playlistDao(),
             trackDao = database.trackDao(),
             connectivity = connectivity,
+            downloadRepository = downloadRepository,
         )
-        val downloadRepository = DownloadRepository(
-            downloadDao = database.downloadDao(),
-            trackDao = database.trackDao(),
-        )
+        // See AppLibraryCache's own doc — every list screen previously paid
+        // a fresh Room-query-plus-mapping cost on every single visit (a
+        // fresh ViewModel every time, confirmed live 2026-09-18 as multiple
+        // real seconds for Songs, a smaller but still real and reported-live
+        // cost for Albums/Artists too). Mirrored here instead, starting the
+        // moment the composition root builds rather than waiting for first
+        // navigation to that specific screen.
+        mirrorInto(libraryRepository.observeArtists(), AppLibraryCache.artists::set)
+        mirrorInto(libraryRepository.observeAlbums(), AppLibraryCache.albums::set)
+        mirrorInto(libraryRepository.observeAllTracks(), AppLibraryCache.allTracks::set)
+        mirrorInto(libraryRepository.observeFavoriteArtists(), AppLibraryCache.favoriteArtists::set)
+        mirrorInto(libraryRepository.observeFavoriteAlbums(), AppLibraryCache.favoriteAlbums::set)
+        mirrorInto(libraryRepository.observeFavoriteTracks(), AppLibraryCache.favoriteTracks::set)
+        mirrorInto(playlistRepository.observePlaylists(), AppLibraryCache.playlists::set)
         // Checked on every app open, but throttled to once per
         // VERSION_CHECK_INTERVAL_MS — an unauthenticated GitHub API call is
         // cheap, but someone opening/closing the app dozens of times a day
@@ -174,7 +193,11 @@ object AppGraph {
         // filtered out here — draining on a fresh app launch that's already
         // online, in case anything was queued from a previous offline
         // session, is exactly the behavior wanted, not just future
-        // transitions.
+        // transitions. That "fires immediately if already online" behavior
+        // is also why the 4 library refreshes below live here rather than as
+        // a separate one-shot block: this one collector already covers both
+        // "fresh launch, online" and "was offline at launch, came back
+        // later" without doing it twice.
         //
         // Distinct `tag` from the periodic schedule above, even though both
         // point at the same job — `LightWork.enqueue`'s one-time request uses
@@ -191,6 +214,17 @@ object AppGraph {
                 .collect { isConnected ->
                     if (isConnected) {
                         LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
+                        // Each its own child launch, not awaited in sequence —
+                        // refreshAllSongs in particular can be a multi-page
+                        // fetch, and none of these should make the others (or
+                        // the next reconnect event) wait. Replaces the
+                        // identical calls every list screen's own
+                        // onScreenShow used to make on every single visit —
+                        // see AppLibraryCache's doc for why that moved here.
+                        appScope.launch { libraryRepository.refreshArtists() }
+                        appScope.launch { libraryRepository.refreshAlbumList() }
+                        appScope.launch { libraryRepository.refreshAllSongs() }
+                        appScope.launch { playlistRepository.refreshPlaylists() }
                     }
                 }
         }

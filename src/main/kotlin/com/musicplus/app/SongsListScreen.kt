@@ -1,19 +1,15 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.DownloadEntity
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
@@ -23,9 +19,7 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
-import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightScrollBarPosition
@@ -34,14 +28,11 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 
 /**
  * Flat, unscoped "every song in the library" browse list (previously
@@ -49,9 +40,10 @@ import kotlinx.coroutines.launch
  * section (favorited only) and Search (server-side query match only).
  * [LibraryRepository.observeAllTracks]'s local cache is otherwise only ever
  * as complete as whichever albums/playlists/searches happen to have been
- * visited, so this screen also drives [LibraryRepository.refreshAllSongs] —
- * the one real "fetch everything" sync this app does, since Subsonic has no
- * direct getAllSongs endpoint.
+ * visited, so [LibraryRepository.refreshAllSongs] — the one real "fetch
+ * everything" sync this app does, since Subsonic has no direct getAllSongs
+ * endpoint — is driven from [AppGraph]'s reconnect-observer instead of from
+ * this screen's own onScreenShow (see AppLibraryCache's doc for why).
  */
 class SongsListScreenViewModel(
     private val libraryRepository: LibraryRepository,
@@ -59,28 +51,26 @@ class SongsListScreenViewModel(
     private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
 
-    private val allTracks: StateFlow<List<Track>> = libraryRepository.observeAllTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // See AppLibraryCache's doc — reads the already-live, process-lifetime
+    // cache instead of re-subscribing to libraryRepository.observeAllTracks()
+    // on every fresh per-visit ViewModel. This is the collection the warmed-
+    // cache fix was originally measured against (several real seconds on a
+    // warm process, several thousand tracks) before being generalized to
+    // Albums/Artists/Playlists too.
+    private val allTracks: StateFlow<List<Track>> = AppLibraryCache.allTracks.value
 
     private val _filter = MutableStateFlow("")
     val filter: StateFlow<String> = _filter
 
     // Client-side filter over the already-cached list, same convention as
     // AlbumListScreen/ArtistListScreen — not a server round-trip.
-    val tracks: StateFlow<List<Track>> = combine(allTracks, _filter) { list, query ->
-        if (query.isBlank()) list
-        else list.filter { it.title.contains(query, ignoreCase = true) || it.artistName?.contains(query, ignoreCase = true) == true }
+    val tracks: StateFlow<List<Track>> = filteredBy(allTracks, _filter) { track, query ->
+        track.title.contains(query, ignoreCase = true) || track.artistName?.contains(query, ignoreCase = true) == true
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setFilter(query: String) {
         _filter.value = query
     }
-
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch { libraryRepository.refreshAllSongs() }
-    }
-
-    fun downloadStatus(songId: String): Flow<DownloadEntity?> = downloadRepository.observeStatus(songId)
 
     suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
         when (currentStatus) {
@@ -116,6 +106,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
         val filter by viewModel.filter.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -131,8 +122,6 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                     ),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             if (tracks.isEmpty()) {
                 LightText(
@@ -156,11 +145,10 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                     uniformItemHeightGridUnits = 3f,
                 ) {
                     items(tracks, key = { it.id }) { track ->
-                        val statusFlow = remember(track.id) { viewModel.downloadStatus(track.id) }
-                        val status by statusFlow.collectAsState(initial = null)
-                        SongRow(
+                        TrackRow(
                             track = track,
-                            downloadStatus = status?.status,
+                            downloadStatus = track.downloadStatus,
+                            subtitle = track.artistName ?: "Unknown artist",
                             onPlay = {
                                 // playAsync() updates title/art synchronously and
                                 // continues loading on PlaybackRepository's own
@@ -190,10 +178,10 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                                                     navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
                                                 },
                                             ),
-                                            trackDownloadActionItem(status?.status) { newStatus ->
+                                            trackDownloadActionItem(track.downloadStatus) { newStatus ->
                                                 viewModel.toggleDownload(lightContext, track, newStatus)
                                             }.copy(
-                                                liveUpdates = viewModel.downloadStatus(track.id).map { entity ->
+                                                liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
                                                     trackDownloadActionItem(entity?.status) { newStatus ->
                                                         viewModel.toggleDownload(lightContext, track, newStatus)
                                                     }
@@ -211,57 +199,3 @@ class SongsListScreen(private val activity: SealedLightActivity) :
     }
 }
 
-/** Same shape as AlbumDetailScreen's TrackRow (tap to play, long-press for actions, favorite/download glyphs at a glance) plus the artist name, since this list spans every album. */
-@Composable
-private fun SongRow(
-    track: Track,
-    downloadStatus: DownloadStatus?,
-    onPlay: () -> Unit,
-    onOpenActions: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
-            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        LightText(
-            text = track.artistName ?: "Unknown artist",
-            variant = LightTextVariant.Fine,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-        )
-        if (track.isFavorite) {
-            LightIcon(
-                icon = LightIcons.STAR,
-                size = 1.2f,
-                contentDescription = "Favorited",
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        if (downloadStatus != null) {
-            LightIcon(
-                icon = downloadStatusIcon(downloadStatus),
-                size = 1.2f,
-                // Was a static "Download status" — unlike PlaylistDetailScreen's
-                // and AlbumDetailScreen's identical row glyph, which already use
-                // downloadStatusLabel (TrackActionItems.kt) to say which of the
-                // 3 states this actually is. A screen reader landing on this icon
-                // heard the same generic phrase regardless of queued/downloading/
-                // downloaded/failed — never caught before since it's silent to
-                // sighted use (the icon glyph itself still changed). Issue #36.
-                contentDescription = downloadStatusLabel(downloadStatus),
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-    }
-}

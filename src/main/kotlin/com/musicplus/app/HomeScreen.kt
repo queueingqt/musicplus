@@ -17,7 +17,6 @@ import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
@@ -31,19 +30,16 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 
-class HomeScreenViewModel(
-    private val graph: AppGraph.Graph,
-) : LightViewModel<Unit>() {
-    // AppServerPrefs, not graph.serverConfigRepository.serverConfig directly —
+class HomeScreenViewModel : LightViewModel<Unit>() {
+    // AppServerPrefs, not AppGraph.from(...).serverConfigRepository.serverConfig directly —
     // this screen gets a fresh ViewModel (and a fresh `.stateIn(...)`) every
     // time it's navigated back to, seeded `false` before the real DataStore
     // Flow catches up — briefly hid the search icon even with a server
     // already configured. Reported live, 2026-09-18 — same root cause as
     // Settings' "Server" row flashing "No servers yet" (see AppServerPrefs's
     // own doc), already fixed once before for AppDisplayPrefs/AppQualityPrefs.
-    val isConfigured: StateFlow<Boolean> = AppServerPrefs.isConfigured
+    val isConfigured: StateFlow<Boolean> = AppServerPrefs.isConfigured.value
 
     // Drives the "*" marker on the Settings row below — VersionCheckRepository
     // itself decides whether newerVersion is non-null (a real newer release).
@@ -57,18 +53,31 @@ class HomeScreenViewModel(
     // covers that, and duplicating it here would just be two now-playing
     // indicators competing for attention on the same screen.
 
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch {
-            graph.libraryRepository.refreshAlbumList()
-            graph.libraryRepository.refreshArtists()
-        }
-    }
+    // The refreshAlbumList()/refreshArtists() calls this onScreenShow used to
+    // make moved to AppGraph's reconnect-observer — see AppLibraryCache's own
+    // doc for why every list screen's per-visit refresh was redundant with a
+    // process-lifetime cache that's already kept current.
 }
 
 @InitialScreen
 class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenViewModel>(activity) {
     override val viewModelClass = HomeScreenViewModel::class.java
-    override fun createViewModel() = HomeScreenViewModel(AppGraph.from(lightContext))
+
+    override fun createViewModel(): HomeScreenViewModel {
+        // Discarded, but not dead code — HomeScreen is @InitialScreen, so this
+        // is the one guaranteed call that bootstraps AppGraph.build() (and
+        // therefore every mirrorInto — AppServerPrefs.isConfigured included)
+        // as early as app launch. Without it, nothing forces the composition
+        // root to build until some other screen happens to touch AppGraph
+        // first, so isConfigured silently stays at its seeded `false` forever
+        // and this screen never leaves the "Set up your server" splash.
+        // Reported live, 2026-09-18: a genuinely fresh launch hung on that
+        // splash indefinitely (13+ seconds and counting, not just a brief
+        // flash) after HomeScreenViewModel's own AppGraph.Graph parameter —
+        // its only prior caller of AppGraph.from() — was dropped as unused.
+        AppGraph.from(lightContext)
+        return HomeScreenViewModel()
+    }
 
     @Composable
     override fun Content() {
@@ -78,6 +87,7 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
         // Root screen — no back button (see AlbumListScreen etc. for the
         // leftButton = BACK pattern every non-root screen uses).
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     center = LightTopBarCenter.Text("Music +"),
@@ -100,8 +110,6 @@ class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenVi
                     },
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             if (!isConfigured) {
                 SetUpServerSplash { navigateTo(::SettingsScreen) }

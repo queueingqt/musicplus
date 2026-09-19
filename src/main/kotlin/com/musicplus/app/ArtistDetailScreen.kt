@@ -35,7 +35,6 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -90,63 +89,18 @@ class ArtistDetailScreenViewModel(
     suspend fun tracksForAlbum(albumId: String): List<Track> =
         SelfLoadingTrackList.forAlbum(libraryRepository, albumId).tracks()
 
-    // --- Similar artists / top songs — both collapsed by default, fetched
-    // only on first expand (not eagerly in onScreenShow like albums/artist
-    // above): no network call happens until the person actually taps the
-    // section header. `*Loaded` guards a later collapse/re-expand from
-    // re-fetching — this data isn't expected to change mid-visit, same
-    // "search on submit, not as-you-type" spirit as SearchScreen's own
-    // one-shot fetches.
+    // Similar artists / top songs — see LazyCollapsibleSection's own doc:
+    // both collapsed by default, fetched only on first expand (not eagerly
+    // in onScreenShow like albums/artist above).
+    val similarArtistsSection = LazyCollapsibleSection(viewModelScope) { libraryRepository.getSimilarArtists(artistId) }
 
-    private val _similarArtistsExpanded = MutableStateFlow(false)
-    val similarArtistsExpanded: StateFlow<Boolean> = _similarArtistsExpanded
-
-    private val _similarArtistsLoading = MutableStateFlow(false)
-    val similarArtistsLoading: StateFlow<Boolean> = _similarArtistsLoading
-
-    private val _similarArtists = MutableStateFlow<List<Artist>>(emptyList())
-    val similarArtists: StateFlow<List<Artist>> = _similarArtists
-
-    private var similarArtistsLoaded = false
-
-    fun toggleSimilarArtists() {
-        _similarArtistsExpanded.value = !_similarArtistsExpanded.value
-        if (_similarArtistsExpanded.value && !similarArtistsLoaded) {
-            similarArtistsLoaded = true
-            _similarArtistsLoading.value = true
-            viewModelScope.launch {
-                _similarArtists.value = libraryRepository.getSimilarArtists(artistId)
-                _similarArtistsLoading.value = false
-            }
-        }
-    }
-
-    private val _topSongsExpanded = MutableStateFlow(false)
-    val topSongsExpanded: StateFlow<Boolean> = _topSongsExpanded
-
-    private val _topSongsLoading = MutableStateFlow(false)
-    val topSongsLoading: StateFlow<Boolean> = _topSongsLoading
-
-    private val _topSongs = MutableStateFlow<List<Track>>(emptyList())
-    val topSongs: StateFlow<List<Track>> = _topSongs
-
-    private var topSongsLoaded = false
-
-    fun toggleTopSongs() {
-        _topSongsExpanded.value = !_topSongsExpanded.value
-        if (_topSongsExpanded.value && !topSongsLoaded) {
-            topSongsLoaded = true
-            _topSongsLoading.value = true
-            viewModelScope.launch {
-                // getTopSongs.view is keyed by the artist's *name*, not id
-                // (see SubsonicApi.getTopSongs's doc) — read from the
-                // already-observed `artist` StateFlow rather than a second
-                // network round trip just to resolve the name.
-                val name = artist.value?.name
-                _topSongs.value = if (name.isNullOrBlank()) emptyList() else libraryRepository.getTopSongs(name)
-                _topSongsLoading.value = false
-            }
-        }
+    // getTopSongs.view is keyed by the artist's *name*, not id (see
+    // SubsonicApi.getTopSongs's doc) — read from the already-observed
+    // `artist` StateFlow rather than a second network round trip just to
+    // resolve the name.
+    val topSongsSection = LazyCollapsibleSection(viewModelScope) {
+        val name = artist.value?.name
+        if (name.isNullOrBlank()) emptyList() else libraryRepository.getTopSongs(name)
     }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
@@ -169,17 +123,18 @@ class ArtistDetailScreen(
     override fun Content() {
         val albums by viewModel.albums.collectAsState()
         val artist by viewModel.artist.collectAsState()
-        val similarArtistsExpanded by viewModel.similarArtistsExpanded.collectAsState()
-        val similarArtistsLoading by viewModel.similarArtistsLoading.collectAsState()
-        val similarArtists by viewModel.similarArtists.collectAsState()
-        val topSongsExpanded by viewModel.topSongsExpanded.collectAsState()
-        val topSongsLoading by viewModel.topSongsLoading.collectAsState()
-        val topSongs by viewModel.topSongs.collectAsState()
+        val similarArtistsExpanded by viewModel.similarArtistsSection.expanded.collectAsState()
+        val similarArtistsLoading by viewModel.similarArtistsSection.loading.collectAsState()
+        val similarArtists by viewModel.similarArtistsSection.items.collectAsState()
+        val topSongsExpanded by viewModel.topSongsSection.expanded.collectAsState()
+        val topSongsLoading by viewModel.topSongsSection.loading.collectAsState()
+        val topSongs by viewModel.topSongsSection.items.collectAsState()
 
         // Favorite inline with the artist name — via LightTopBar's rightButton
         // slot, rather than a separate row, since the name is already the title
         // here (no need to repeat it). Icon-only, no text label.
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
@@ -191,8 +146,6 @@ class ArtistDetailScreen(
                     ),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             // Everything below — both collapsible sections' rows and the
             // album list — lives in ONE LightLazyScrollView rather than a
@@ -230,7 +183,7 @@ class ArtistDetailScreen(
                     CollapsibleSectionHeader(
                         title = "Similar artists",
                         expanded = similarArtistsExpanded,
-                        onClick = { viewModel.toggleSimilarArtists() },
+                        onClick = { viewModel.similarArtistsSection.toggle() },
                     )
                 }
                 if (similarArtistsExpanded) {
@@ -250,7 +203,7 @@ class ArtistDetailScreen(
                     CollapsibleSectionHeader(
                         title = "Top songs",
                         expanded = topSongsExpanded,
-                        onClick = { viewModel.toggleTopSongs() },
+                        onClick = { viewModel.topSongsSection.toggle() },
                     )
                 }
                 if (topSongsExpanded) {

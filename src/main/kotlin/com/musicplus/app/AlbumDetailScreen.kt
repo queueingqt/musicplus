@@ -8,13 +8,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.DownloadEntity
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
@@ -35,7 +33,6 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -81,8 +78,6 @@ class AlbumDetailScreenViewModel(
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
-
-    fun downloadStatus(songId: String): Flow<DownloadEntity?> = downloadRepository.observeStatus(songId)
 
     /**
      * This button is now the only download control (no separate Downloads screen —
@@ -158,14 +153,13 @@ class AlbumDetailScreen(
         // handler's own comment for why the artwork rather than the title, and why a
         // long-press at all rather than leaving them in the top bar.
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text(topBarTitle),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 AlbumArt(
@@ -233,11 +227,9 @@ class AlbumDetailScreen(
                 uniformItemHeightGridUnits = 3f,
             ) {
                 itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
-                    val statusFlow = remember(track.id) { viewModel.downloadStatus(track.id) }
-                    val status by statusFlow.collectAsState(initial = null)
                     TrackRow(
                         track = track,
-                        downloadStatus = status?.status,
+                        downloadStatus = track.downloadStatus,
                         onPlay = {
                             // playAsync() updates title/art synchronously and
                             // continues loading on PlaybackRepository's own scope,
@@ -267,10 +259,10 @@ class AlbumDetailScreen(
                                                 navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
                                             },
                                         ),
-                                        trackDownloadActionItem(status?.status) { newStatus ->
+                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
                                             viewModel.toggleDownload(lightContext, track, newStatus)
                                         }.copy(
-                                            liveUpdates = viewModel.downloadStatus(track.id).map { entity ->
+                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
                                                 trackDownloadActionItem(entity?.status) { newStatus ->
                                                     viewModel.toggleDownload(lightContext, track, newStatus)
                                                 }
@@ -287,66 +279,8 @@ class AlbumDetailScreen(
     }
 }
 
-/**
- * Tap to play (unchanged); long-press for the full action menu (favorite,
- * queue, playlist, download — issue #16). The actions themselves moved
- * behind that long-press, but their *state* stays visible at a glance as
- * small trailing glyphs — reported live: moving favorite/download to the
- * long-press menu also silently removed any way to tell a track was already
- * favorited or downloaded without opening that menu. Each glyph only
- * renders when it has something to say (favorited, or any known download
- * history) — never a default/empty-state icon, same reasoning as the
- * artwork-off case elsewhere in this app: an icon that's always there reads
- * as chrome, not information.
- */
-@Composable
-private fun TrackRow(
-    track: Track,
-    downloadStatus: DownloadStatus?,
-    onPlay: () -> Unit,
-    onOpenActions: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
-            .padding(
-                top = 0.5f.gridUnitsAsDp(),
-                bottom = 0.5f.gridUnitsAsDp(),
-                start = 1f.gridUnitsAsDp(),
-                // Matches the SDK's own SCROLLBAR_WIDTH_UNITS (2f) — the Inside
-                // scrollbar draws as an overlay in exactly that much space at the
-                // far right, so this keeps the trailing glyphs clear of it
-                // unconditionally, rather than only once a list happens to be
-                // long enough to actually show a scrollbar (which is exactly the
-                // "not known until after first layout" timing this is working
-                // around — see the LightLazyScrollView call site's own doc).
-                end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp(),
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (track.isFavorite) {
-            LightIcon(
-                icon = LightIcons.STAR,
-                size = 1.2f,
-                contentDescription = "Favorited",
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        if (downloadStatus != null) {
-            LightIcon(
-                icon = downloadStatusIcon(downloadStatus),
-                size = 1.2f,
-                contentDescription = downloadStatusLabel(downloadStatus),
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-    }
-}
+// TrackRow is now the shared module in TrackRow.kt — tap to play, long-press
+// for the full action menu (favorite, queue, playlist, download — issue #16),
+// with favorite/download state visible at a glance as trailing glyphs
+// (reported live: moving those actions behind long-press also silently
+// removed any way to tell a track was already favorited/downloaded).

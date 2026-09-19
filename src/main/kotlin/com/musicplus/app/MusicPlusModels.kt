@@ -1,5 +1,7 @@
 package com.musicplus.app
 
+import com.musicplus.app.data.DownloadStatus
+
 /** UI-facing domain models — separate from the Subsonic DTOs and Room entities they're built from. */
 
 data class Artist(
@@ -33,8 +35,21 @@ data class Track(
     val durationSec: Int,
     val coverArtUrl: String?,
     val isFavorite: Boolean,
-    val isDownloaded: Boolean,
-    /** Set once downloaded — playback should prefer this over streaming when present. */
+    /**
+     * Live — reflects [com.musicplus.app.data.DownloadRepository]'s own
+     * state, not just a completion flag; null means never queued/downloaded.
+     * [LibraryRepository]/[PlaylistRepository] join against the download
+     * table to populate this (see [com.musicplus.app.data.TrackMapping.kt]);
+     * previously this was always false coming out of those two repositories
+     * — every screen that needed real per-track download status had to
+     * separately re-derive it, and downloaded tracks played from any
+     * non-download-originated screen silently streamed over the network
+     * instead of using the local file, since [localFilePath] was always
+     * null too. Confirmed live, 2026-09-18 architecture review + this
+     * session's own /grilling pass.
+     */
+    val downloadStatus: DownloadStatus?,
+    /** Set once [downloadStatus] is COMPLETE — playback should prefer this over streaming when present. */
     val localFilePath: String?,
 )
 

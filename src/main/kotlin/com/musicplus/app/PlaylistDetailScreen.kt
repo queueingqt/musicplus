@@ -7,14 +7,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.DownloadEntity
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.playbackRepository
@@ -90,8 +88,6 @@ class PlaylistDetailScreenViewModel(
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
-
-    fun downloadStatus(songId: String): Flow<DownloadEntity?> = downloadRepository.observeStatus(songId)
 
     /**
      * Same enqueue/cancel-doubles-as-remove semantics as
@@ -176,6 +172,7 @@ class PlaylistDetailScreen(
         val reorderMode by viewModel.reorderMode.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     // Same BACK glyph either way — only what it does changes. While
@@ -193,8 +190,6 @@ class PlaylistDetailScreen(
                     center = LightTopBarCenter.Text("Playlist"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             // The trash icon that used to live here moved into this long-press
             // menu (issue reported live: wanted delete off a standalone glyph and
@@ -275,14 +270,40 @@ class PlaylistDetailScreen(
                 uniformItemHeightGridUnits = 4.5f,
             ) {
                 itemsIndexed(tracks, key = { index, track -> "$index-${track.id}" }) { index, track ->
-                    val statusFlow = remember(track.id) { viewModel.downloadStatus(track.id) }
-                    val status by statusFlow.collectAsState(initial = null)
-                    PlaylistTrackRow(
+                    TrackRow(
                         track = track,
-                        downloadStatus = status?.status,
-                        reorderMode = reorderMode,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < tracks.lastIndex,
+                        downloadStatus = track.downloadStatus,
+                        // Left-aligned, leading the title, matching QueueScreen's
+                        // own reorder icons exactly (reported live) — only shows
+                        // once "Edit order" is chosen from the playlist-level
+                        // long-press menu (reported live: previously always
+                        // visible for every track regardless of reorder mode).
+                        leading = if (reorderMode) {
+                            {
+                                if (index > 0) {
+                                    LightIcon(
+                                        icon = LightIcons.UP,
+                                        size = 1.5f,
+                                        contentDescription = "Move up",
+                                        modifier = Modifier
+                                            .lightClickable(onClick = { viewModel.moveUp(index) })
+                                            .padding(end = 0.5f.gridUnitsAsDp()),
+                                    )
+                                }
+                                if (index < tracks.lastIndex) {
+                                    LightIcon(
+                                        icon = LightIcons.DOWN,
+                                        size = 1.5f,
+                                        contentDescription = "Move down",
+                                        modifier = Modifier
+                                            .lightClickable(onClick = { viewModel.moveDown(index) })
+                                            .padding(end = 0.5f.gridUnitsAsDp()),
+                                    )
+                                }
+                            }
+                        } else {
+                            null
+                        },
                         onPlay = {
                             // playAsync() updates title/art synchronously and
                             // continues loading on PlaybackRepository's own scope,
@@ -301,10 +322,10 @@ class PlaylistDetailScreen(
                                         favoriteActionItem(track.isFavorite) { favorite ->
                                             viewModel.setTrackFavorite(track.id, favorite)
                                         },
-                                        trackDownloadActionItem(status?.status) { newStatus ->
+                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
                                             viewModel.toggleDownload(lightContext, track, newStatus)
                                         }.copy(
-                                            liveUpdates = viewModel.downloadStatus(track.id).map { entity ->
+                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
                                                 trackDownloadActionItem(entity?.status) { newStatus ->
                                                     viewModel.toggleDownload(lightContext, track, newStatus)
                                                 }
@@ -322,8 +343,6 @@ class PlaylistDetailScreen(
                                 )
                             })
                         },
-                        onMoveUp = { viewModel.moveUp(index) },
-                        onMoveDown = { viewModel.moveDown(index) },
                     )
                 }
             }
@@ -331,85 +350,10 @@ class PlaylistDetailScreen(
     }
 }
 
-/**
- * Tap the title to play (unchanged); long-press it for the action menu
- * (favorite, download, remove from playlist — issue #16). Reorder (up/down)
- * only shows once "Edit order" is chosen from the playlist-level long-press
- * menu — reported live: previously always visible for every track whether or
- * not the person was actually reordering anything. Left-aligned, leading the
- * title, matching QueueScreen's own reorder icons exactly (reported live)
- * rather than the trailing/second-row layout this used before.
- */
-/** Favorite/download glyphs shown only when they have something to say — see AlbumDetailScreen's TrackRow doc for why (issue reported live: moving those actions behind long-press also removed any at-a-glance state). */
-@Composable
-private fun PlaylistTrackRow(
-    track: Track,
-    downloadStatus: DownloadStatus?,
-    reorderMode: Boolean,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    onPlay: () -> Unit,
-    onOpenActions: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
-            // end matches the SDK's own scrollbar track width — see the
-            // LightLazyScrollView call site above for why this is fixed
-            // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (reorderMode && canMoveUp) {
-            LightIcon(
-                icon = LightIcons.UP,
-                size = 1.5f,
-                contentDescription = "Move up",
-                modifier = Modifier
-                    .lightClickable(onClick = onMoveUp)
-                    .padding(end = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        if (reorderMode && canMoveDown) {
-            LightIcon(
-                icon = LightIcons.DOWN,
-                size = 1.5f,
-                contentDescription = "Move down",
-                modifier = Modifier
-                    .lightClickable(onClick = onMoveDown)
-                    .padding(end = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (track.isFavorite) {
-            LightIcon(
-                icon = LightIcons.STAR,
-                size = 1.2f,
-                contentDescription = "Favorited",
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-        // This used to distinguish only COMPLETE vs. everything else, so a
-        // track actively downloading inside a playlist showed the exact same
-        // icon as one not yet started — downloadStatusIcon (TrackActionItems.kt)
-        // is the 3-state version every other screen with a per-track download
-        // glyph (AlbumDetailScreen, SongsListScreen) already used.
-        if (downloadStatus != null) {
-            LightIcon(
-                icon = downloadStatusIcon(downloadStatus),
-                size = 1.2f,
-                contentDescription = downloadStatusLabel(downloadStatus),
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
-    }
-}
+// TrackRow (TrackRow.kt) is now the shared module — tap the title to play,
+// long-press for the action menu (favorite, download, remove from playlist —
+// issue #16). Reorder (up/down) only shows once "Edit order" is chosen from
+// the playlist-level long-press menu — reported live: previously always
+// visible for every track regardless of reorder mode — via TrackRow's
+// `leading` slot, left-aligned ahead of the title, matching QueueScreen's own
+// reorder icons exactly (also reported live).

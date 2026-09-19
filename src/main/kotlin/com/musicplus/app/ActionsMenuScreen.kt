@@ -267,6 +267,7 @@ class ActionsMenuScreen(
         }
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(
@@ -276,8 +277,6 @@ class ActionsMenuScreen(
                     center = LightTopBarCenter.TwoLineDetail(line1 = "Actions", line2 = subtitle),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc
             // (issue #39): ActionRow's maxLines=1/Ellipsis label is

@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
@@ -27,7 +28,6 @@ import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -41,7 +41,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -55,19 +54,17 @@ class PlaylistListScreenViewModel(
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
-    private val allPlaylists = playlistRepository.observePlaylists()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // See AppLibraryCache's doc — reads the already-live, process-lifetime
+    // cache instead of re-subscribing to playlistRepository.observePlaylists()
+    // on every fresh per-visit ViewModel.
+    private val allPlaylists = AppLibraryCache.playlists.value
 
     // Client-side filter, same reasoning as AlbumListScreen/SearchScreen: no
     // server-side playlist name search in the Subsonic API worth round-tripping for
     // what's realistically a short list.
-    val playlists: StateFlow<List<Playlist>> = combine(allPlaylists, _query) { playlists, q ->
-        if (q.isBlank()) playlists else playlists.filter { it.name.contains(q, ignoreCase = true) }
+    val playlists: StateFlow<List<Playlist>> = filteredBy(allPlaylists, _query) { playlist, q ->
+        playlist.name.contains(q, ignoreCase = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        viewModelScope.launch { playlistRepository.refreshPlaylists() }
-    }
 
     fun onQueryChange(value: String) {
         _query.value = value
@@ -128,6 +125,7 @@ class PlaylistListScreen(activity: SealedLightActivity) :
         val playlists by viewModel.playlists.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 // Custom top bar, not LightTopBar — that only has room for one
                 // rightButton, and this needs two (search, new playlist).
@@ -150,8 +148,6 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                     },
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc

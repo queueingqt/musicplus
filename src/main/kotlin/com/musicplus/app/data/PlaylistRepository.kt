@@ -5,6 +5,7 @@ import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
 import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 /**
@@ -15,12 +16,17 @@ import kotlinx.coroutines.flow.map
  * reordering (no native Subsonic "move" endpoint — see [SubsonicApi.reorderPlaylist])
  * all need to read the current server-round-tripped track order back out, not just
  * upsert a flat list.
+ *
+ * Track.downloadStatus/localFilePath are joined against [downloadRepository] at
+ * read time — see [LibraryRepository]'s own class doc for why (same fix, same
+ * reason, 2026-09-18 architecture review + this session's own /grilling pass).
  */
 class PlaylistRepository(
     private val apiHolder: SubsonicApiHolder,
     private val playlistDao: PlaylistDao,
     private val trackDao: TrackDao,
     private val connectivity: LightConnectivity,
+    private val downloadRepository: DownloadRepository,
 ) {
     fun observePlaylists(): Flow<List<Playlist>> =
         playlistDao.observeAll().map { it.map { entity -> entity.toDomain() } }
@@ -41,43 +47,44 @@ class PlaylistRepository(
     fun observePlaylist(playlistId: String): Flow<Playlist?> =
         playlistDao.observeById(playlistId).map { it?.toDomain() }
 
+    // includeCoverArt = false — PlaylistDetailScreen's rows show no art;
+    // leading is reorder icons only when reorderMode is on. See
+    // TrackMapping.kt's toTrack doc.
     fun observeTracks(playlistId: String): Flow<List<Track>> =
-        playlistDao.observeTracks(playlistId).map { entities ->
-            entities.map { it.toDomain(downloaded = false, localFilePath = null) }
+        combine(playlistDao.observeTracks(playlistId), downloadRepository.observeAll()) { entities, downloads ->
+            val byId = downloads.associateBy { it.songId }
+            entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
         }
 
     /**
      * No-op (leaves the cache as-is) when offline, not yet configured, or the
-     * network call itself fails — same convention as LibraryRepository (see its
-     * class-level refresh-failure doc for why the connectivity check alone
-     * isn't sufficient).
+     * network call itself fails — same convention (and same shared shape) as
+     * [LibraryRepository.refresh]; see its doc for why the connectivity check
+     * alone isn't sufficient.
      */
-    suspend fun refreshPlaylists() {
+    private suspend fun refresh(label: String, action: suspend (SubsonicApi) -> Unit) {
         if (!connectivity.currentStatus.isConnected) return
         val api = apiHolder.get() ?: return
         try {
-            playlistDao.upsertAll(api.getPlaylists().map { it.toEntity() })
+            action(api)
         } catch (e: Exception) {
-            // Cache left as-is deliberately — see class-level refresh-failure doc above.
-            AppLogger.e("PlaylistRepository", "refreshPlaylists failed", e)
+            // Cache left as-is deliberately — see this function's own doc above.
+            AppLogger.e("PlaylistRepository", "$label failed", e)
         }
     }
 
-    suspend fun refreshPlaylistDetail(playlistId: String) {
-        if (!connectivity.currentStatus.isConnected) return
-        val api = apiHolder.get() ?: return
-        try {
-            val detail = api.getPlaylist(playlistId) ?: return
-            playlistDao.upsert(detail.toEntity())
-            trackDao.upsertAll(detail.entry.map { it.toEntity() })
-            playlistDao.replaceTracks(
-                playlistId,
-                detail.entry.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
-            )
-        } catch (e: Exception) {
-            // Cache left as-is deliberately — see class-level refresh-failure doc above.
-            AppLogger.e("PlaylistRepository", "refreshPlaylistDetail($playlistId) failed", e)
-        }
+    suspend fun refreshPlaylists() = refresh("refreshPlaylists") { api ->
+        playlistDao.upsertAll(api.getPlaylists().map { it.toEntity() })
+    }
+
+    suspend fun refreshPlaylistDetail(playlistId: String) = refresh("refreshPlaylistDetail($playlistId)") { api ->
+        val detail = api.getPlaylist(playlistId) ?: return@refresh
+        playlistDao.upsert(detail.toEntity())
+        trackDao.upsertAll(detail.entry.map { it.toTrackEntity() })
+        playlistDao.replaceTracks(
+            playlistId,
+            detail.entry.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
+        )
     }
 
     /** Returns the new playlist's server id on success — see [SyncQueueRepository] for the offline case, which this alone doesn't handle. */
@@ -252,13 +259,8 @@ class PlaylistRepository(
     private fun SubsonicPlaylist.toEntity() = PlaylistEntity(id, name, songCount, duration)
     private fun SubsonicPlaylistDetail.toEntity() = PlaylistEntity(id, name, songCount, duration)
     private fun PlaylistEntity.toDomain() = Playlist(id, name, songCount, durationSec)
-
-    // Duplicated from LibraryRepository rather than shared — both are private
-    // extensions scoped to their own class there, matching this codebase's existing
-    // per-repository mapping style (see LibraryRepository's own SubsonicSong.toEntity).
-    private fun SubsonicSong.toEntity() = TrackEntity(id, title, albumId, album, artistId, artist, track, duration, coverArt, suffix, starred != null)
-    private fun TrackEntity.toDomain(downloaded: Boolean, localFilePath: String?) =
-        Track(id, title, albumId, albumName, artistId, artistName, trackNumber, durationSec, coverArtId?.let { apiHolder.peek()?.coverArtUrl(it) }, starred, downloaded, localFilePath)
+    // SubsonicSong.toTrackEntity() / TrackEntity.toTrack() — see TrackMapping.kt
+    // (previously duplicated verbatim from LibraryRepository here).
 }
 
 sealed class CreatePlaylistResult {

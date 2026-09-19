@@ -82,6 +82,7 @@ class NumericEntryScreen(
         val digits by viewModel.digits.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

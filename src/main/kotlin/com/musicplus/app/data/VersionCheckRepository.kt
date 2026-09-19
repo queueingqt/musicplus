@@ -1,17 +1,12 @@
 package com.musicplus.app.data
 
-import io.ktor.client.HttpClient
 import io.ktor.client.call.body
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 /** The two fields of GitHub's `/releases/latest` response this actually uses. */
 @Serializable
@@ -44,9 +39,7 @@ object VersionCheckRepository {
 
     suspend fun checkForUpdate(currentVersionName: String) {
         val release = runCatching {
-            HttpClient(CIO) {
-                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-            }.use { client ->
+            newJsonHttpClient().use { client ->
                 client.get("https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest") {
                     header("Accept", "application/vnd.github+json")
                 }.body<GithubRelease>()

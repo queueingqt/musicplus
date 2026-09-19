@@ -65,26 +65,26 @@ class SettingsScreenViewModel(
     // (see AppServerPrefs's doc) — only visible here for someone who's
     // actually toggled either off, since the seed happens to match the
     // default otherwise, but the same gap.
-    val showAlbumArtwork: StateFlow<Boolean> = AppDisplayPrefs.showAlbumArtwork
+    val showAlbumArtwork: StateFlow<Boolean> = AppDisplayPrefs.showAlbumArtwork.value
 
     fun toggleShowAlbumArtwork() {
         viewModelScope.launch { appSettingsRepository.setShowAlbumArtwork(!showAlbumArtwork.value) }
     }
 
-    val debugLoggingEnabled: StateFlow<Boolean> = AppDebugPrefs.debugLoggingEnabled
+    val debugLoggingEnabled: StateFlow<Boolean> = AppDebugPrefs.debugLoggingEnabled.value
 
     fun toggleDebugLogging() {
         viewModelScope.launch { appSettingsRepository.setDebugLoggingEnabled(!debugLoggingEnabled.value) }
     }
 
-    val scrobblingEnabled: StateFlow<Boolean> = AppScrobblePrefs.scrobblingEnabled
+    val scrobblingEnabled: StateFlow<Boolean> = AppScrobblePrefs.scrobblingEnabled.value
 
     fun toggleScrobbling() {
         viewModelScope.launch { appSettingsRepository.setScrobblingEnabled(!scrobblingEnabled.value) }
     }
 
     /** See [AppScrobblePrefs.lastError]'s doc — set by PlaybackRepository's own scrobble watcher, not this screen. */
-    val scrobblingError: StateFlow<String?> = AppScrobblePrefs.lastError
+    val scrobblingError: StateFlow<String?> = AppScrobblePrefs.lastError.value
 
     fun clearAllLocalData() {
         viewModelScope.launch { localDataRepository.clearAll() }
@@ -112,14 +112,13 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
         val newerVersion by viewModel.newerVersion.collectAsState()
 
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Settings"),
                 )
             },
-            onMiniPlayerClick = { navigateTo(::PlayerScreen) },
-            onSleepTimerClick = { navigateTo(::SleepTimerPickerScreen) },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
                 SettingsMenuRow("Server") { navigateTo(::ServerSettingsScreen) }

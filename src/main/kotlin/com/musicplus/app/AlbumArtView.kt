@@ -52,7 +52,7 @@ fun AlbumArt(
     // directly — see AppDisplayPrefs's doc for why (a raw collectAsState(initial)
     // on the cold DataStore Flow flashed real art every time this composable is
     // freshly composed, which is constantly).
-    val showArtwork by AppDisplayPrefs.showAlbumArtwork.collectAsState()
+    val showArtwork by AppDisplayPrefs.showAlbumArtwork.value.collectAsState()
 
     if (!showArtwork) return
 

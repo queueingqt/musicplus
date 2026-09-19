@@ -184,7 +184,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val albumArtUrl by viewModel.albumArtUrl.collectAsState()
         val isFavoritePending by viewModel.isFavoritePending.collectAsState()
         val sleepTimerState by viewModel.sleepTimerState.collectAsState()
-        val showArtwork by AppDisplayPrefs.showAlbumArtwork.collectAsState()
+        val showArtwork by AppDisplayPrefs.showAlbumArtwork.value.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
 
@@ -203,6 +203,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         // showMiniPlayer = false — the full now-playing UI is already on screen
         // here, a mini-player row would just duplicate it.
         MusicPlusScaffold(
+            screen = this,
             topBar = {
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),

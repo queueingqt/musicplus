@@ -62,6 +62,17 @@ class AlbumArtRepository(
     private val memoryCache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 8L).toInt()) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
+    // Permanent for the process's life, no TTL/retry — deliberately the
+    // opposite of LyricsRepository's policy (a failed fetch there is never
+    // cached, so it's retried on every call). Same-shaped interfaces
+    // (getBitmap/getLyrics), opposite choice, previously signaled nowhere —
+    // confirmed live, 2026-09-18 architecture review. The difference is
+    // real, not an oversight: cover art is requested far more often than
+    // lyrics (every row scrolled into view, vs. once per Now Playing visit),
+    // so retrying a genuinely-broken id on every single scroll would hammer
+    // a struggling/misconfigured server for art that's never going to
+    // resolve; lyrics are rare enough that retrying is cheap and worth it
+    // for a track whose fetch merely hit a transient network blip.
     private val failedKeys = ConcurrentHashMap.newKeySet<String>()
     private val diskCacheDir = File(filesDir, "albumart").apply { mkdirs() }
 
