@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
@@ -105,10 +106,11 @@ class PlayerScreenViewModel(
     // StateFlow's initial value otherwise has nothing to do with whether the
     // art was already known a moment ago. Confirmed on-device 2026-09-18:
     // even the *same* track played twice in a row still flashed
-    // placeholder-then-art here, purely from this cold start. The seed skips
-    // the album lookup (no album list available synchronously) — harmless,
-    // since resolveAlbumArtUrl only reaches that tier when there's no hint,
-    // and a hint is exactly what's usually available synchronously anyway.
+    // placeholder-then-art here, purely from this cold start. The album tier
+    // comes from [AppLibraryCache.albums], the process-lifetime copy of the
+    // albums list, so a song that was started without a hint (from a list, a
+    // playlist, or restored at launch) has its art on the first frame too;
+    // the live albums flow below only confirms it (issue #54).
     val albumArtUrl: StateFlow<String?> = combine(
         state, libraryRepository.observeAlbums(), playback.albumArtUrlHint,
     ) { s, albums, hint ->
@@ -116,7 +118,7 @@ class PlayerScreenViewModel(
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, emptyList(), playback.albumArtUrlHint.value),
+        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtUrlHint.value),
     )
 
     /** True while the current track's favorite state is still waiting to reach the server (issue #24) — the star's own filled/outline state already reflects the optimistic local value, so this drives a separate "still syncing" indicator rather than a third icon state. */

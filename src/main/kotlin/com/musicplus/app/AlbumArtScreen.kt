@@ -9,6 +9,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.PlaybackRepository
 import com.musicplus.app.data.playbackRepository
@@ -38,6 +39,11 @@ class AlbumArtScreenViewModel(
     // whatever was playing the moment this screen opened — skipping/advancing
     // while the full-screen view is up should update it in place, the same
     // way PlayerScreen's own small thumbnail already does.
+    // The first value comes from AppLibraryCache.albums, the in-memory copy of the albums list, not from
+    // an empty list: this view model is created fresh on every open, and without an album to look up the
+    // first frame had no URL at all, so the placeholder showed until the live albums flow below emitted
+    // (about 450 ms measured). The album is the same one Now Playing is showing, so its art is already
+    // in memory (issue #54).
     val albumArtUrl: StateFlow<String?> = combine(
         state, libraryRepository.observeAlbums(), playback.albumArtUrlHint,
     ) { s, albums, hint ->
@@ -45,7 +51,7 @@ class AlbumArtScreenViewModel(
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, emptyList(), playback.albumArtUrlHint.value),
+        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtUrlHint.value),
     )
 }
 
