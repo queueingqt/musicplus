@@ -12,9 +12,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.util.UUID
 import kotlin.time.Duration.Companion.minutes
 
+/** What a locally-made playlist's id starts with *after* its server scope, e.g. `<serverId>:pending:<uuid>` — see [ServerScope]. */
 internal const val PLACEHOLDER_PREFIX = "pending:"
 
 /**
@@ -156,8 +156,7 @@ class SyncQueueRepository(
             is CreatePlaylistResult.Created -> result.id
             CreatePlaylistResult.NotConfigured -> null
             CreatePlaylistResult.Failed -> {
-                val placeholderId = PLACEHOLDER_PREFIX + UUID.randomUUID()
-                playlistRepository.adoptLocalPlaylist(placeholderId, name)
+                val placeholderId = playlistRepository.adoptLocalPlaylist(name) ?: return null
                 enqueue(placeholderId, PendingMutation.PlaylistCreate(name))
                 placeholderId
             }
@@ -257,7 +256,7 @@ class SyncQueueRepository(
                 "album" -> libraryRepository.setAlbumFavorite(row.targetId, mutation.favorite)
                 else -> libraryRepository.setTrackFavorite(row.targetId, mutation.favorite)
             }
-            is PendingMutation.PlaylistCreate -> when (val result = playlistRepository.createPlaylist(mutation.name)) {
+            is PendingMutation.PlaylistCreate -> when (val result = playlistRepository.createPlaylist(mutation.name, onServerOf = row.targetId)) {
                 is CreatePlaylistResult.Created -> {
                     reassignPlaceholder(row.targetId, result.id)
                     WriteOutcome.SUCCESS

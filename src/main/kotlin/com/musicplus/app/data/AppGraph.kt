@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.TimeUnit
 
 /**
@@ -58,6 +59,18 @@ object AppGraph {
         instance?.apiHolder?.invalidate()
     }
 
+    /**
+     * Call after the active server changed. The lists already follow it (they are limited to the shown server's
+     * rows), so this only has to bring that server's rows up to date: it sets the warm active id itself, ahead of
+     * the DataStore mirror, because the refresh below resolves its api from it and would otherwise still reach
+     * the server that was active a moment ago.
+     */
+    fun serverSwitched(activeServerId: String?) {
+        AppServerPrefs.activeServerId.set(activeServerId)
+        invalidateApi()
+        instance?.listRefresher?.refreshAll()
+    }
+
     // Every AppSettingsRepository flow that just needs to keep a process-lifetime
     // WarmedFlow (AppLogger, AppDisplayPrefs, AppQualityPrefs, ...) in sync follows
     // this exact shape — collapsed to one helper so build() reads as "mirror these
@@ -99,7 +112,11 @@ object AppGraph {
         mirrorInto(serverConfigRepository.serverConfig.map { it != null }, AppServerPrefs.isConfigured::set)
         mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs.scrobblingEnabled::set)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
-        val database = MusicPlusDatabase.create(lightContext)
+        // Existing rows and files predate server-scoped ids. They belong to whichever server is active now,
+        // which lives in DataStore, so the (one-time) migration asks for it only if it has something to migrate.
+        val database = MusicPlusDatabase.create(lightContext) {
+            runBlocking { serverConfigRepository.activeProfile.first()?.id }
+        }
         // `SealedLightContext.androidContext` is internal to :sdk:client (not visible
         // to a consumer module like this one) — it already exposes a `connectivity`
         // property built from it for exactly this reason.
@@ -121,6 +138,7 @@ object AppGraph {
             pendingMutationDao = database.pendingMutationDao(),
             connectivity = connectivity,
             downloadRepository = downloadRepository,
+            shownServerIds = serverConfigRepository.shownServerIds,
         )
         val playlistRepository = PlaylistRepository(
             apiHolder = apiHolder,
@@ -128,6 +146,7 @@ object AppGraph {
             trackDao = database.trackDao(),
             connectivity = connectivity,
             downloadRepository = downloadRepository,
+            shownServerIds = serverConfigRepository.shownServerIds,
         )
         // Starts every list refresh — on app start / reconnect just below, and
         // whenever a list page is opened (each list screen's onScreenShow). See
@@ -180,10 +199,10 @@ object AppGraph {
         appScope.launch {
             if ((appSettingsRepository.mediaIntegrityCheckedVersion.first() ?: 0) >= MediaIntegrity.VERSION) return@launch
             connectivity.observeNetworkStatus().first { it.isConnected }
-            val api = apiHolder.get() ?: return@launch
+            if (apiHolder.get() == null) return@launch
             val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), lightContext.filesDir)
             val onWifi = connectivity.currentStatus.isWifi
-            if (integrity.repair(lightContext, api, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
+            if (integrity.repair(lightContext, apiHolder, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
         }
         val albumArtRepository = AlbumArtRepository(
             apiHolder = apiHolder,

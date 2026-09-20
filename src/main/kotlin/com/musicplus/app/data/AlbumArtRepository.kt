@@ -182,7 +182,7 @@ class AlbumArtRepository(
     }
 
     private suspend fun fetchFromNetwork(coverArtId: String, size: Int): ByteArray {
-        val api = apiHolder.get() ?: throw IllegalStateException("no server configured")
+        val api = apiHolder.forId(coverArtId) ?: throw IllegalStateException("no server configured")
         val bytes = api.coverArtBytes(coverArtId, size)
         // Best-effort: a disk-cache write failure shouldn't fail the in-memory result.
         runCatching { diskCacheFile(coverArtId, size).writeBytes(bytes) }
@@ -190,16 +190,20 @@ class AlbumArtRepository(
     }
 
     private fun diskCacheFile(coverArtId: String, size: Int): File {
-        val safeId = coverArtId.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return File(diskCacheDir, "$safeId-$size.art")
+        return File(diskCacheDir, "${ServerScope.fileKey(coverArtId)}-$size.art")
     }
 
-    /** Pulls `id`/`size` back out of a URL built by [SubsonicApi.coverArtUrl] — see the class doc for why. */
+    /**
+     * Pulls the id and size back out of a URL built by [SubsonicApi.coverArtUrl] — see the class doc for why.
+     * The id comes back scoped: the URL carries the server's own id plus which server it is for. A URL without
+     * that (one saved before servers were told apart) says nothing about whose art it is, so it is not fetched.
+     */
     private fun parseCoverArtParams(url: String): Pair<String, Int>? {
         val query = url.substringAfter('?', missingDelimiterValue = "")
         if (query.isEmpty()) return null
         var id: String? = null
         var size: Int? = null
+        var server: String? = null
         query.split('&').forEach { pair ->
             val eq = pair.indexOf('=')
             if (eq < 0) return@forEach
@@ -213,10 +217,16 @@ class AlbumArtRepository(
             when (key) {
                 "id" -> id = value
                 "size" -> size = value.toIntOrNull()
+                SubsonicApi.COVER_ART_SERVER_PARAM -> server = value
             }
         }
         val resolvedId = id
         val resolvedSize = size
-        return if (resolvedId != null && resolvedSize != null) resolvedId to resolvedSize else null
+        val resolvedServer = server
+        return if (resolvedId != null && resolvedSize != null && resolvedServer != null) {
+            ServerScope.scope(resolvedServer, resolvedId) to resolvedSize
+        } else {
+            null
+        }
     }
 }

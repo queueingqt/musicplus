@@ -505,7 +505,7 @@ class PlaybackRepository(
      */
     private fun sendScrobble(songId: String, submission: Boolean) {
         scope.launch {
-            val api = apiHolder.get() ?: return@launch
+            val api = apiHolder.forId(songId) ?: return@launch
             try {
                 api.scrobble(songId, submission)
                 AppLogger.d("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) succeeded")
@@ -803,14 +803,13 @@ class PlaybackRepository(
      */
     suspend fun play(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
         if (!player.awaitReady()) return
-        val api = apiHolder.get() ?: return // not configured — nothing playable
         beginPlay(tracks, startIndex, albumArtUrl)
         val myGeneration = playGeneration
         isActivelyLoading.value = true
         try {
             AppLogger.d("PlaybackRepository", "play(): resolving starting track (index=$startIndex of ${tracks.size})")
             val startItem = try {
-                tracks[startIndex].toAudioItem(api) { FetchGate.Priority.NOW_PLAYING }
+                tracks[startIndex].toAudioItem(apiFor(tracks[startIndex])) { FetchGate.Priority.NOW_PLAYING }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -848,7 +847,7 @@ class PlaybackRepository(
         if (tracks.size > 1) {
             extendJob = scope.launch {
                 try {
-                    extendToFullQueue(tracks, startIndex, api, myGeneration)
+                    extendToFullQueue(tracks, startIndex, myGeneration)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -886,14 +885,21 @@ class PlaybackRepository(
      * [stillWanted] turned false, i.e. a newer play superseded this one. Any track
      * failing fails the whole call, as it did when this ran one track at a time.
      */
-    private suspend fun resolveAll(tracks: List<Track>, api: SubsonicApi, stillWanted: () -> Boolean = { true }): List<LightAudioItem>? {
+    /**
+     * The api for the server that owns [track]. A queue can hold songs from more than one server (one saved
+     * before a server switch keeps playing from the server it came from), so this is per track, not per queue.
+     */
+    private suspend fun apiFor(track: Track): SubsonicApi =
+        apiHolder.forId(track.id) ?: throw java.io.IOException("the server for \"${track.title}\" is not set up")
+
+    private suspend fun resolveAll(tracks: List<Track>, stillWanted: () -> Boolean = { true }): List<LightAudioItem>? {
         val items = arrayOfNulls<LightAudioItem>(tracks.size)
         coroutineScope {
             for (index in tracks.indices) {
                 launch {
                     if (!stillWanted()) return@launch
                     val track = tracks[index]
-                    items[index] = track.toAudioItem(api) { priorityForSong(track.id) ?: FetchGate.Priority.QUEUE }
+                    items[index] = track.toAudioItem(apiFor(track)) { priorityForSong(track.id) ?: FetchGate.Priority.QUEUE }
                 }
             }
         }
@@ -919,14 +925,14 @@ class PlaybackRepository(
         }
     }
 
-    private suspend fun extendToFullQueue(tracks: List<Track>, startIndex: Int, api: SubsonicApi, generation: Int) {
+    private suspend fun extendToFullQueue(tracks: List<Track>, startIndex: Int, generation: Int) {
         // Every track that isn't cached yet is a full download. They run together
         // but in the order FetchGate serves them — the next few songs first, then
         // the rest of the queue — and only as many at a time as the connection can
         // take. A run that a later tap has superseded (issue #47: a 35-track queue
         // was ~100 s of pointless downloading) stops starting new fetches, and
         // beginPlay() also cancels extendJob outright.
-        val items = resolveAll(tracks, api) { playGeneration == generation }
+        val items = resolveAll(tracks) { playGeneration == generation }
             ?: return // superseded while resolving — nothing to extend anymore
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
@@ -1158,7 +1164,6 @@ class PlaybackRepository(
      */
     private suspend fun rebuildQueue(newQueue: List<Track>, explicitIndex: Int? = null) {
         if (!player.awaitReady()) return
-        val api = apiHolder.get() ?: return
         val currentIndex = explicitIndex ?: playerQueueIndex().coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
@@ -1167,7 +1172,7 @@ class PlaybackRepository(
         queue.value = newQueue
         pendingIndex.value = currentIndex
         val items = try {
-            resolveAll(newQueue, api)!!
+            resolveAll(newQueue)!!
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1494,7 +1499,7 @@ class PlaybackRepository(
      */
     private suspend fun Track.cachedStreamFile(api: SubsonicApi, maxBitRateKbps: Int?, rank: () -> FetchGate.Priority): File {
         val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
-        val name = "$id-${maxBitRateKbps ?: "orig"}.mp3"
+        val name = "${ServerScope.fileKey(id)}-${maxBitRateKbps ?: "orig"}.mp3"
         val cached = File(cacheDir, name)
         if (cached.exists()) {
             AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")

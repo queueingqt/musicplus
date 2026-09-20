@@ -45,7 +45,7 @@ class LyricsRepository(
     suspend fun getLyrics(trackId: String): LyricsState {
         readFromDisk(trackId)?.let { return it.toState() }
 
-        val api = apiHolder.get() ?: return LyricsState.Error("Not connected to a server")
+        val api = apiHolder.forId(trackId) ?: return LyricsState.Error("Not connected to a server")
         return try {
             val entries = api.getLyricsBySongId(trackId)
             // Prefer an explicit "main" entry if the server bothers to tag one
@@ -89,7 +89,6 @@ class LyricsRepository(
     }
 
     private fun diskCacheFile(trackId: String): File {
-        val safeId = trackId.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return File(diskCacheDir, "$safeId.json")
+        return File(diskCacheDir, "${ServerScope.fileKey(trackId)}.json")
     }
 }

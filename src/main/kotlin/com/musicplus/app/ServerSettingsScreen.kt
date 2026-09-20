@@ -31,6 +31,7 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -59,14 +60,14 @@ class ServerSettingsScreenViewModel(
     fun setActive(id: String) {
         viewModelScope.launch {
             serverConfigRepository.setActive(id)
-            AppGraph.invalidateApi()
+            AppGraph.serverSwitched(id)
         }
     }
 
     fun remove(id: String) {
         viewModelScope.launch {
             serverConfigRepository.remove(id)
-            AppGraph.invalidateApi()
+            AppGraph.serverSwitched(serverConfigRepository.activeServerId.first())
         }
     }
 }

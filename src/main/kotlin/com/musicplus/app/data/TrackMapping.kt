@@ -42,7 +42,7 @@ fun SubsonicSong.toTrackEntity() =
  */
 fun TrackEntity.toTrack(apiHolder: SubsonicApiHolder, download: DownloadEntity?, includeCoverArt: Boolean = true) = Track(
     id, title, albumId, albumName, artistId, artistName, trackNumber, durationSec,
-    if (includeCoverArt) coverArtId?.let { apiHolder.peek()?.coverArtUrl(it) } else null, starred,
+    if (includeCoverArt) coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) } else null, starred,
     downloadStatus = download?.status,
     localFilePath = download?.localFilePath?.takeIf { download.status == DownloadStatus.COMPLETE },
 )

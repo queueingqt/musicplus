@@ -65,10 +65,12 @@ annotation class DatabaseFactoryAccess
     // (issue #24, the offline sync queue). v4: adds downloads.attemptCount (a
     // download that keeps failing now gives up and surfaces FAILED instead of
     // silently retrying forever with no user-visible signal — reported live).
-    // See migrateV1ToV2IfNeeded/migrateV2ToV3IfNeeded/migrateV3ToV4IfNeeded
-    // below for how an existing install is carried forward losslessly despite
-    // there being no way to register a real Migration object here.
-    version = 4,
+    // v5: no table changed — every id is now scoped to the server it came from
+    // (ServerScope), so two servers' libraries can share one database.
+    // See migrateV1ToV2IfNeeded/migrateV2ToV3IfNeeded/migrateV3ToV4IfNeeded/
+    // migrateV4ToV5IfNeeded below for how an existing install is carried forward
+    // losslessly despite there being no way to register a real Migration object here.
+    version = 5,
     exportSchema = false,
 )
 abstract class MusicPlusDatabase : RoomDatabase() {
@@ -109,10 +111,11 @@ abstract class MusicPlusDatabase : RoomDatabase() {
         // (sdk/client/.../LightDb.kt) — routes storage through the sandboxed app
         // context LightOS expects rather than a raw Context.
         @DatabaseFactoryAccess
-        internal fun create(lightContext: SealedLightContext): MusicPlusDatabase {
+        internal fun create(lightContext: SealedLightContext, activeServerId: () -> String?): MusicPlusDatabase {
             migrateV1ToV2IfNeeded(lightContext)
             migrateV2ToV3IfNeeded(lightContext)
             migrateV3ToV4IfNeeded(lightContext)
+            migrateV4ToV5IfNeeded(lightContext, activeServerId)
             return lightContext.buildDatabase(MusicPlusDatabase::class.java, DB_FILE_NAME)
         }
 
@@ -243,6 +246,32 @@ abstract class MusicPlusDatabase : RoomDatabase() {
             } catch (e: Exception) {
                 android.util.Log.e("MusicPlusDatabase", "v3 -> v4 hand migration failed, falling back to Room's own open", e)
                 AppLogger.e("MusicPlusDatabase", "v3 -> v4 hand migration failed, falling back to Room's own open", e)
+            }
+        }
+
+        /**
+         * v4 -> v5: scopes every id to the server it came from — see [IdScopeMigration], which holds the
+         * whole procedure. Same raw-SQLite pre-flight approach as the migrations above. Unlike them it
+         * rewrites live data and files, so a failure is not swallowed into Room's own open (which could
+         * only complain about a missing migration): it is logged and rethrown. The database is then
+         * exactly as it was, since the rewrite is one transaction, and the next launch tries again.
+         * [activeServerId] is asked only when there is something to migrate.
+         */
+        private fun migrateV4ToV5IfNeeded(lightContext: SealedLightContext, activeServerId: () -> String?) {
+            try {
+                val dbFile = File(lightContext.filesDir.parentFile, "databases/$DB_FILE_NAME")
+                if (!dbFile.exists()) return // fresh install — Room creates everything at v5 itself, nothing to migrate
+
+                val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
+                db.use {
+                    if (it.version != 4) return@use // already migrated, or a version this code doesn't know about — leave it alone
+                    val serverId = activeServerId() ?: IdScopeMigration.UNASSIGNED_SERVER
+                    IdScopeMigration.run(it, serverId, lightContext.filesDir, newVersion = 5)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MusicPlusDatabase", "v4 -> v5 id scoping failed; the database is unchanged", e)
+                AppLogger.e("MusicPlusDatabase", "v4 -> v5 id scoping failed; the database is unchanged", e)
+                throw e
             }
         }
     }

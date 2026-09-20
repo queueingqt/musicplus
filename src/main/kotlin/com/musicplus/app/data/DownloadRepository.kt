@@ -133,12 +133,6 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             return@handler LightJobResult.Error()
         }
 
-        // First emitted value is enough — a job doesn't need to react to later config changes.
-        val config = ServerConfigRepository(lightContext.dataStore).serverConfig.first() ?: run {
-            android.util.Log.e(tag, "no server config saved")
-            return@handler LightJobResult.Error() // not configured — retrying won't help
-        }
-
         // AppGraph.from(...), not MusicPlusDatabase.create(...) directly — the
         // latter builds a brand-new Room instance every time, and Room's Flow
         // invalidation is tracked per-*instance*, not per underlying file: a
@@ -159,7 +153,12 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             return@handler LightJobResult.Error()
         }
 
-        val api = SubsonicApi(SubsonicClient(config))
+        // The server that owns this song, which is not necessarily the active one.
+        val api = AppGraph.from(lightContext).apiHolder.forId(songId) ?: run {
+            android.util.Log.e(tag, "no server for songId=$songId")
+            AppLogger.e(tag, "no server for songId=$songId")
+            return@handler LightJobResult.Error() // its server is gone or not set up — retrying won't help
+        }
         // Preferences > Streaming quality's "Downloads" setting — null (the
         // default) means the original file, same as this job's behavior
         // before that setting existed. A non-null cap means the server
@@ -171,7 +170,7 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
         // *original* format, wrong once transcoding is actually happening).
         val maxBitRateKbps = AppGraph.from(lightContext).appSettingsRepository.downloadQuality.first()
         val destination = File(lightContext.filesDir, "downloads").apply { mkdirs() }
-            .let { File(it, "$songId.${if (maxBitRateKbps != null) "mp3" else (track.suffix ?: "mp3")}") }
+            .let { File(it, "${ServerScope.fileKey(songId)}.${if (maxBitRateKbps != null) "mp3" else (track.suffix ?: "mp3")}") }
 
         // Read before the attempt, not in the catch block — a WorkManager retry is a
         // fresh invocation of this same handler, so attemptCount has to be persisted

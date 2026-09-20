@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 
@@ -44,12 +45,22 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
         prefs[Keys.ACTIVE_SERVER_ID] ?: parseServers(prefs).firstOrNull()?.id
     }
 
-    /** The currently active server's connection config, or null if none configured yet. */
-    val serverConfig: Flow<ServerConfig?> = dataStore.data.map { prefs ->
+    /** The currently active server's whole profile, or null if none configured yet. */
+    val activeProfile: Flow<ServerProfile?> = dataStore.data.map { prefs ->
         val servers = parseServers(prefs)
         val activeId = prefs[Keys.ACTIVE_SERVER_ID]
-        (servers.find { it.id == activeId } ?: servers.firstOrNull())?.toServerConfig()
+        servers.find { it.id == activeId } ?: servers.firstOrNull()
     }
+
+    /** The currently active server's connection config, or null if none configured yet. */
+    val serverConfig: Flow<ServerConfig?> = activeProfile.map { it?.toServerConfig() }
+
+    /**
+     * The servers whose content the app shows right now — every list, search and favorite is limited to these
+     * (see [ServerScope]). One at a time for now (the active one); it is the single place that changes when
+     * more than one server can be shown together.
+     */
+    val shownServerIds: Flow<List<String>> = activeProfile.map { listOfNotNull(it?.id) }.distinctUntilChanged()
 
     /**
      * Reads the saved server list, migrating a pre-multi-server single config

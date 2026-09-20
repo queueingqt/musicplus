@@ -9,18 +9,19 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ArtistDao {
-    @Query("SELECT * FROM artists ORDER BY name COLLATE NOCASE")
-    fun observeAll(): Flow<List<ArtistEntity>>
+    /** Every list below is limited to [serverIds], the servers whose content is being shown (see [ServerScope]). */
+    @Query("SELECT * FROM artists WHERE ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY name COLLATE NOCASE")
+    fun observeAll(serverIds: List<String>): Flow<List<ArtistEntity>>
 
     @Query("SELECT * FROM artists WHERE id = :id")
     suspend fun getById(id: String): ArtistEntity?
 
-    @Query("SELECT * FROM artists WHERE starred = 1 ORDER BY name COLLATE NOCASE")
-    fun observeFavorites(): Flow<List<ArtistEntity>>
+    @Query("SELECT * FROM artists WHERE starred = 1 AND ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY name COLLATE NOCASE")
+    fun observeFavorites(serverIds: List<String>): Flow<List<ArtistEntity>>
 
     /** See [TrackDao.search]'s doc — same local-cache fallback, same LIKE-match shape. */
-    @Query("SELECT * FROM artists WHERE name LIKE '%' || :query || '%' LIMIT :limit")
-    suspend fun search(query: String, limit: Int = 50): List<ArtistEntity>
+    @Query("SELECT * FROM artists WHERE name LIKE '%' || :query || '%' AND ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) LIMIT :limit")
+    suspend fun search(query: String, serverIds: List<String>, limit: Int = 50): List<ArtistEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(artists: List<ArtistEntity>)
@@ -28,15 +29,15 @@ interface ArtistDao {
     @Query("UPDATE artists SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
 
-    /** Whole-table snapshot for [mirrorFromServer]'s diff — never observed, only read once per refresh pass. */
-    @Query("SELECT * FROM artists")
-    suspend fun getAll(): List<ArtistEntity>
+    /** One server's snapshot for [mirrorFromServer]'s diff — never observed, only read once per refresh pass. It must be per-server: a mirror pass removes whatever it doesn't see, and must never see another server's rows as missing. */
+    @Query("SELECT * FROM artists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getAllFor(serverId: String): List<ArtistEntity>
 
     @Query("SELECT * FROM artists WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<ArtistEntity>
 
-    @Query("SELECT id FROM artists WHERE starred = 1")
-    suspend fun getStarredIds(): List<String>
+    @Query("SELECT id FROM artists WHERE starred = 1 AND ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getStarredIds(serverId: String): List<String>
 
     @Query("UPDATE artists SET starred = 0 WHERE id IN (:ids)")
     suspend fun clearStarred(ids: List<String>)
@@ -50,8 +51,8 @@ interface ArtistDao {
 
 @Dao
 interface AlbumDao {
-    @Query("SELECT * FROM albums ORDER BY name COLLATE NOCASE")
-    fun observeAll(): Flow<List<AlbumEntity>>
+    @Query("SELECT * FROM albums WHERE ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY name COLLATE NOCASE")
+    fun observeAll(serverIds: List<String>): Flow<List<AlbumEntity>>
 
     @Query("SELECT * FROM albums WHERE artistId = :artistId ORDER BY year IS NULL, year")
     fun observeByArtist(artistId: String): Flow<List<AlbumEntity>>
@@ -59,12 +60,12 @@ interface AlbumDao {
     @Query("SELECT * FROM albums WHERE id = :id")
     suspend fun getById(id: String): AlbumEntity?
 
-    @Query("SELECT * FROM albums WHERE starred = 1 ORDER BY name COLLATE NOCASE")
-    fun observeFavorites(): Flow<List<AlbumEntity>>
+    @Query("SELECT * FROM albums WHERE starred = 1 AND ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY name COLLATE NOCASE")
+    fun observeFavorites(serverIds: List<String>): Flow<List<AlbumEntity>>
 
     /** See [TrackDao.search]'s doc — same local-cache fallback, same LIKE-match shape. */
-    @Query("SELECT * FROM albums WHERE name LIKE '%' || :query || '%' OR artistName LIKE '%' || :query || '%' LIMIT :limit")
-    suspend fun search(query: String, limit: Int = 50): List<AlbumEntity>
+    @Query("SELECT * FROM albums WHERE (name LIKE '%' || :query || '%' OR artistName LIKE '%' || :query || '%') AND ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) LIMIT :limit")
+    suspend fun search(query: String, serverIds: List<String>, limit: Int = 50): List<AlbumEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(albums: List<AlbumEntity>)
@@ -72,15 +73,15 @@ interface AlbumDao {
     @Query("UPDATE albums SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
 
-    /** See [ArtistDao.getAll]. */
-    @Query("SELECT * FROM albums")
-    suspend fun getAll(): List<AlbumEntity>
+    /** See [ArtistDao.getAllFor]. */
+    @Query("SELECT * FROM albums WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getAllFor(serverId: String): List<AlbumEntity>
 
     @Query("SELECT * FROM albums WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<AlbumEntity>
 
-    @Query("SELECT id FROM albums WHERE starred = 1")
-    suspend fun getStarredIds(): List<String>
+    @Query("SELECT id FROM albums WHERE starred = 1 AND ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getStarredIds(serverId: String): List<String>
 
     @Query("UPDATE albums SET starred = 0 WHERE id IN (:ids)")
     suspend fun clearStarred(ids: List<String>)
@@ -94,8 +95,8 @@ interface AlbumDao {
 
 @Dao
 interface TrackDao {
-    @Query("SELECT * FROM tracks ORDER BY title COLLATE NOCASE")
-    fun observeAll(): Flow<List<TrackEntity>>
+    @Query("SELECT * FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY title COLLATE NOCASE")
+    fun observeAll(serverIds: List<String>): Flow<List<TrackEntity>>
 
     @Query("SELECT * FROM tracks WHERE albumId = :albumId ORDER BY trackNumber IS NULL, trackNumber")
     fun observeByAlbum(albumId: String): Flow<List<TrackEntity>>
@@ -106,8 +107,8 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<TrackEntity>
 
-    @Query("SELECT * FROM tracks WHERE starred = 1 ORDER BY title COLLATE NOCASE")
-    fun observeFavorites(): Flow<List<TrackEntity>>
+    @Query("SELECT * FROM tracks WHERE starred = 1 AND ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY title COLLATE NOCASE")
+    fun observeFavorites(serverIds: List<String>): Flow<List<TrackEntity>>
 
     /**
      * [LibraryRepository.search]'s offline/failed-request fallback — the live
@@ -122,8 +123,8 @@ interface TrackDao {
      * showed before. `limit` matches search3's own default page size so the
      * two code paths feel similar in scale.
      */
-    @Query("SELECT * FROM tracks WHERE title LIKE '%' || :query || '%' OR artistName LIKE '%' || :query || '%' LIMIT :limit")
-    suspend fun search(query: String, limit: Int = 50): List<TrackEntity>
+    @Query("SELECT * FROM tracks WHERE (title LIKE '%' || :query || '%' OR artistName LIKE '%' || :query || '%') AND ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) LIMIT :limit")
+    suspend fun search(query: String, serverIds: List<String>, limit: Int = 50): List<TrackEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(tracks: List<TrackEntity>)
@@ -131,12 +132,12 @@ interface TrackDao {
     @Query("UPDATE tracks SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
 
-    /** See [ArtistDao.getAll]. */
-    @Query("SELECT * FROM tracks")
-    suspend fun getAll(): List<TrackEntity>
+    /** See [ArtistDao.getAllFor]. */
+    @Query("SELECT * FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getAllFor(serverId: String): List<TrackEntity>
 
-    @Query("SELECT id FROM tracks WHERE starred = 1")
-    suspend fun getStarredIds(): List<String>
+    @Query("SELECT id FROM tracks WHERE starred = 1 AND ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getStarredIds(serverId: String): List<String>
 
     @Query("UPDATE tracks SET starred = 0 WHERE id IN (:ids)")
     suspend fun clearStarred(ids: List<String>)
@@ -150,8 +151,8 @@ interface TrackDao {
 
 @Dao
 interface PlaylistDao {
-    @Query("SELECT * FROM playlists ORDER BY name COLLATE NOCASE")
-    fun observeAll(): Flow<List<PlaylistEntity>>
+    @Query("SELECT * FROM playlists WHERE ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY name COLLATE NOCASE")
+    fun observeAll(serverIds: List<String>): Flow<List<PlaylistEntity>>
 
     @Query("SELECT * FROM playlists WHERE id = :id")
     fun observeById(id: String): Flow<PlaylistEntity?>
@@ -168,9 +169,9 @@ interface PlaylistDao {
     @Query("DELETE FROM playlists WHERE id = :id")
     suspend fun delete(id: String)
 
-    /** See [ArtistDao.getAll]. */
-    @Query("SELECT * FROM playlists")
-    suspend fun getAll(): List<PlaylistEntity>
+    /** See [ArtistDao.getAllFor]. */
+    @Query("SELECT * FROM playlists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getAllFor(serverId: String): List<PlaylistEntity>
 
     @Query("DELETE FROM playlist_tracks WHERE playlistId IN (:ids)")
     suspend fun clearTracksFor(ids: List<String>)

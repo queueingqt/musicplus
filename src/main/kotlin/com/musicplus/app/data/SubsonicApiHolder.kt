@@ -1,29 +1,53 @@
 package com.musicplus.app.data
 
 import kotlinx.coroutines.flow.first
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Lazily resolves a [SubsonicApi] from whatever server config is currently saved.
- * Exists because `LightScreen.createViewModel()` is a plain synchronous function
- * (see SDK reference notes) — repositories have to be constructible without
- * awaiting an async DataStore read, so the actual resolution happens on first use
- * from a suspend context instead of at construction time.
+ * Hands out one [SubsonicApi] per saved server, built on first use.
+ *
+ * Most callers want the *active* server ([get]/[peek]) — that is what browsing talks to. Anything that
+ * starts from a song, album or playlist id (playing it, downloading it, its art and lyrics, a favorite)
+ * wants the server that *owns* that id ([forId]/[peekFor]), which is not always the active one: a queue
+ * saved before a server switch still holds the old server's songs and has to keep playing from it.
  */
 class SubsonicApiHolder(private val serverConfigRepository: ServerConfigRepository) {
-    @Volatile private var cached: SubsonicApi? = null
+    private val apis = ConcurrentHashMap<String, SubsonicApi>()
 
-    /** Resolves (and caches) the API client. Returns null if no server is configured yet. */
+    private fun apiFor(profile: ServerProfile): SubsonicApi =
+        apis.computeIfAbsent(profile.id) { SubsonicApi(profile.id, SubsonicClient(profile.toServerConfig())) }
+
+    /**
+     * The active server's api, or null if none is configured. Once built it comes straight from memory: reading
+     * the profile means decrypting and decoding the saved server list, and this is called for every cover-art
+     * fetch. The warmed active id can trail a server switch by a moment; a call in that gap just reaches the
+     * server that was active a moment ago, and everything it touches is scoped to that server.
+     */
     suspend fun get(): SubsonicApi? {
-        cached?.let { return it }
-        val config = serverConfigRepository.serverConfig.first() ?: return null
-        return SubsonicApi(SubsonicClient(config)).also { cached = it }
+        AppServerPrefs.activeServerId.value.value?.let { id -> apis[id]?.let { return it } }
+        return serverConfigRepository.activeProfile.first()?.let { apiFor(it) }
     }
 
-    /** Best-effort synchronous read for non-suspend call sites (e.g. Flow.map). Null until [get] has run once. */
-    fun peek(): SubsonicApi? = cached
+    /** The api for the server that owns [id]. An id that was never scoped falls back to the active server. */
+    suspend fun forId(id: String): SubsonicApi? {
+        val serverId = ServerScope.serverOf(id) ?: return get()
+        return forServer(serverId)
+    }
 
-    /** Call after Settings saves a new server config so the next [get] re-resolves instead of reusing a stale client. */
+    suspend fun forServer(serverId: String): SubsonicApi? {
+        apis[serverId]?.let { return it }
+        val profile = serverConfigRepository.servers.first().find { it.id == serverId } ?: return null
+        return apiFor(profile)
+    }
+
+    /** The active server's api if it has been built already — synchronous, so it can be null until the first [get]. */
+    fun peek(): SubsonicApi? = AppServerPrefs.activeServerId.value.value?.let { apis[it] }
+
+    /** Synchronous [forId]: only an api that has been built already. */
+    fun peekFor(id: String): SubsonicApi? = (ServerScope.serverOf(id) ?: AppServerPrefs.activeServerId.value.value)?.let { apis[it] }
+
+    /** Drops every built api, so the next use picks up a server's edited address or credentials. */
     fun invalidate() {
-        cached = null
+        apis.clear()
     }
 }

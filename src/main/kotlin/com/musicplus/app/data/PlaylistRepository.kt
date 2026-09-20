@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalCoroutinesApi::class)
+
 package com.musicplus.app.data
 
 import com.musicplus.app.Playlist
@@ -5,9 +7,12 @@ import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
 import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import java.util.UUID
 
 /**
  * Cache-then-network access to server playlists, mirroring [LibraryRepository]'s
@@ -28,16 +33,31 @@ class PlaylistRepository(
     private val trackDao: TrackDao,
     private val connectivity: LightConnectivity,
     private val downloadRepository: DownloadRepository,
+    /** See [LibraryRepository]'s parameter of the same name. */
+    private val shownServerIds: Flow<List<String>>,
 ) {
     fun observePlaylists(): Flow<List<Playlist>> =
-        playlistDao.observeAll().map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { playlistDao.observeAll(it) }.map { it.map { entity -> entity.toDomain() } }
 
     /** Read-only passthrough for [SyncQueueRepository], which needs the just-applied local order to build a PLAYLIST_REORDER payload without reaching into the DAO layer directly. */
     suspend fun currentSongIds(playlistId: String): List<String> = playlistDao.getSongIdsInOrder(playlistId)
 
-    /** Local-only row for a playlist [SyncQueueRepository] just created offline under a placeholder id, so it shows up immediately (empty) exactly like a real one, before the create has actually synced. */
-    suspend fun adoptLocalPlaylist(placeholderId: String, name: String) {
+    /**
+     * Local-only row for a playlist [SyncQueueRepository] just created offline, so it shows up immediately (empty)
+     * exactly like a real one, before the create has actually synced. Returns its placeholder id (scoped to the
+     * active server, which is where the create will be replayed), or null when no server is configured.
+     */
+    suspend fun adoptLocalPlaylist(name: String): String? {
+        val api = apiHolder.get() ?: return null
+        val placeholderId = ServerScope.scope(api.serverId, PLACEHOLDER_PREFIX + UUID.randomUUID())
         playlistDao.upsert(PlaylistEntity(placeholderId, name, songCount = 0, durationSec = 0))
+        return placeholderId
+    }
+
+    /** A playlist can only hold songs from its own server; anything else is kept on the phone and never sent. */
+    private fun holdsOnly(playlistId: String, songIds: List<String>): Boolean {
+        val owner = ServerScope.serverOf(playlistId)
+        return songIds.all { ServerScope.serverOf(it) == owner }
     }
 
     /** Passthrough for [SyncQueueRepository]'s PLAYLIST_CREATE replay — see [PlaylistDao.reassignPlaylistId]. */
@@ -63,9 +83,9 @@ class PlaylistRepository(
      * [LibraryRepository.refresh]; see its doc for why the connectivity check
      * alone isn't sufficient.
      */
-    private suspend fun refresh(label: String, action: suspend (SubsonicApi) -> Unit) {
+    private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (SubsonicApi) -> Unit) {
         if (!connectivity.currentStatus.isConnected) return
-        val api = apiHolder.get() ?: return
+        val api = (if (ownerId != null) apiHolder.forId(ownerId) else apiHolder.get()) ?: return
         try {
             action(api)
         } catch (e: CancellationException) {
@@ -85,15 +105,15 @@ class PlaylistRepository(
         mirrorFromServer(
             label = "playlists",
             idOf = PlaylistEntity::id,
-            cached = { playlistDao.getAll().associateBy { it.id } },
+            cached = { playlistDao.getAllFor(api.serverId).associateBy { it.id } },
             fetchAll = { onPage -> onPage(api.getPlaylists().map { it.toEntity() }) },
             write = { playlistDao.upsertAll(it) },
             remove = { playlistDao.deleteWithTracks(it) },
-            keep = { candidates -> candidates.filterTo(HashSet()) { it.startsWith(PLACEHOLDER_PREFIX) } },
+            keep = { candidates -> candidates.filterTo(HashSet()) { ServerScope.nativeOf(it).startsWith(PLACEHOLDER_PREFIX) } },
         )
     }
 
-    suspend fun refreshPlaylistDetail(playlistId: String) = refresh("refreshPlaylistDetail($playlistId)") { api ->
+    suspend fun refreshPlaylistDetail(playlistId: String) = refresh("refreshPlaylistDetail($playlistId)", ownerId = playlistId) { api ->
         val detail = api.getPlaylist(playlistId) ?: return@refresh
         playlistDao.upsert(detail.toEntity())
         trackDao.upsertAll(detail.entry.map { it.toTrackEntity() })
@@ -104,8 +124,9 @@ class PlaylistRepository(
     }
 
     /** Returns the new playlist's server id on success — see [SyncQueueRepository] for the offline case, which this alone doesn't handle. */
-    suspend fun createPlaylist(name: String): CreatePlaylistResult {
-        val api = apiHolder.get() ?: return CreatePlaylistResult.NotConfigured
+    suspend fun createPlaylist(name: String, onServerOf: String? = null): CreatePlaylistResult {
+        // A new playlist goes on the active server; a replayed offline create goes on the server its placeholder was made for.
+        val api = (if (onServerOf != null) apiHolder.forId(onServerOf) else apiHolder.get()) ?: return CreatePlaylistResult.NotConfigured
         return try {
             val created = api.createPlaylist(name) ?: return CreatePlaylistResult.Failed
             playlistDao.upsert(created.toEntity())
@@ -117,7 +138,7 @@ class PlaylistRepository(
     }
 
     suspend fun renamePlaylist(playlistId: String, name: String): WriteOutcome {
-        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         // Optimistic local rename so the title updates immediately even if the
         // network call below is slow/offline/fails; refreshPlaylistDetail
         // reconciles it on the next successful refresh either way.
@@ -140,7 +161,7 @@ class PlaylistRepository(
      * forever.
      */
     suspend fun deletePlaylist(playlistId: String): WriteOutcome {
-        val api = apiHolder.get()
+        val api = apiHolder.forId(playlistId)
         val outcome = try {
             if (api != null) {
                 api.deletePlaylist(playlistId)
@@ -166,7 +187,8 @@ class PlaylistRepository(
     suspend fun addTrack(playlistId: String, songId: String): WriteOutcome {
         val nextPosition = playlistDao.getSongIdsInOrder(playlistId).size
         playlistDao.insertTracks(listOf(PlaylistTrackEntity(playlistId, nextPosition, songId)))
-        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        if (!holdsOnly(playlistId, listOf(songId))) return WriteOutcome.NOT_CONFIGURED
+        val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             api.addSongToPlaylist(playlistId, songId)
             refreshPlaylistDetail(playlistId)
@@ -189,7 +211,7 @@ class PlaylistRepository(
         if (position !in songIds.indices) return WriteOutcome.FAILED
         songIds.removeAt(position)
         playlistDao.replaceTracks(playlistId, songIds.mapIndexed { i, id -> PlaylistTrackEntity(playlistId, i, id) })
-        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             api.removeSongFromPlaylist(playlistId, position)
             refreshPlaylistDetail(playlistId)
@@ -210,7 +232,7 @@ class PlaylistRepository(
      * has since moved on from that order.
      */
     suspend fun replayRemoveTrack(playlistId: String, position: Int): WriteOutcome {
-        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             api.removeSongFromPlaylist(playlistId, position)
             refreshPlaylistDetail(playlistId)
@@ -246,7 +268,8 @@ class PlaylistRepository(
         val moved = songIds.removeAt(fromPosition)
         songIds.add(toPosition, moved)
         playlistDao.replaceTracks(playlistId, songIds.mapIndexed { i, id -> PlaylistTrackEntity(playlistId, i, id) })
-        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        if (!holdsOnly(playlistId, songIds)) return WriteOutcome.NOT_CONFIGURED
+        val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             api.reorderPlaylist(playlistId, playlist.name, songIds)
             refreshPlaylistDetail(playlistId)
@@ -261,7 +284,8 @@ class PlaylistRepository(
     suspend fun reorderTo(playlistId: String, songIds: List<String>): WriteOutcome {
         val playlist = playlistDao.getById(playlistId) ?: return WriteOutcome.FAILED
         playlistDao.replaceTracks(playlistId, songIds.mapIndexed { i, id -> PlaylistTrackEntity(playlistId, i, id) })
-        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        if (!holdsOnly(playlistId, songIds)) return WriteOutcome.NOT_CONFIGURED
+        val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             api.reorderPlaylist(playlistId, playlist.name, songIds)
             refreshPlaylistDetail(playlistId)

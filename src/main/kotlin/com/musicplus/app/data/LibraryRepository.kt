@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalCoroutinesApi::class)
+
 package com.musicplus.app.data
 
 import com.musicplus.app.Album
@@ -6,9 +8,11 @@ import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
 import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 
 /** How many songs [LibraryRepository.refreshAllSongs] asks for per page — large enough that a typical library finishes in a small handful of requests, small enough that each individual request/upsert stays quick. */
@@ -41,12 +45,14 @@ class LibraryRepository(
     private val pendingMutationDao: PendingMutationDao,
     private val connectivity: LightConnectivity,
     private val downloadRepository: DownloadRepository,
+    /** The servers whose content is shown — every list below follows it, so switching servers switches the lists. See [ServerConfigRepository.shownServerIds]. */
+    private val shownServerIds: Flow<List<String>>,
 ) {
     fun observeArtists(): Flow<List<Artist>> =
-        artistDao.observeAll().map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { artistDao.observeAll(it) }.map { it.map { entity -> entity.toDomain() } }
 
     fun observeAlbums(): Flow<List<Album>> =
-        albumDao.observeAll().map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { albumDao.observeAll(it) }.map { it.map { entity -> entity.toDomain() } }
 
     fun observeAlbumsByArtist(artistId: String): Flow<List<Album>> =
         albumDao.observeByArtist(artistId).map { it.map { entity -> entity.toDomain() } }
@@ -61,16 +67,16 @@ class LibraryRepository(
         }
 
     fun observeFavoriteArtists(): Flow<List<Artist>> =
-        artistDao.observeFavorites().map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { artistDao.observeFavorites(it) }.map { it.map { entity -> entity.toDomain() } }
 
     fun observeFavoriteAlbums(): Flow<List<Album>> =
-        albumDao.observeFavorites().map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { albumDao.observeFavorites(it) }.map { it.map { entity -> entity.toDomain() } }
 
     // includeCoverArt = false — Favorites' Tracks section shows no per-row
     // art (showFavorite = false is TrackRow's only override there); see
     // toTrack's doc.
     fun observeFavoriteTracks(): Flow<List<Track>> =
-        combine(trackDao.observeFavorites(), downloadRepository.observeAll()) { entities, downloads ->
+        combine(shownServerIds.flatMapLatest { trackDao.observeFavorites(it) }, downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
         }
@@ -86,7 +92,7 @@ class LibraryRepository(
     // the first place (several thousand tracks vs. Albums'/Artists' low
     // hundreds), confirmed live 2026-09-18.
     fun observeAllTracks(): Flow<List<Track>> =
-        combine(trackDao.observeAll(), downloadRepository.observeAll()) { entities, downloads ->
+        combine(shownServerIds.flatMapLatest { trackDao.observeAll(it) }, downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
         }
@@ -112,9 +118,10 @@ class LibraryRepository(
      * `UnresolvedAddressException` from `HomeScreenViewModel.onScreenShow`'s
      * unguarded `refreshAlbumList()`/`refreshArtists()` calls, 2026-09-17.
      */
-    private suspend fun refresh(label: String, action: suspend (SubsonicApi) -> Unit) {
+    private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (SubsonicApi) -> Unit) {
         if (!connectivity.currentStatus.isConnected) return
-        val api = apiHolder.get() ?: return
+        // A refresh of one artist/album goes to the server that owns it; a list refresh goes to the active server.
+        val api = (if (ownerId != null) apiHolder.forId(ownerId) else apiHolder.get()) ?: return
         try {
             action(api)
         } catch (e: CancellationException) {
@@ -139,7 +146,7 @@ class LibraryRepository(
         mirrorFromServer(
             label = "artists",
             idOf = ArtistEntity::id,
-            cached = { artistDao.getAll().associateBy { it.id } },
+            cached = { artistDao.getAllFor(api.serverId).associateBy { it.id } },
             fetchAll = { onPage -> onPage(api.getArtists().map { it.toEntity() }) },
             write = { artistDao.upsertAll(it) },
             remove = { artistDao.deleteByIds(it) },
@@ -159,7 +166,7 @@ class LibraryRepository(
         mirrorFromServer(
             label = "albums",
             idOf = AlbumEntity::id,
-            cached = { albumDao.getAll().associateBy { it.id } },
+            cached = { albumDao.getAllFor(api.serverId).associateBy { it.id } },
             fetchAll = { onPage ->
                 pageThrough(
                     idOf = AlbumEntity::id,
@@ -173,12 +180,12 @@ class LibraryRepository(
         )
     }
 
-    suspend fun refreshArtistDetail(artistId: String) = refresh("refreshArtistDetail($artistId)") { api ->
+    suspend fun refreshArtistDetail(artistId: String) = refresh("refreshArtistDetail($artistId)", ownerId = artistId) { api ->
         val detail = api.getArtist(artistId) ?: return@refresh
         albumDao.upsertAll(detail.album.map { it.toEntity() })
     }
 
-    suspend fun refreshAlbumDetail(albumId: String) = refresh("refreshAlbumDetail($albumId)") { api ->
+    suspend fun refreshAlbumDetail(albumId: String) = refresh("refreshAlbumDetail($albumId)", ownerId = albumId) { api ->
         val detail = api.getAlbum(albumId) ?: return@refresh
         trackDao.upsertAll(detail.song.map { it.toTrackEntity() })
     }
@@ -198,7 +205,7 @@ class LibraryRepository(
         mirrorFromServer(
             label = "songs",
             idOf = TrackEntity::id,
-            cached = { trackDao.getAll().associateBy { it.id } },
+            cached = { trackDao.getAllFor(api.serverId).associateBy { it.id } },
             fetchAll = { onPage ->
                 pageThrough(
                     idOf = TrackEntity::id,
@@ -230,7 +237,7 @@ class LibraryRepository(
             idOf = ArtistEntity::id,
             cachedByIds = { artistDao.getByIds(it) },
             write = { artistDao.upsertAll(it) },
-            localStarredIds = { artistDao.getStarredIds() },
+            localStarredIds = { artistDao.getStarredIds(api.serverId) },
             clearStarred = { artistDao.clearStarred(it) },
             pending = pending,
         )
@@ -240,7 +247,7 @@ class LibraryRepository(
             idOf = AlbumEntity::id,
             cachedByIds = { albumDao.getByIds(it) },
             write = { albumDao.upsertAll(it) },
-            localStarredIds = { albumDao.getStarredIds() },
+            localStarredIds = { albumDao.getStarredIds(api.serverId) },
             clearStarred = { albumDao.clearStarred(it) },
             pending = pending,
         )
@@ -250,7 +257,7 @@ class LibraryRepository(
             idOf = TrackEntity::id,
             cachedByIds = { trackDao.getByIds(it) },
             write = { trackDao.upsertAll(it) },
-            localStarredIds = { trackDao.getStarredIds() },
+            localStarredIds = { trackDao.getStarredIds(api.serverId) },
             clearStarred = { trackDao.clearStarred(it) },
             pending = pending,
         )
@@ -286,11 +293,12 @@ class LibraryRepository(
     }
 
     private suspend fun searchLocal(query: String): Triple<List<Artist>, List<Album>, List<Track>> {
+        val servers = shownServerIds.first()
         val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
         return Triple(
-            artistDao.search(query).map { it.toDomain() },
-            albumDao.search(query).map { it.toDomain() },
-            trackDao.search(query).map { it.toTrack(apiHolder, downloadsById[it.id]) },
+            artistDao.search(query, servers).map { it.toDomain() },
+            albumDao.search(query, servers).map { it.toDomain() },
+            trackDao.search(query, servers).map { it.toTrack(apiHolder, downloadsById[it.id]) },
         )
     }
 
@@ -307,7 +315,7 @@ class LibraryRepository(
      * which real endpoint this is (`getArtistInfo2`, not `getSimilarSongs2`).
      */
     suspend fun getSimilarArtists(artistId: String): List<Artist> {
-        val api = apiHolder.get() ?: return emptyList()
+        val api = apiHolder.forId(artistId) ?: return emptyList()
         return try {
             api.getSimilarArtists(artistId).map { it.toEntity().toDomain() }
         } catch (e: Exception) {
@@ -341,7 +349,7 @@ class LibraryRepository(
      */
     private suspend inline fun setFavorite(id: String, favorite: Boolean, updateLocal: () -> Unit): WriteOutcome {
         updateLocal() // optimistic — reflect it immediately, reconcile on next refresh if this fails
-        val api = apiHolder.get() ?: return WriteOutcome.NOT_CONFIGURED
+        val api = apiHolder.forId(id) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             if (favorite) api.star(id) else api.unstar(id)
             WriteOutcome.SUCCESS
@@ -359,7 +367,7 @@ class LibraryRepository(
     // `apiHolder.peek()` — best-effort: returns null (no cover art URL yet) until a
     // suspend refresh has run at least once and resolved the client. Acceptable for
     // a stub; screens should trigger a refresh on first show (see HomeScreen).
-    private fun ArtistEntity.toDomain() = Artist(id, name, coverArtId?.let { apiHolder.peek()?.coverArtUrl(it) }, albumCount, starred)
-    private fun AlbumEntity.toDomain() = Album(id, name, artistId, artistName, coverArtId?.let { apiHolder.peek()?.coverArtUrl(it) }, songCount, durationSec, year, starred)
+    private fun ArtistEntity.toDomain() = Artist(id, name, coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) }, albumCount, starred)
+    private fun AlbumEntity.toDomain() = Album(id, name, artistId, artistName, coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) }, songCount, durationSec, year, starred)
     // SubsonicSong.toTrackEntity() / TrackEntity.toTrack() — see TrackMapping.kt.
 }
