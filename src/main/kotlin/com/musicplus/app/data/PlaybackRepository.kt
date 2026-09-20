@@ -12,7 +12,9 @@ import com.thelightphone.sdk.audio.LightAudioItem
 import com.thelightphone.sdk.audio.LightAudioPlayback
 import com.thelightphone.sdk.audio.LightAudioSource
 import com.thelightphone.sdk.audio.LightMediaMetadata
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -104,7 +106,36 @@ class PlaybackRepository(
     // Suspend calls that do real network I/O (toAudioItem/cachedStreamFile)
     // stay non-blocking regardless — Ktor's CIO engine dispatches its own
     // socket I/O internally rather than blocking the caller's dispatcher.
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    //
+    // The exception handler is the last line of defence: a failure that reaches it
+    // (a track that couldn't be fetched, say) is logged and shown as an error line
+    // instead of taking the whole app down. Before it existed, an uncaught
+    // download timeout in a coroutine on this scope crashed the app 8 times in
+    // one evening (2026-09-19). The known failure points below also catch their
+    // own errors so they can leave playback in a sensible state.
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            CoroutineExceptionHandler { _, e ->
+                AppLogger.e("PlaybackRepository", "uncaught in a playback coroutine", e)
+                loadError.value = "Couldn't load audio: ${loadFailureReason(e)}"
+            },
+    )
+
+    /**
+     * Why the last attempt to get a track (or the rest of the queue) ready failed,
+     * shown on Now Playing like any player error. Separate from `player.error`:
+     * when the file can't even be fetched, the player never gets anything to fail
+     * on, and the screen used to look like an ordinary load that never finished.
+     * Cleared when a new play starts.
+     */
+    private val loadError = MutableStateFlow<String?>(null)
+
+    // toString(), not the exception's class: the Light SDK's build check forbids reflection.
+    private fun loadFailureReason(e: Throwable): String = when {
+        e.toString().contains("Timeout", ignoreCase = true) -> "the server took too long"
+        e is java.io.IOException -> e.message ?: "network error"
+        else -> e.message ?: e.toString()
+    }
 
     private val queue = MutableStateFlow<List<Track>>(emptyList())
     private val shuffle = MutableStateFlow(false)
@@ -292,8 +323,8 @@ class PlaybackRepository(
     // which is exactly what happened testing against a real server: track metadata
     // showed correctly (queue is set before the player even touches the network)
     // but position/duration silently stayed 0:00 with no visible cause.
-    private val misc = combine(shuffle, repeatMode, player.error) { isShuffle, mode, error ->
-        MiscState(isShuffle, mode, error?.let { "${it.kind}: ${it.diagnostic}" })
+    private val misc = combine(shuffle, repeatMode, player.error, loadError) { isShuffle, mode, error, loadErr ->
+        MiscState(isShuffle, mode, error?.let { "${it.kind}: ${it.diagnostic}" } ?: loadErr)
     }
 
     val state = combine(queue, playerCore, misc) { q, core, misc ->
@@ -725,7 +756,7 @@ class PlaybackRepository(
             durationMs = if (isPending) 0L else player.durationMs.value,
             shuffle = shuffle.value,
             repeatMode = repeatMode.value,
-            errorMessage = player.error.value?.let { "${it.kind}: ${it.diagnostic}" },
+            errorMessage = player.error.value?.let { "${it.kind}: ${it.diagnostic}" } ?: loadError.value,
             isLoading = isPending,
         )
     }
@@ -754,7 +785,18 @@ class PlaybackRepository(
         isActivelyLoading.value = true
         try {
             AppLogger.d("PlaybackRepository", "play(): resolving starting track (index=$startIndex of ${tracks.size})")
-            val startItem = tracks[startIndex].toAudioItem(api)
+            val startItem = try {
+                tracks[startIndex].toAudioItem(api)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The file couldn't be fetched (server slow or unreachable). Say so
+                // rather than leaving a track that looks like it is loading forever;
+                // pressing play tries again (playerQueueLoaded is still false).
+                AppLogger.e("PlaybackRepository", "play(): could not load \"${tracks[startIndex].title}\"", e)
+                loadError.value = "Couldn't load \"${tracks[startIndex].title}\": ${loadFailureReason(e)}"
+                return
+            }
             AppLogger.d("PlaybackRepository", "play(): starting track resolved, calling setMediaQueue")
             player.setMediaQueue(listOf(startItem), 0)
             // Only the starting track is in the player for now, unless it is the
@@ -774,7 +816,19 @@ class PlaybackRepository(
         persistScalarStateIfLoaded()
 
         if (tracks.size > 1) {
-            extendJob = scope.launch { extendToFullQueue(tracks, startIndex, api, myGeneration) }
+            extendJob = scope.launch {
+                try {
+                    extendToFullQueue(tracks, startIndex, api, myGeneration)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // The current track is already playing; only the rest of the queue
+                    // could not be fetched. Keep playing it, and say what happened —
+                    // "next" still works, it starts the following track from the queue.
+                    AppLogger.e("PlaybackRepository", "could not load the rest of the queue", e)
+                    if (playGeneration == myGeneration) loadError.value = "Couldn't load the rest of the queue: ${loadFailureReason(e)}"
+                }
+            }
         }
     }
 
@@ -850,6 +904,7 @@ class PlaybackRepository(
         // restoreFromDisk()'s doc. This has to win any race against it, not
         // just the `queue.value =` write two lines down.
         hasStartedRealPlay = true
+        loadError.value = null
         playGeneration++
         // Whatever full-queue rebuild the previous play() left running is now
         // superseded — stop it instead of letting it keep downloading (issue #47).
@@ -1041,9 +1096,24 @@ class PlaybackRepository(
         val currentIndex = explicitIndex ?: playerQueueIndex().coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
+        val previousQueue = queue.value
+        val previousPending = pendingIndex.value
         queue.value = newQueue
         pendingIndex.value = currentIndex
-        player.setMediaQueue(newQueue.map { it.toAudioItem(api) }, currentIndex)
+        val items = try {
+            newQueue.map { it.toAudioItem(api) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A track that isn't downloaded couldn't be fetched: put the queue back
+            // as it was rather than show one the player doesn't hold.
+            AppLogger.e("PlaybackRepository", "rebuildQueue(): could not load a track, keeping the previous queue", e)
+            queue.value = previousQueue
+            pendingIndex.value = previousPending
+            loadError.value = "Couldn't update the queue: ${loadFailureReason(e)}"
+            return
+        }
+        player.setMediaQueue(items, currentIndex)
         withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
             player.durationMs.first { it > 0L }
         }

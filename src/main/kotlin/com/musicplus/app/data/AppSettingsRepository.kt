@@ -31,6 +31,7 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
         val STREAM_QUALITY_CELLULAR = intPreferencesKey("stream_quality_cellular_kbps")
         val DOWNLOAD_QUALITY = intPreferencesKey("download_quality_kbps")
         val LAST_VERSION_CHECK_AT_MS = longPreferencesKey("last_version_check_at_ms")
+        val MEDIA_INTEGRITY_CHECKED_VERSION = intPreferencesKey("media_integrity_checked_version")
     }
 
     private companion object {
@@ -122,5 +123,12 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setLastVersionCheckAtMs(value: Long) {
         dataStore.edit { prefs -> prefs[Keys.LAST_VERSION_CHECK_AT_MS] = value }
+    }
+
+    /** Which version of [MediaIntegrity]'s one-time cleanup last ran to completion here; null means never. */
+    val mediaIntegrityCheckedVersion: Flow<Int?> = dataStore.data.map { prefs -> prefs[Keys.MEDIA_INTEGRITY_CHECKED_VERSION] }
+
+    suspend fun setMediaIntegrityCheckedVersion(value: Int) {
+        dataStore.edit { prefs -> prefs[Keys.MEDIA_INTEGRITY_CHECKED_VERSION] = value }
     }
 }

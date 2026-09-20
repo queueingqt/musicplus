@@ -163,8 +163,25 @@ object AppGraph {
         // on every launch) — a download that gave up after MAX_DOWNLOAD_ATTEMPTS
         // shouldn't need the user to notice and manually retry it if whatever
         // broke (server down, network blip) has since cleared on its own.
+        // Only on Wi-Fi: with the request cap gone (see newJsonHttpClient) these
+        // retries now actually finish, and on a phone that is often on cellular a
+        // backlog of failed albums would otherwise be pulled over the data plan
+        // unasked. A tap on "download" still works on any network.
         appScope.launch {
-            downloadRepository.retryFailed(lightContext)
+            if (connectivity.currentStatus.isWifi) downloadRepository.retryFailed(lightContext)
+        }
+        // Once per install (per MediaIntegrity.VERSION): find songs an earlier
+        // version stored cut short and fetch them again. Waits for a connection
+        // — it has to ask the server for each song's real size — and only counts
+        // as done when every answer came back, so an offline launch tries again
+        // next time.
+        appScope.launch {
+            if ((appSettingsRepository.mediaIntegrityCheckedVersion.first() ?: 0) >= MediaIntegrity.VERSION) return@launch
+            connectivity.observeNetworkStatus().first { it.isConnected }
+            val api = apiHolder.get() ?: return@launch
+            val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), lightContext.filesDir)
+            val onWifi = connectivity.currentStatus.isWifi
+            if (integrity.repair(lightContext, api, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
         }
         val albumArtRepository = AlbumArtRepository(
             apiHolder = apiHolder,

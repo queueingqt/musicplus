@@ -1,15 +1,20 @@
 package com.musicplus.app.data
 
 import io.ktor.client.call.body
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.ContentType
 import io.ktor.http.contentLength
+import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import io.ktor.utils.io.readAvailable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import kotlin.random.Random
 
@@ -80,6 +85,14 @@ class SubsonicClient(private val config: ServerConfig) {
 
         /** See [downloadToFile]'s doc — the fixed chunk size that keeps its memory use constant regardless of file size. */
         private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+
+        /**
+         * Whole-call limit for an ordinary API request or a cover image — the
+         * client itself has no total cap (see [newJsonHttpClient]), so anything
+         * that is supposed to be quick says so here. Generous on purpose: a
+         * 500-album page from a busy server can take well over the old 15 s.
+         */
+        private const val API_CALL_TIMEOUT_MS = 60_000L
     }
 
     private fun randomSalt(length: Int = 12): String =
@@ -142,6 +155,7 @@ class SubsonicClient(private val config: ServerConfig) {
     suspend fun call(method: String, params: List<Pair<String, String>> = emptyList()): SubsonicResponse {
         val response: SubsonicEnvelope = http.get("$baseUrl/rest/$method") {
             (authParams() + params).forEach { (k, v) -> parameter(k, v) }
+            timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
         }.body()
         val body = response.response
         if (!body.isOk) {
@@ -156,6 +170,7 @@ class SubsonicClient(private val config: ServerConfig) {
         AppLogger.d("SubsonicClient", "getBytes($method): issuing request")
         val response = http.get("$baseUrl/rest/$method") {
             (authParams() + params).forEach { (k, v) -> parameter(k, v) }
+            timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
         }
         AppLogger.d("SubsonicClient", "getBytes($method): got response ${response.status}, contentLength=${response.contentLength()}")
         val bytes: ByteArray = response.body()
@@ -183,7 +198,19 @@ class SubsonicClient(private val config: ServerConfig) {
         http.prepareGet("$baseUrl/rest/$method") {
             (authParams() + params).forEach { (k, v) -> parameter(k, v) }
         }.execute { response ->
-            AppLogger.d("SubsonicClient", "downloadToFile($method): got response ${response.status}, contentLength=${response.contentLength()}")
+            val expectedBytes = response.contentLength()
+            AppLogger.d("SubsonicClient", "downloadToFile($method): got response ${response.status}, contentLength=$expectedBytes")
+            // Everything below exists so that a file which is not the whole song
+            // never reaches disk looking like one. A cut-off body used to end the
+            // read loop exactly as a finished one does (readAvailable returns -1
+            // either way), so a fraction of a song was stored as complete.
+            if (!response.status.isSuccess()) throw IOException("server answered ${response.status}")
+            // A Subsonic server reports an error as an ordinary 200 carrying a
+            // JSON/XML document, not as an audio file.
+            val type = response.contentType()
+            if (type != null && (type.match(ContentType.Application.Json) || type.match(ContentType.Application.Xml) || type.match(ContentType.Text.Any))) {
+                throw IOException("server answered with $type instead of audio")
+            }
             val channel = response.bodyAsChannel()
             var totalBytes = 0L
             destination.outputStream().use { output ->
@@ -196,6 +223,10 @@ class SubsonicClient(private val config: ServerConfig) {
                         totalBytes += bytesRead
                     }
                 }
+            }
+            channel.closedCause?.let { throw IOException("connection dropped after $totalBytes bytes", it) }
+            if (expectedBytes != null && totalBytes != expectedBytes) {
+                throw IOException("cut short: got $totalBytes of $expectedBytes bytes")
             }
             AppLogger.d("SubsonicClient", "downloadToFile($method): wrote $totalBytes bytes")
         }

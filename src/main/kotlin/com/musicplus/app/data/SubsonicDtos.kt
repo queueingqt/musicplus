@@ -23,6 +23,8 @@ data class SubsonicResponse(
     val artist: SubsonicArtistDetail? = null,
     val albumList2: SubsonicAlbumList? = null,
     val album: SubsonicAlbumDetail? = null,
+    // `getSong` — one song by id; used to compare a downloaded file's length with the server's.
+    val song: SubsonicSong? = null,
     val searchResult3: SubsonicSearchResult? = null,
     val starred2: SubsonicStarred? = null,
     val playlists: SubsonicPlaylists? = null,
@@ -124,6 +126,8 @@ data class SubsonicSong(
     val coverArt: String? = null,
     val suffix: String? = null,
     val contentType: String? = null,
+    // Length in bytes of the original file — see MediaIntegrity.
+    val size: Long? = null,
     val starred: String? = null,
 )
 

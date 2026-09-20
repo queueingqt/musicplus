@@ -27,6 +27,9 @@ class SubsonicApi(private val client: SubsonicClient) {
     suspend fun getAlbum(id: String): SubsonicAlbumDetail? =
         client.call("getAlbum.view", listOf("id" to id)).album
 
+    suspend fun getSong(id: String): SubsonicSong? =
+        client.call("getSong.view", listOf("id" to id)).song
+
     suspend fun search(query: String, artistCount: Int = 20, albumCount: Int = 20, songCount: Int = 30): SubsonicSearchResult =
         client.call(
             "search3.view",
