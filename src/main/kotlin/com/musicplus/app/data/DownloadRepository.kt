@@ -6,6 +6,7 @@ import com.thelightphone.sdk.LightJobHandler
 import com.thelightphone.sdk.LightJobResult
 import com.thelightphone.sdk.LightWork
 import com.thelightphone.sdk.SealedLightContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import java.io.File
@@ -197,11 +198,22 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
             // SubsonicApi.downloadToFile's own doc: "original file" only), so
             // getting a transcoded download means going through stream.view,
             // same endpoint live playback already uses for this.
-            if (maxBitRateKbps != null) {
-                api.streamToFile(songId, destination, maxBitRateKbps)
-            } else {
-                api.downloadToFile(songId, destination)
+            // Goes through FetchGate: served in priority order (the playing and up-next
+            // songs first) and only as many at a time as the connection can take.
+            val rank: () -> FetchGate.Priority = {
+                PlaybackRepositoryHolder.peek()?.priorityForSong(songId)
+                    ?: if (previousAttempts > 0) FetchGate.Priority.RETRY else FetchGate.Priority.DOWNLOAD
             }
+            val fetched = FetchGate.run(FetchGate.Lane.BULK, songId, rank, transcoding = maxBitRateKbps != null) { lease ->
+                if (maxBitRateKbps != null) {
+                    api.streamToFile(songId, destination, maxBitRateKbps, lease)
+                } else {
+                    api.downloadToFile(songId, destination, lease)
+                }
+            }
+            // No slot came free in time (a long backlog): try again later, and don't
+            // count it as a failed attempt.
+            if (fetched == null) return@handler LightJobResult.Retry
             db.downloadDao().upsert(
                 DownloadEntity(
                     songId = songId,
@@ -212,7 +224,13 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
                 ),
             )
             LightJobResult.Success()
+        } catch (e: CancellationException) {
+            // WorkManager stopped the job (its time limit, or the work was cancelled): not a
+            // failed attempt, and nothing worth keeping of a half-written file.
+            destination.delete()
+            throw e
         } catch (e: Exception) {
+            if (e.toString().contains("Timeout", ignoreCase = true) || e is java.io.IOException) FetchGate.onCongestion()
             android.util.Log.e(tag, "download failed for songId=$songId", e)
             AppLogger.e(tag, "download failed for songId=$songId", e)
             destination.delete()

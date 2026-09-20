@@ -139,12 +139,12 @@ class SubsonicApi(private val client: SubsonicClient) {
     }
 
     /** Same content as [streamUrl], streamed straight to [destination] through Ktor/CIO — for the http:// download-then-play fallback. See [SubsonicClient.downloadToFile]'s doc for why this streams to a file rather than returning bytes. */
-    suspend fun streamToFile(songId: String, destination: File, maxBitRateKbps: Int? = null) {
+    suspend fun streamToFile(songId: String, destination: File, maxBitRateKbps: Int? = null, lease: FetchGate.Lease? = null) {
         val params = buildList {
             add("id" to songId)
             if (maxBitRateKbps != null) add("maxBitRate" to maxBitRateKbps.toString())
         }
-        client.downloadToFile("stream.view", destination, params)
+        client.downloadToFile("stream.view", destination, params, lease)
     }
 
     /** Original-file URL — kept for reference/debugging, but DownloadRepository must use [downloadToFile], not fetch this URL directly (see its own comment for why). */
@@ -152,8 +152,8 @@ class SubsonicApi(private val client: SubsonicClient) {
         client.endpointUrl("download.view", listOf("id" to songId))
 
     /** Streams the original file straight to [destination] through the same Ktor/CIO client as every other call, so it's not subject to Android's cleartext-traffic block. See [SubsonicClient.downloadToFile]'s doc for why this streams rather than returning bytes. */
-    suspend fun downloadToFile(songId: String, destination: File) =
-        client.downloadToFile("download.view", destination, listOf("id" to songId))
+    suspend fun downloadToFile(songId: String, destination: File, lease: FetchGate.Lease? = null) =
+        client.downloadToFile("download.view", destination, listOf("id" to songId), lease)
 
     /** [id] is any item's `coverArt` field (not the item's own id). */
     fun coverArtUrl(coverArtId: String, size: Int = 300): String =

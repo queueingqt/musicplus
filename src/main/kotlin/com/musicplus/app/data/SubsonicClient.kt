@@ -193,7 +193,12 @@ class SubsonicClient(private val config: ServerConfig) {
      * chunks instead, keeping memory use roughly constant regardless of file
      * size.
      */
-    suspend fun downloadToFile(method: String, destination: File, params: List<Pair<String, String>> = emptyList()) {
+    suspend fun downloadToFile(
+        method: String,
+        destination: File,
+        params: List<Pair<String, String>> = emptyList(),
+        lease: FetchGate.Lease? = null,
+    ) {
         AppLogger.d("SubsonicClient", "downloadToFile($method): issuing request")
         http.prepareGet("$baseUrl/rest/$method") {
             (authParams() + params).forEach { (k, v) -> parameter(k, v) }
@@ -216,11 +221,14 @@ class SubsonicClient(private val config: ServerConfig) {
             destination.outputStream().use { output ->
                 val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
                 while (true) {
+                    // A transfer that a more important one is outranking pauses here — see FetchGate.
+                    lease?.checkpoint()
                     val bytesRead = channel.readAvailable(buffer)
                     if (bytesRead == -1) break
                     if (bytesRead > 0) {
                         output.write(buffer, 0, bytesRead)
                         totalBytes += bytesRead
+                        lease?.bytes(bytesRead)
                     }
                 }
             }

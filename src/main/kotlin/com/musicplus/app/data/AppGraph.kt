@@ -104,6 +104,8 @@ object AppGraph {
         // to a consumer module like this one) — it already exposes a `connectivity`
         // property built from it for exactly this reason.
         val connectivity = lightContext.connectivity
+        // Lets FetchGate choose how many transfers to run at once: few on cellular, many on Wi-Fi.
+        FetchGate.attach(connectivity)
         // Built before libraryRepository/playlistRepository — both now take
         // this as a dependency (see LibraryRepository's own class doc for
         // why) to join live download status into every Track they hand out.

@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -809,7 +810,7 @@ class PlaybackRepository(
         try {
             AppLogger.d("PlaybackRepository", "play(): resolving starting track (index=$startIndex of ${tracks.size})")
             val startItem = try {
-                tracks[startIndex].toAudioItem(api)
+                tracks[startIndex].toAudioItem(api) { FetchGate.Priority.NOW_PLAYING }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -879,21 +880,54 @@ class PlaybackRepository(
      * while this was still resolving tracks doesn't get clobbered by a
      * now-stale extension landing after it.
      */
-    private suspend fun extendToFullQueue(tracks: List<Track>, startIndex: Int, api: SubsonicApi, generation: Int) {
-        // Resolved one track at a time, checking the generation before each:
-        // for a track that isn't cached yet, toAudioItem is a full download, and
-        // the old all-at-once `tracks.map { ... }` only checked after every track
-        // was fetched — so a superseded run kept downloading an entire queue (35
-        // tracks was ~100 s on the phone) after a later tap had already replaced
-        // it, racing the newer run over the same cache files (issue #47).
-        // beginPlay() also cancels extendJob outright; this check covers the gap
-        // between two downloads.
-        val items = ArrayList<LightAudioItem>(tracks.size)
-        for (track in tracks) {
-            if (playGeneration != generation) return
-            items += track.toAudioItem(api)
+    /**
+     * Turns every track into a player item, fetching whatever isn't on the phone yet
+     * concurrently (see [FetchGate] for the order and the limit). Returns null if
+     * [stillWanted] turned false, i.e. a newer play superseded this one. Any track
+     * failing fails the whole call, as it did when this ran one track at a time.
+     */
+    private suspend fun resolveAll(tracks: List<Track>, api: SubsonicApi, stillWanted: () -> Boolean = { true }): List<LightAudioItem>? {
+        val items = arrayOfNulls<LightAudioItem>(tracks.size)
+        coroutineScope {
+            for (index in tracks.indices) {
+                launch {
+                    if (!stillWanted()) return@launch
+                    val track = tracks[index]
+                    items[index] = track.toAudioItem(api) { priorityForSong(track.id) ?: FetchGate.Priority.QUEUE }
+                }
+            }
         }
-        if (playGeneration != generation) return // superseded while resolving — nothing to extend anymore
+        if (!stillWanted()) return null
+        return items.map { it!! }
+    }
+
+    /**
+     * How urgently [songId] is wanted right now: the playing song, one of the next
+     * few, elsewhere in the queue, or null when it isn't in the queue at all. Read
+     * by [FetchGate] as it schedules, so a download of the song that is playing (or
+     * about to) is served ahead of the rest of the backlog.
+     */
+    fun priorityForSong(songId: String): FetchGate.Priority? {
+        val queued = queue.value
+        val index = queued.indexOfFirst { it.id == songId }
+        if (index < 0) return null
+        val current = if (playerQueueLoaded.value) playerQueueIndex() else pendingIndex.value
+        return when {
+            index == current -> FetchGate.Priority.NOW_PLAYING
+            index > current && index <= current + UP_NEXT_COUNT -> FetchGate.Priority.UP_NEXT
+            else -> FetchGate.Priority.QUEUE
+        }
+    }
+
+    private suspend fun extendToFullQueue(tracks: List<Track>, startIndex: Int, api: SubsonicApi, generation: Int) {
+        // Every track that isn't cached yet is a full download. They run together
+        // but in the order FetchGate serves them — the next few songs first, then
+        // the rest of the queue — and only as many at a time as the connection can
+        // take. A run that a later tap has superseded (issue #47: a 35-track queue
+        // was ~100 s of pointless downloading) stops starting new fetches, and
+        // beginPlay() also cancels extendJob outright.
+        val items = resolveAll(tracks, api) { playGeneration == generation }
+            ?: return // superseded while resolving — nothing to extend anymore
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
         queue.value = tracks
@@ -1133,7 +1167,7 @@ class PlaybackRepository(
         queue.value = newQueue
         pendingIndex.value = currentIndex
         val items = try {
-            newQueue.map { it.toAudioItem(api) }
+            resolveAll(newQueue, api)!!
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1402,7 +1436,10 @@ class PlaybackRepository(
      * source file turning "just the starting track" back into a
      * multi-second block).
      */
-    private suspend fun Track.toAudioItem(api: SubsonicApi): LightAudioItem {
+    private suspend fun Track.toAudioItem(
+        api: SubsonicApi,
+        rank: () -> FetchGate.Priority = { FetchGate.Priority.QUEUE },
+    ): LightAudioItem {
         val maxBitRateKbps = currentStreamMaxBitRateKbps()
         // The queue keeps the Track it was built (or restored) with, so a download
         // removed afterwards leaves localFilePath pointing at a file that is gone —
@@ -1414,7 +1451,7 @@ class PlaybackRepository(
         val source = when {
             downloadedFile != null -> LightAudioSource.FileSource(downloadedFile)
             api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
-            else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps))
+            else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps, rank))
         }
         return LightAudioItem(
             source = source,
@@ -1455,7 +1492,7 @@ class PlaybackRepository(
      * (streamcache has no eviction policy regardless — see "Clear all local
      * data" for the manual escape hatch).
      */
-    private suspend fun Track.cachedStreamFile(api: SubsonicApi, maxBitRateKbps: Int?): File {
+    private suspend fun Track.cachedStreamFile(api: SubsonicApi, maxBitRateKbps: Int?, rank: () -> FetchGate.Priority): File {
         val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
         val name = "$id-${maxBitRateKbps ?: "orig"}.mp3"
         val cached = File(cacheDir, name)
@@ -1483,7 +1520,10 @@ class PlaybackRepository(
                 // doc: the old `cached.writeBytes(api.streamBytes(id))` briefly
                 // held the whole track as one in-memory ByteArray, which crashed
                 // the app outright (OutOfMemoryError) on a real ~30MB track.
-                api.streamToFile(id, part, maxBitRateKbps)
+                val fetched = FetchGate.run(FetchGate.Lane.PLAYBACK, id, rank, transcoding = maxBitRateKbps != null) { lease ->
+                    api.streamToFile(id, part, maxBitRateKbps, lease)
+                }
+                if (fetched == null) throw java.io.IOException("the connection is busy with other transfers")
                 if (!part.renameTo(cached)) throw java.io.IOException("could not move $name.part into place")
                 AppLogger.d("PlaybackRepository", "cachedStreamFile($id): write complete")
             } catch (e: Exception) {
@@ -1500,6 +1540,9 @@ class PlaybackRepository(
     }
 
     private companion object {
+        /** How many songs after the playing one count as "up next" for [FetchGate]. */
+        const val UP_NEXT_COUNT = 3
+
         /** See the wait at the end of [play] — the longest the loading icon stays up waiting for audio to start. */
         const val START_PLAYBACK_WAIT_MS = 3_000L
 
