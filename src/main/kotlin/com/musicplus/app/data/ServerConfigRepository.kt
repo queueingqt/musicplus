@@ -69,15 +69,26 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
      * `Flow.map` (no side effects) and never loses the legacy keys even if this
      * runs before the person ever opens the new Servers screen.
      */
+    // The last stored value that decoded, and what it decoded to. Every list screen starts a collector on
+    // servers/activeProfile, and each one re-ran the keystore decrypt plus the JSON decode (21-186 ms
+    // measured on the phone) before its list could emit; the stored value rarely changes, so decode it once.
+    private val decodedLock = Any()
+    private var decodedFrom: String? = null
+    private var decoded: List<ServerProfile> = emptyList()
+
     private fun parseServers(prefs: Preferences): List<ServerProfile> {
         val stored = prefs[Keys.SERVERS_JSON]
         if (!stored.isNullOrBlank()) {
+            synchronized(decodedLock) { if (stored == decodedFrom) return decoded }
             // Pre-encryption installs have this key holding plain JSON already —
             // fall back to reading it as-is rather than losing a working server
             // config. addOrUpdate()/remove() always write the encrypted form, so
             // this self-heals on the next write.
             val json = runCatching { EncryptedPrefsCipher.decrypt(stored) }.getOrDefault(stored)
-            return runCatching { Json.decodeFromString<List<ServerProfile>>(json) }.getOrDefault(emptyList())
+            val result = runCatching { Json.decodeFromString<List<ServerProfile>>(json) }
+            // Only a successful decode is remembered: a failed one may be a transient keystore error.
+            result.getOrNull()?.let { servers -> synchronized(decodedLock) { decodedFrom = stored; decoded = servers } }
+            return result.getOrDefault(emptyList())
         }
         val baseUrl = prefs[Keys.LEGACY_BASE_URL]
         val username = prefs[Keys.LEGACY_USERNAME]
