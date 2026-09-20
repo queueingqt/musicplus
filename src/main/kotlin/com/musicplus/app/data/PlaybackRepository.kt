@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -306,13 +307,29 @@ class PlaybackRepository(
     private fun playerQueueIndex(): Int =
         if (playerHoldsFullQueue.value) player.currentMediaItemIndex.value else pendingIndex.value
 
+    /**
+     * What the play/pause icon shows while the player is being re-prepared under it —
+     * the full queue handed over after a song starts ([extendToFullQueue]) or after a queue
+     * edit ([rebuildQueue]). `setMediaQueue` makes the real `isPlaying` drop out and come
+     * back, twice, over about 0.8 s; the icon followed it, PAUSE -> PLAY -> PAUSE -> PLAY ->
+     * PAUSE, on every song start (reported on the phone, 2026-09-19). null = show the real
+     * state. Set only for the duration of one hand-over, by [holdingPlayIcon].
+     */
+    private val playingOverride = MutableStateFlow<Boolean?>(null)
+
+    private val shownPlaying = combine(player.isPlaying, playingOverride) { real, override -> override ?: real }
+
     private val playerCore = combine(
-        resolvedIndex, player.isPlaying, player.positionMs, player.durationMs, isActivelyLoading,
+        resolvedIndex, shownPlaying, player.positionMs, player.durationMs, isActivelyLoading,
     ) { resolved, isPlaying, positionMs, durationMs, activelyLoading ->
         if (resolved.isPending) {
             PlayerCoreState(resolved.index, isPlaying = false, positionMs = 0L, durationMs = 0L, isLoading = activelyLoading)
         } else {
-            PlayerCoreState(resolved.index, isPlaying, positionMs, durationMs, isLoading = false)
+            // Loaded, but play() is still waiting for the player to report that audio has
+            // started — see the wait in play(). Without this the icon showed PLAY for the
+            // ~0.5 s between the queue being handed over and playback beginning, so a song
+            // start flickered loading -> play -> pause.
+            PlayerCoreState(resolved.index, isPlaying, positionMs, durationMs, isLoading = activelyLoading && !isPlaying)
         }
     }
 
@@ -462,7 +479,13 @@ class PlaybackRepository(
                     "\"${track?.title}\" queueIndex=${s.currentIndex} of ${s.queue.size} position=${s.positionMs}ms",
             )
             if (err.kind != LightAudioErrorKind.Source || track == null) return@collect
-            if (s.positionMs > AUTO_RETRY_MAX_POSITION_MS) return@collect
+            // A file that is gone (its download was removed while the song sat in the
+            // queue) is not a flaky start, and `s.positionMs` says nothing about it: the
+            // player can still be reporting the previous item's position, which is what
+            // stopped the retry on the phone (2026-09-19) and left playback stalled in
+            // an error until play was pressed. Re-resolving the track fetches it instead.
+            val fileGone = err.diagnostic.contains("FILE_NOT_FOUND")
+            if (!fileGone && s.positionMs > AUTO_RETRY_MAX_POSITION_MS) return@collect
             val now = System.currentTimeMillis()
             val last = lastAutoRetryAtMs[track.id]
             if (last != null && now - last < AUTO_RETRY_COOLDOWN_MS) return@collect
@@ -751,7 +774,7 @@ class PlaybackRepository(
         return PlaybackState(
             queue = q,
             currentIndex = index,
-            isPlaying = if (isPending) false else player.isPlaying.value,
+            isPlaying = if (isPending) false else (playingOverride.value ?: player.isPlaying.value),
             positionMs = if (isPending) 0L else player.positionMs.value,
             durationMs = if (isPending) 0L else player.durationMs.value,
             shuffle = shuffle.value,
@@ -806,6 +829,12 @@ class PlaybackRepository(
             playerHoldsFullQueue.value = tracks.size <= 1
             playerQueueLoaded.value = true
             player.play()
+            // Keep the loading state until audio actually starts (or it fails, or 3 s pass):
+            // the player takes about half a second between play() and reporting isPlaying,
+            // and the icon used to show PLAY for that gap before flipping to PAUSE.
+            withTimeoutOrNull(START_PLAYBACK_WAIT_MS) {
+                combine(player.isPlaying, player.error) { playing, error -> playing || error != null }.first { it }
+            }
         } finally {
             isActivelyLoading.value = false
         }
@@ -869,17 +898,20 @@ class PlaybackRepository(
         val wasPlaying = player.isPlaying.value
         queue.value = tracks
         pendingIndex.value = startIndex
-        player.setMediaQueue(items, startIndex)
-        // The player now holds the whole queue. Flip only once its own index has
-        // caught up to startIndex, so the switch from pendingIndex to the player's
-        // index changes nothing on screen (issue #47).
-        withTimeoutOrNull(FULL_QUEUE_SWAP_WAIT_MS) { player.currentMediaItemIndex.first { it == startIndex } }
-        if (playGeneration == generation) playerHoldsFullQueue.value = true
-        withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
-            player.durationMs.first { it > 0L }
+        holdingPlayIcon(wasPlaying) {
+            player.setMediaQueue(items, startIndex)
+            // The player now holds the whole queue. Flip only once its own index has
+            // caught up to startIndex, so the switch from pendingIndex to the player's
+            // index changes nothing on screen (issue #47).
+            withTimeoutOrNull(FULL_QUEUE_SWAP_WAIT_MS) { player.currentMediaItemIndex.first { it == startIndex } }
+            if (playGeneration == generation) playerHoldsFullQueue.value = true
+            withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
+                player.durationMs.first { it > 0L }
+            }
+            player.seekTo(savedPositionMs)
+            if (wasPlaying) player.play()
+            settleAfterHandOver(wasPlaying)
         }
-        player.seekTo(savedPositionMs)
-        if (wasPlaying) player.play()
         persistScalarStateIfLoaded()
     }
 
@@ -1113,15 +1145,34 @@ class PlaybackRepository(
             loadError.value = "Couldn't update the queue: ${loadFailureReason(e)}"
             return
         }
-        player.setMediaQueue(items, currentIndex)
-        withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
-            player.durationMs.first { it > 0L }
+        holdingPlayIcon(wasPlaying) {
+            player.setMediaQueue(items, currentIndex)
+            withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
+                player.durationMs.first { it > 0L }
+            }
+            // A queue edit loads the whole queue into the player, even if it happened
+            // while only the starting track was loaded — see playerHoldsFullQueue.
+            playerHoldsFullQueue.value = true
+            player.seekTo(savedPositionMs)
+            if (wasPlaying) player.play()
+            settleAfterHandOver(wasPlaying)
         }
-        // A queue edit loads the whole queue into the player, even if it happened
-        // while only the starting track was loaded — see playerHoldsFullQueue.
-        playerHoldsFullQueue.value = true
-        player.seekTo(savedPositionMs)
-        if (wasPlaying) player.play()
+    }
+
+    /** Shows [playing] on the play/pause icon for the duration of [block] — see [playingOverride]. */
+    private suspend fun holdingPlayIcon(playing: Boolean, block: suspend () -> Unit) {
+        playingOverride.value = playing
+        try {
+            block()
+        } finally {
+            playingOverride.value = null
+        }
+    }
+
+    /** Waits out the player's own re-preparing after a hand-over, so the real state is only shown again once it has stopped bouncing. */
+    private suspend fun settleAfterHandOver(wasPlaying: Boolean) {
+        if (wasPlaying) withTimeoutOrNull(HAND_OVER_RESUME_WAIT_MS) { player.isPlaying.first { it } }
+        delay(HAND_OVER_SETTLE_MS)
     }
 
     /**
@@ -1148,6 +1199,8 @@ class PlaybackRepository(
             return
         }
         if (player.isPlaying.value) {
+            // The person's own pause wins over any hand-over still holding the icon.
+            playingOverride.value = null
             player.pause()
             scope.launch { persistScalarStateIfLoaded() }
         } else if (player.error.value != null) {
@@ -1447,6 +1500,15 @@ class PlaybackRepository(
     }
 
     private companion object {
+        /** See the wait at the end of [play] — the longest the loading icon stays up waiting for audio to start. */
+        const val START_PLAYBACK_WAIT_MS = 3_000L
+
+        /** See [settleAfterHandOver] — how long to wait for playback to resume after a queue hand-over. */
+        const val HAND_OVER_RESUME_WAIT_MS = 1_500L
+
+        /** See [settleAfterHandOver] — the player bounced for about 0.8 s after a hand-over on the phone; this covers it. */
+        const val HAND_OVER_SETTLE_MS = 800L
+
         /** See [rebuildQueue]'s doc — caps how long a queue edit waits for the rebuilt player to resolve a real duration before seeking. */
         const val REBUILD_DURATION_WAIT_MS = 5_000L
 
