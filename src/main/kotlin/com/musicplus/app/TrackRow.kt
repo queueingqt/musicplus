@@ -3,6 +3,7 @@ package com.musicplus.app
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -70,7 +71,10 @@ fun TrackRow(
                 variant = LightTextVariant.Fine,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
+                // Capped: this is measured before the title (the title is the weighted child), so a long one, an artist
+                // with a server label ("goosetaf & lōland · NASTY copy (removed)"), would take the whole row and
+                // leave the title no width at all.
+                modifier = Modifier.widthIn(max = 15f.gridUnitsAsDp()).padding(start = 0.5f.gridUnitsAsDp()),
             )
         }
         if (showFavorite && track.isFavorite) {
