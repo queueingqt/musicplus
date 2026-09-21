@@ -8,6 +8,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
@@ -53,12 +54,16 @@ class PlaylistPickerScreenViewModel(
         syncQueueRepository.addTrack(playlistId, songId)
     }
 
-    /** Returns the new playlist's id — real or a local placeholder (see SyncQueueRepository.createPlaylist) — or null only if no server is configured at all. */
-    suspend fun createAndAdd(name: String, songId: String): String? {
-        val id = syncQueueRepository.createPlaylist(name) ?: return null
-        syncQueueRepository.addTrack(id, songId)
-        playlistRepository.refreshPlaylists()
-        return id
+    /** Creates the playlist (real, or a local placeholder if it's queued — see SyncQueueRepository.createPlaylist), adds [songId], then calls [onDone] on the main thread. */
+    fun createAndAdd(name: String, songId: String, onDone: () -> Unit) {
+        // viewModelScope, not the screen's rememberCoroutineScope(): this runs from the name editor's result callback, and
+        // that scope is cancelled while the editor is on top of this screen, so the create used to silently never run.
+        viewModelScope.launch {
+            val id = syncQueueRepository.createPlaylist(name)
+            if (id != null) syncQueueRepository.addTrack(id, songId)
+            onDone()
+            playlistRepository.refreshPlaylists()
+        }
     }
 }
 
@@ -110,12 +115,7 @@ class PlaylistPickerScreen(
                     .fillMaxWidth()
                     .lightClickable {
                         navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
-                            if (!name.isNullOrBlank()) {
-                                scope.launch {
-                                    viewModel.createAndAdd(name, songId)
-                                    goBack()
-                                }
-                            }
+                            if (!name.isNullOrBlank()) viewModel.createAndAdd(name, songId) { goBack() }
                         }
                     }
                     .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),

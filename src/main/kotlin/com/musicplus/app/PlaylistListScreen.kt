@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -82,11 +81,20 @@ class PlaylistListScreenViewModel(
         _query.value = value
     }
 
-    /** Returns the new playlist's id — real if it synced immediately, a local placeholder if it's now queued (see SyncQueueRepository), or null only if no server is configured at all. */
-    suspend fun createPlaylist(name: String): String? {
-        val id = syncQueueRepository.createPlaylist(name)
-        playlistRepository.refreshPlaylists()
-        return id
+    /**
+     * Gives the new playlist's id to [onCreated] — real if it synced immediately, a local placeholder if it's now queued
+     * (see SyncQueueRepository), or null only if no server is configured at all.
+     *
+     * Runs on [viewModelScope], not the screen's `rememberCoroutineScope()`: this is called from the name editor's result
+     * callback, and while the editor is on top this screen is not composed, which cancels its scope. A create launched
+     * there never ran, so "New playlist" silently did nothing. [onCreated] runs on the main thread.
+     */
+    fun createPlaylist(name: String, onCreated: (String?) -> Unit) {
+        viewModelScope.launch {
+            val id = syncQueueRepository.createPlaylist(name)
+            playlistRepository.refreshPlaylists()
+            onCreated(id)
+        }
     }
 
     // See SelfLoadingTrackList.kt — shared with the album-level download rows,
@@ -136,7 +144,6 @@ class PlaylistListScreen(activity: SealedLightActivity) :
 
     @Composable
     override fun Content() {
-        val scope = rememberCoroutineScope()
         val query by viewModel.query.collectAsState()
         val playlists by viewModel.playlists.collectAsState()
 
@@ -155,8 +162,7 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                     onNewPlaylist = {
                         navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
                             if (!name.isNullOrBlank()) {
-                                scope.launch {
-                                    val id = viewModel.createPlaylist(name)
+                                viewModel.createPlaylist(name) { id ->
                                     if (id != null) navigateTo({ a -> PlaylistDetailScreen(a, id) })
                                 }
                             }
