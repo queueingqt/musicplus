@@ -165,6 +165,7 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                 )
             },
         ) {
+            if (playlists.isEmpty()) EmptyListNote("playlists")
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc
             // (issue #39): PlaylistRow's maxLines=1/Ellipsis name is
@@ -257,7 +258,7 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit, onOpenActions: 
             .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
     ) {
         LightText(text = playlist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        LightText(text = "${playlist.songCount} tracks", variant = LightTextVariant.Fine)
+        LightText(text = playlist.detailLine, variant = LightTextVariant.Fine)
     }
 }
 

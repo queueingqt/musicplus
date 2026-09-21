@@ -103,13 +103,15 @@ private val PendingMutation.typeTag: String
  * repositories directly for anything write-shaped, so a failure is never silently
  * dropped on the floor again.
  *
- * Replay is strict FIFO and stops at the first failure in a given pass (rather
- * than skipping ahead) — a later mutation against the same playlist can depend on
- * an earlier one (most concretely: anything targeting a playlist that was itself
- * just created offline, see PLAYLIST_CREATE below), and on a real offline window
- * every subsequent item is going to fail identically anyway, so continuing would
- * just be a burst of guaranteed-failing network calls. [LightWork]'s own
- * [LightJobResult.Retry] backoff governs how soon the next pass runs.
+ * Replay is strict FIFO *per server* and stops at a server's first failure in a
+ * given pass (rather than skipping ahead) — a later mutation against the same
+ * playlist can depend on an earlier one (most concretely: anything targeting a
+ * playlist that was itself just created offline, see PLAYLIST_CREATE below), and
+ * on a real offline window every subsequent item for that server is going to fail
+ * identically anyway, so continuing would just be a burst of guaranteed-failing
+ * network calls. Each server has its own line, so one that rejects an edit or is
+ * unreachable never holds up another's. [LightWork]'s own [LightJobResult.Retry]
+ * backoff governs how soon the next pass runs.
  *
  * PLAYLIST_CREATE is the one genuinely special case: a playlist created while
  * offline gets a local-only placeholder id (`"pending:<uuid>"`) immediately, so
@@ -125,6 +127,8 @@ class SyncQueueRepository(
     private val pendingMutationDao: PendingMutationDao,
     private val libraryRepository: LibraryRepository,
     private val playlistRepository: PlaylistRepository,
+    /** Only the edits of servers that are on are sent; the rest wait until their server is switched on again. */
+    private val enabledServerIds: Flow<Set<String>>,
 ) {
     companion object {
         const val JOB_KEY = "sync-pending-mutations"
@@ -232,21 +236,33 @@ class SyncQueueRepository(
      * subsequent mutation forever.
      */
     suspend fun drainQueue(): Boolean {
-        for (row in pendingMutationDao.getAllInOrder()) {
-            val outcome = try {
-                replay(row)
-            } catch (e: Exception) {
-                AppLogger.e("SyncQueueRepository", "row ${row.id} (type=${row.type}) undecodable, dropping", e)
-                pendingMutationDao.delete(row.id)
+        val on = enabledServerIds.first()
+        var drained = true
+        val perServer = pendingMutationDao.getAllInOrder().groupBy { ServerScope.serverOf(it.targetId) }
+        for ((server, rows) in perServer) {
+            if (server == null) {
+                // An edit that names no server can never be sent anywhere.
+                rows.forEach { pendingMutationDao.delete(it.id) }
                 continue
             }
-            if (outcome == WriteOutcome.FAILED) {
-                pendingMutationDao.recordFailure(row.id, "attempt ${row.attemptCount + 1} failed")
-                return false
+            if (server !in on) continue // waits until that server is switched on again
+            for (row in rows) {
+                val outcome = try {
+                    replay(row)
+                } catch (e: Exception) {
+                    AppLogger.e("SyncQueueRepository", "row ${row.id} (type=${row.type}) undecodable, dropping", e)
+                    pendingMutationDao.delete(row.id)
+                    continue
+                }
+                if (outcome == WriteOutcome.FAILED) {
+                    pendingMutationDao.recordFailure(row.id, "attempt ${row.attemptCount + 1} failed")
+                    drained = false
+                    break // this server's line stops here; the other servers' lines carry on
+                }
+                pendingMutationDao.delete(row.id)
             }
-            pendingMutationDao.delete(row.id)
         }
-        return true
+        return drained
     }
 
     private suspend fun replay(row: PendingMutationEntity): WriteOutcome =

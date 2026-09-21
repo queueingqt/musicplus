@@ -36,6 +36,7 @@ object AppGraph {
         val lyricsRepository: LyricsRepository,
         val syncQueueRepository: SyncQueueRepository,
         val localDataRepository: LocalDataRepository,
+        val serverRemoval: ServerRemoval,
         val connectivity: LightConnectivity,
     )
 
@@ -60,14 +61,14 @@ object AppGraph {
     }
 
     /**
-     * Call after the active server changed. The lists already follow it (they are limited to the shown server's
-     * rows), so this only has to bring that server's rows up to date: it sets the warm active id itself, ahead of
-     * the DataStore mirror, because the refresh below resolves its api from it and would otherwise still reach
-     * the server that was active a moment ago.
+     * Call after a server was switched on or off, added or removed. The lists already follow the servers that are on
+     * (they are limited to those servers' rows), so this only has to bring a newly shown server's rows up to date. It
+     * sets the warm values itself, ahead of the DataStore mirror, because the refresh below reads them and would
+     * otherwise still see the servers as they were a moment ago.
      */
-    fun serverSwitched(activeServerId: String?) {
+    fun serversChanged(activeServerId: String?, enabledServerIds: Set<String>) {
         AppServerPrefs.activeServerId.set(activeServerId)
-        invalidateApi()
+        AppServerPrefs.enabledServerIds.set(enabledServerIds)
         instance?.listRefresher?.refreshAll()
     }
 
@@ -77,7 +78,7 @@ object AppGraph {
     // settings" plus the two genuinely special bootstrap steps, not a pile of
     // same-shaped appScope.launch blocks.
     private fun <T> mirrorInto(flow: Flow<T>, sink: (T) -> Unit) {
-        appScope.launch { flow.collect(sink) }
+        appScope.launch { flow.retryOnTransientDbError().collect(sink) }
     }
 
     // Opts into MusicPlusDatabase.create() — see DatabaseFactoryAccess's doc for
@@ -109,7 +110,11 @@ object AppGraph {
         mirrorInto(appSettingsRepository.downloadQuality, AppQualityPrefs.downloadQuality::set)
         mirrorInto(serverConfigRepository.servers, AppServerPrefs.servers::set)
         mirrorInto(serverConfigRepository.activeServerId, AppServerPrefs.activeServerId::set)
-        mirrorInto(serverConfigRepository.serverConfig.map { it != null }, AppServerPrefs.isConfigured::set)
+        mirrorInto(serverConfigRepository.enabledServerIds, AppServerPrefs.enabledServerIds::set)
+        mirrorInto(serverConfigRepository.removedServers, AppServerPrefs.removedServers::set)
+        mirrorInto(serverConfigRepository.servers.map { it.isNotEmpty() }, AppServerPrefs.isConfigured::set)
+        val serverSyncStatus = ServerSyncStatus(lightContext.dataStore)
+        mirrorInto(serverSyncStatus.lastSynced, AppServerPrefs.lastSyncedAt::set)
         mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs.scrobblingEnabled::set)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
         // Existing rows and files predate server-scoped ids. They belong to whichever server is active now,
@@ -139,6 +144,7 @@ object AppGraph {
             connectivity = connectivity,
             downloadRepository = downloadRepository,
             shownServerIds = serverConfigRepository.shownServerIds,
+            serverSyncStatus = serverSyncStatus,
         )
         val playlistRepository = PlaylistRepository(
             apiHolder = apiHolder,
@@ -147,6 +153,7 @@ object AppGraph {
             connectivity = connectivity,
             downloadRepository = downloadRepository,
             shownServerIds = serverConfigRepository.shownServerIds,
+            serverSyncStatus = serverSyncStatus,
         )
         // Starts every list refresh — on app start / reconnect just below, and
         // whenever a list page is opened (each list screen's onScreenShow). See
@@ -216,6 +223,7 @@ object AppGraph {
             pendingMutationDao = database.pendingMutationDao(),
             libraryRepository = libraryRepository,
             playlistRepository = playlistRepository,
+            enabledServerIds = serverConfigRepository.enabledServerIds,
         )
         val localDataRepository = LocalDataRepository(
             database = database,
@@ -270,6 +278,21 @@ object AppGraph {
                 }
         }
 
+        val serverRemoval = ServerRemoval(
+            scope = appScope,
+            lightContext = lightContext,
+            serverConfigRepository = serverConfigRepository,
+            serverSyncStatus = serverSyncStatus,
+            apiHolder = apiHolder,
+            playbackStateRepository = playbackStateRepository,
+            downloadRepository = downloadRepository,
+            serverCleanupDao = database.serverCleanupDao(),
+            downloadDao = database.downloadDao(),
+            pendingMutationDao = database.pendingMutationDao(),
+            queueDao = database.queueDao(),
+            filesDir = lightContext.filesDir,
+        )
+
         return Graph(
             serverConfigRepository = serverConfigRepository,
             appSettingsRepository = appSettingsRepository,
@@ -284,6 +307,7 @@ object AppGraph {
             lyricsRepository = lyricsRepository,
             syncQueueRepository = syncQueueRepository,
             localDataRepository = localDataRepository,
+            serverRemoval = serverRemoval,
             connectivity = connectivity,
         )
     }

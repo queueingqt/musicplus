@@ -888,9 +888,10 @@ class PlaybackRepository(
     /**
      * The api for the server that owns [track]. A queue can hold songs from more than one server (one saved
      * before a server switch keeps playing from the server it came from), so this is per track, not per queue.
+     * Null when that server was removed: its downloaded songs still play, from their files, and only a song that
+     * has to be streamed needs the api (see [toAudioItem]).
      */
-    private suspend fun apiFor(track: Track): SubsonicApi =
-        apiHolder.forId(track.id) ?: throw java.io.IOException("the server for \"${track.title}\" is not set up")
+    private suspend fun apiFor(track: Track): SubsonicApi? = apiHolder.forId(track.id)
 
     private suspend fun resolveAll(tracks: List<Track>, stillWanted: () -> Boolean = { true }): List<LightAudioItem>? {
         val items = arrayOfNulls<LightAudioItem>(tracks.size)
@@ -1112,6 +1113,20 @@ class PlaybackRepository(
         val currentIndex = playerQueueIndex()
         if (index !in current.indices || index <= currentIndex) return
         rebuildQueue(current.toMutableList().also { it.removeAt(index) })
+    }
+
+    /**
+     * Drops [serverId]'s upcoming songs from the queue, for a server that was removed: they can no longer be fetched.
+     * Only songs after the playing one go, and the playing song stays whichever server it is from (finishing it is
+     * not a queue edit), same restriction as [removeFromQueue].
+     */
+    suspend fun removeServerFromQueue(serverId: String) {
+        val current = queue.value
+        if (current.isEmpty()) return
+        val currentIndex = playerQueueIndex().coerceIn(0, current.lastIndex)
+        val trimmed = current.filterIndexed { index, track -> index <= currentIndex || ServerScope.serverOf(track.id) != serverId }
+        if (trimmed.size == current.size) return
+        rebuildQueue(trimmed)
     }
 
     /**
@@ -1442,7 +1457,7 @@ class PlaybackRepository(
      * multi-second block).
      */
     private suspend fun Track.toAudioItem(
-        api: SubsonicApi,
+        api: SubsonicApi?,
         rank: () -> FetchGate.Priority = { FetchGate.Priority.QUEUE },
     ): LightAudioItem {
         val maxBitRateKbps = currentStreamMaxBitRateKbps()
@@ -1455,6 +1470,7 @@ class PlaybackRepository(
         val downloadedFile = localFilePath?.let { File(it) }?.takeIf { it.isFile }
         val source = when {
             downloadedFile != null -> LightAudioSource.FileSource(downloadedFile)
+            api == null -> throw java.io.IOException("the server for \"$title\" is not set up")
             api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
             else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps, rank))
         }

@@ -8,9 +8,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.DownloadSummary
 import com.musicplus.app.data.ServerConfig
 import com.musicplus.app.data.ServerConfigRepository
 import com.musicplus.app.data.ServerProfile
+import com.musicplus.app.data.ServerRemoval
+import com.musicplus.app.data.SubsonicApiException
 import com.musicplus.app.data.SubsonicClient
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -29,7 +32,10 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -41,6 +47,7 @@ import java.util.UUID
  */
 class ServerEditScreenViewModel(
     private val serverConfigRepository: ServerConfigRepository,
+    private val serverRemoval: ServerRemoval,
     private val serverId: String?,
 ) : LightViewModel<Unit>() {
 
@@ -86,37 +93,45 @@ class ServerEditScreenViewModel(
     fun testConnection() {
         viewModelScope.launch {
             _testResult.value = "Testing..."
-            val result = SubsonicClient(ServerConfig(_baseUrl.value, _username.value, _password.value)).ping()
+            // checkLogin, not ping: ping says OK to a wrong password on some servers (Bandcamp's).
+            val result = SubsonicClient(ServerConfig(_baseUrl.value, _username.value, _password.value)).checkLogin()
             _testResult.value = result.fold(
-                onSuccess = { "Connection OK" },
-                onFailure = { "Failed: ${it::class.simpleName}: ${it.message}" },
+                onSuccess = { "Connected, login OK" },
+                onFailure = { if (it is SubsonicApiException) "Login rejected: ${it.message}" else "Failed: ${it::class.simpleName}: ${it.message}" },
             )
         }
     }
 
     fun save(onSaved: () -> Unit) {
         viewModelScope.launch {
+            val baseUrl = _baseUrl.value.trimEnd('/')
+            // A new login for a server that was removed with its downloads kept takes that server's id, so those
+            // downloads come back with it instead of sitting beside a second copy.
+            val reattach = if (serverId == null) serverConfigRepository.findRemoved(baseUrl, _username.value) else null
             val profile = ServerProfile(
-                id = serverId ?: UUID.randomUUID().toString(),
+                id = serverId ?: reattach?.id ?: UUID.randomUUID().toString(),
                 name = _name.value.ifBlank { _baseUrl.value },
-                baseUrl = _baseUrl.value.trimEnd('/'),
+                baseUrl = baseUrl,
                 username = _username.value,
                 password = _password.value,
             )
             serverConfigRepository.addOrUpdate(profile)
             AppGraph.invalidateApi()
+            AppGraph.serversChanged(serverConfigRepository.activeServerId.first(), serverConfigRepository.enabledServerIds.first())
             _saveMessage.value = "Saved"
             onSaved()
         }
     }
 
-    fun delete(onDeleted: () -> Unit) {
+    /** What this server has downloaded, for the delete choice. */
+    val downloadSummary: StateFlow<DownloadSummary?> =
+        serverRemoval.downloadSummaries.map { summaries -> serverId?.let { summaries[it] } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // On the app's own scope (see ServerRemoval), not this screen's.
+    fun remove(keepDownloads: Boolean) {
         val id = serverId ?: return
-        viewModelScope.launch {
-            serverConfigRepository.remove(id)
-            AppGraph.invalidateApi()
-            onDeleted()
-        }
+        serverRemoval.remove(id, keepDownloads)
     }
 }
 
@@ -126,7 +141,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
     override val viewModelClass = ServerEditScreenViewModel::class.java
 
     override fun createViewModel() =
-        ServerEditScreenViewModel(AppGraph.from(lightContext).serverConfigRepository, serverId)
+        AppGraph.from(lightContext).let { ServerEditScreenViewModel(it.serverConfigRepository, it.serverRemoval, serverId) }
 
     @Composable
     override fun Content() {
@@ -223,7 +238,15 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
                         variant = LightTextVariant.Copy,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .lightClickable { viewModel.delete { goBack() } }
+                            .lightClickable {
+                                navigateTo({ a ->
+                                    ActionsMenuScreen(
+                                        activity = a,
+                                        subtitle = "Delete \"$name\"",
+                                        items = serverRemovalItems(name, viewModel.downloadSummary.value) { keep -> viewModel.remove(keep) },
+                                    )
+                                })
+                            }
                             .padding(vertical = 1f.gridUnitsAsDp()),
                     )
                 }

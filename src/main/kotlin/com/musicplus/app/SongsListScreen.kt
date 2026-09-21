@@ -137,13 +137,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
             },
         ) {
             if (tracks.isEmpty()) {
-                LightText(
-                    text = "No songs yet",
-                    variant = LightTextVariant.Fine,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
-                )
+                EmptyListNote("songs", filter)
             } else {
                 // Inside, not Outside — see AlbumDetailScreen's identical call
                 // site for why (Outside's gutter width isn't known until after
@@ -161,7 +155,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                         TrackRow(
                             track = track,
                             downloadStatus = track.downloadStatus,
-                            subtitle = track.artistName ?: "Unknown artist",
+                            subtitle = track.artistLine,
                             onPlay = {
                                 // playAsync() updates title/art synchronously and
                                 // continues loading on PlaybackRepository's own

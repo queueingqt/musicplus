@@ -100,7 +100,7 @@ class ArtistDetailScreenViewModel(
     // resolve the name.
     val topSongsSection = LazyCollapsibleSection(viewModelScope) {
         val name = artist.value?.name
-        if (name.isNullOrBlank()) emptyList() else libraryRepository.getTopSongs(name)
+        if (name.isNullOrBlank()) emptyList() else libraryRepository.getTopSongs(artistId, name)
     }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.

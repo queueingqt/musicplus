@@ -46,6 +46,11 @@ class SubsonicApiHolder(private val serverConfigRepository: ServerConfigReposito
     /** Synchronous [forId]: only an api that has been built already. */
     fun peekFor(id: String): SubsonicApi? = (ServerScope.serverOf(id) ?: AppServerPrefs.activeServerId.value.value)?.let { apis[it] }
 
+    /** Drops one server's api (it was removed). */
+    fun forget(serverId: String) {
+        apis.remove(serverId)
+    }
+
     /** Drops every built api, so the next use picks up a server's edited address or credentials. */
     fun invalidate() {
         apis.clear()

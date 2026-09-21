@@ -138,6 +138,7 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
             // layout, so the trailing favorite star briefly rendered full-width
             // then jumped left once it appeared; AlbumRow reserves the same
             // width itself, unconditionally, instead).
+            if (albums.isEmpty()) EmptyListNote("albums", filter)
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             LightLazyScrollView(
                 modifier = Modifier.fillMaxWidth(),
@@ -207,7 +208,7 @@ private fun AlbumRow(
         )
         Column(modifier = Modifier.weight(1f)) {
             LightText(text = album.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            LightText(text = album.artistName ?: "Unknown artist", variant = LightTextVariant.Fine, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            LightText(text = album.artistLine, variant = LightTextVariant.Fine, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         // Reported live: no way to tell an album was favorited from this list.
         if (album.isFavorite) {

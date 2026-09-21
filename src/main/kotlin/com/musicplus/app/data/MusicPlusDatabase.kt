@@ -81,6 +81,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
     abstract fun queueDao(): QueueDao
     abstract fun playlistDao(): PlaylistDao
     abstract fun pendingMutationDao(): PendingMutationDao
+    abstract fun serverCleanupDao(): ServerCleanupDao
 
     companion object {
         // Read verbatim off a real build's generated MusicPlusDatabase_Impl.kt

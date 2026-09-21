@@ -35,6 +35,7 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,18 +82,19 @@ class SearchScreenViewModel(
     // TextEditScreen) only hands back a value when the user submits, not on every
     // keystroke — which also matches the platform's generally deliberate,
     // one-thing-at-a-time interaction style rather than being a compromise.
+    //
+    // Results stream in: what is cached shows at once, then each server's live answer replaces its
+    // cached slice as it arrives (see LibraryRepository.searchStream). A new search cancels the last.
+    private var searchJob: Job? = null
+
     fun runSearch(newQuery: String) {
         _query.value = newQuery
-        viewModelScope.launch {
-            if (newQuery.isBlank()) {
-                _artistResults.value = emptyList()
-                _albumResults.value = emptyList()
-                _trackResults.value = emptyList()
-            } else {
-                val (artists, albums, tracks) = libraryRepository.search(newQuery)
-                _artistResults.value = artists
-                _albumResults.value = albums
-                _trackResults.value = tracks
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            libraryRepository.searchStream(newQuery).collect { results ->
+                _artistResults.value = results.artists
+                _albumResults.value = results.albums
+                _trackResults.value = results.tracks
             }
         }
     }
@@ -207,13 +209,13 @@ class SearchScreen(private val activity: SealedLightActivity) :
             ) {
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->
-                    ResultRow(artist.name) {
+                    ResultRow(artist.nameLine) {
                         navigateTo({ a -> ArtistDetailScreen(a, artist.id) })
                     }
                 }
                 item { SectionHeader("Albums") }
                 items(albums, key = { "album-${it.id}" }) { album ->
-                    ResultRowWithArt(lightContext, album.name, album.coverArtUrl) {
+                    ResultRowWithArt(lightContext, album.nameLine, album.coverArtUrl) {
                         navigateTo({ a -> AlbumDetailScreen(a, album.id, album) })
                     }
                 }
@@ -222,6 +224,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                     TrackRow(
                         track = track,
                         downloadStatus = track.downloadStatus,
+                        subtitle = track.serverLabel,
                         leading = {
                             AlbumArt(
                                 lightContext = lightContext,

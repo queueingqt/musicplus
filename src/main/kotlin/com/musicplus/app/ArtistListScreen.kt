@@ -114,6 +114,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
                 )
             },
         ) {
+            if (artists.isEmpty()) EmptyListNote("artists", filter)
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc
             // (issue #39): ArtistRow's trailing favorite star only reserves a
@@ -181,7 +182,7 @@ private fun ArtistRow(artist: Artist, onClick: () -> Unit, onOpenActions: () -> 
     ) {
         Column(modifier = Modifier.weight(1f)) {
             LightText(text = artist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            LightText(text = "${artist.albumCount} albums", variant = LightTextVariant.Fine)
+            LightText(text = artist.albumsLine, variant = LightTextVariant.Fine)
         }
         // Matches AlbumRow's identical treatment — no other at-a-glance signal
         // an artist is favorited exists on this list.

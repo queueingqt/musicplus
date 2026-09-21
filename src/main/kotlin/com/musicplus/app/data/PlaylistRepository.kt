@@ -5,13 +5,17 @@ package com.musicplus.app.data
 import com.musicplus.app.Playlist
 import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
+import com.musicplus.app.data.ServerLabels.labelledBy
 import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
@@ -35,9 +39,10 @@ class PlaylistRepository(
     private val downloadRepository: DownloadRepository,
     /** See [LibraryRepository]'s parameter of the same name. */
     private val shownServerIds: Flow<List<String>>,
+    private val serverSyncStatus: ServerSyncStatus,
 ) {
     fun observePlaylists(): Flow<List<Playlist>> =
-        shownServerIds.flatMapLatest { playlistDao.observeAll(it) }.map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { playlistDao.observeAll(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::playlists)
 
     /** Read-only passthrough for [SyncQueueRepository], which needs the just-applied local order to build a PLAYLIST_REORDER payload without reaching into the DAO layer directly. */
     suspend fun currentSongIds(playlistId: String): List<String> = playlistDao.getSongIdsInOrder(playlistId)
@@ -72,7 +77,7 @@ class PlaylistRepository(
     // leading is reorder icons only when reorderMode is on. See
     // TrackMapping.kt's toTrack doc.
     fun observeTracks(playlistId: String): Flow<List<Track>> =
-        combine(playlistDao.observeTracks(playlistId), downloadRepository.observeAll()) { entities, downloads ->
+        combine(playlistDao.observeTracks(playlistId).retryOnTransientDbError(), downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
         }
@@ -85,16 +90,30 @@ class PlaylistRepository(
      */
     private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (SubsonicApi) -> Unit) {
         if (!connectivity.currentStatus.isConnected) return
-        val api = (if (ownerId != null) apiHolder.forId(ownerId) else apiHolder.get()) ?: return
+        if (ownerId != null) {
+            apiHolder.forId(ownerId)?.let { runRefresh(label, it, action) }
+            return
+        }
+        // Every server that is on, each on its own — see LibraryRepository.refresh.
+        val servers = shownServerIds.first()
+        coroutineScope {
+            for (id in servers) launch { apiHolder.forServer(id)?.let { runRefresh(label, it, action) } }
+        }
+    }
+
+    private suspend fun runRefresh(label: String, api: SubsonicApi, action: suspend (SubsonicApi) -> Unit) {
         try {
             action(api)
+            serverSyncStatus.refreshed(api.serverId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // Cache left as-is deliberately — see this function's own doc above.
-            AppLogger.e("PlaylistRepository", "$label failed", e)
+            // Cache left as-is deliberately — see [refresh]'s own doc above.
+            AppLogger.e("PlaylistRepository", "$label failed (server ${api.serverId})", e)
         }
     }
+
+    private fun live(api: SubsonicApi) = AppServerPrefs.servers.value.value.any { it.id == api.serverId }
 
     /**
      * Additions, renames and deletions on the server — see [mirrorFromServer].
@@ -107,8 +126,8 @@ class PlaylistRepository(
             idOf = PlaylistEntity::id,
             cached = { playlistDao.getAllFor(api.serverId).associateBy { it.id } },
             fetchAll = { onPage -> onPage(api.getPlaylists().map { it.toEntity() }) },
-            write = { playlistDao.upsertAll(it) },
-            remove = { playlistDao.deleteWithTracks(it) },
+            write = { if (live(api)) playlistDao.upsertAll(it) },
+            remove = { if (live(api)) playlistDao.deleteWithTracks(it) },
             keep = { candidates -> candidates.filterTo(HashSet()) { ServerScope.nativeOf(it).startsWith(PLACEHOLDER_PREFIX) } },
         )
     }

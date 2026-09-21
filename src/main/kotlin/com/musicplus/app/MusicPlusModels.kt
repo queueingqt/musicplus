@@ -9,7 +9,8 @@ data class Artist(
     val name: String,
     val coverArtUrl: String?,
     val albumCount: Int,
-    val isFavorite: Boolean,
+    val isFavorite: Boolean,    /** The server's name, set only where it tells this row apart from the same one on another server (always for a playlist). See [com.musicplus.app.data.ServerLabels]. */
+    val serverLabel: String? = null,
 )
 
 data class Album(
@@ -21,7 +22,8 @@ data class Album(
     val songCount: Int,
     val durationSec: Int,
     val year: Int?,
-    val isFavorite: Boolean,
+    val isFavorite: Boolean,    /** The server's name, set only where it tells this row apart from the same one on another server (always for a playlist). See [com.musicplus.app.data.ServerLabels]. */
+    val serverLabel: String? = null,
 )
 
 data class Track(
@@ -50,14 +52,16 @@ data class Track(
      */
     val downloadStatus: DownloadStatus?,
     /** Set once [downloadStatus] is COMPLETE — playback should prefer this over streaming when present. */
-    val localFilePath: String?,
+    val localFilePath: String?,    /** The server's name, set only where it tells this row apart from the same one on another server (always for a playlist). See [com.musicplus.app.data.ServerLabels]. */
+    val serverLabel: String? = null,
 )
 
 data class Playlist(
     val id: String,
     val name: String,
     val songCount: Int,
-    val durationSec: Int,
+    val durationSec: Int,    /** The server's name, set only where it tells this row apart from the same one on another server (always for a playlist). See [com.musicplus.app.data.ServerLabels]. */
+    val serverLabel: String? = null,
 )
 
 enum class RepeatMode { OFF, REPEAT_QUEUE, REPEAT_TRACK }
@@ -143,3 +147,28 @@ sealed class LyricsState {
     data class Plain(val text: String) : LyricsState()
     data class Error(val message: String) : LyricsState()
 }
+
+private fun String?.withServer(label: String?) = this.orEmpty() + (label?.let { " · $it" } ?: "")
+
+/** The artist under an album's name: "Artist", or "Artist · Bandcamp" where the same album is also on another server. */
+val Album.artistLine: String get() = (artistName ?: "Unknown artist").withServer(serverLabel)
+
+/**
+ * The artist beside a song's title. The server comes *first* here ("NASTY copy · Artist"), unlike [Album.artistLine]: a
+ * song row is one line with the title taking most of it, so a long artist name is what gets cut, and the label has to
+ * survive that or two copies of a song would read exactly alike.
+ */
+val Track.artistLine: String
+    get() = (artistName ?: "Unknown artist").let { artist -> serverLabel?.let { "$it · $artist" } ?: artist }
+
+/** An artist's second line: "12 albums", or "12 albums · Bandcamp" where the same artist is also on another server. */
+val Artist.albumsLine: String get() = "$albumCount albums".withServer(serverLabel)
+
+/** A playlist's second line: "58 tracks · NASTY". Every playlist shows where it lives. */
+val Playlist.detailLine: String get() = "$songCount tracks".withServer(serverLabel)
+
+/** An artist's name where the row has no second line (Favorites, Search): "Name", or "Name · Bandcamp" where it is also on another server. */
+val Artist.nameLine: String get() = name.withServer(serverLabel)
+
+/** An album's name where the row has no second line (Favorites, Search). */
+val Album.nameLine: String get() = name.withServer(serverLabel)

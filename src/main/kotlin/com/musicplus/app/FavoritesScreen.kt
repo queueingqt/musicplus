@@ -155,6 +155,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
+            if (artists.isEmpty() && albums.isEmpty() && tracks.isEmpty()) EmptyListNote("favorites", filter)
             val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
             // Inside, not the default Outside — see ScrollbarGutter.kt's doc
             // (issue #39). The bug isn't limited to a trailing icon: any
@@ -173,7 +174,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 item { SectionHeader("Artists") }
                 items(artists, key = { "artist-${it.id}" }) { artist ->
                     FavoriteRow(
-                        label = artist.name,
+                        label = artist.nameLine,
                         onClick = { navigateTo({ a -> ArtistDetailScreen(a, artist.id) }) },
                         onOpenActions = {
                             navigateTo({ a ->
@@ -194,7 +195,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 items(albums, key = { "album-${it.id}" }) { album ->
                     FavoriteRowWithArt(
                         lightContext = lightContext,
-                        label = album.name,
+                        label = album.nameLine,
                         coverArtUrl = album.coverArtUrl,
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
                         onOpenActions = {
@@ -229,6 +230,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                     TrackRow(
                         track = track,
                         downloadStatus = track.downloadStatus,
+                        subtitle = track.serverLabel,
                         // Every row on this screen is definitionally favorited
                         // already (it's the Favorites list) — a star here would
                         // be redundant, not a gap. The download glyph is a real

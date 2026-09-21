@@ -6,14 +6,27 @@ import com.musicplus.app.Album
 import com.musicplus.app.Artist
 import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
+import com.musicplus.app.data.ServerLabels.labelledBy
 import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
+/** How long [LibraryRepository.searchStream] waits for one server's live answer before leaving that server with its cached matches. */
+private const val SEARCH_TIMEOUT_MS = 6_000L
+
+/** What a search found. */
+data class SearchResults(val artists: List<Artist>, val albums: List<Album>, val tracks: List<Track>)
 
 /** How many songs [LibraryRepository.refreshAllSongs] asks for per page — large enough that a typical library finishes in a small handful of requests, small enough that each individual request/upsert stays quick. */
 private const val ALL_SONGS_PAGE_SIZE = 500
@@ -47,12 +60,13 @@ class LibraryRepository(
     private val downloadRepository: DownloadRepository,
     /** The servers whose content is shown — every list below follows it, so switching servers switches the lists. See [ServerConfigRepository.shownServerIds]. */
     private val shownServerIds: Flow<List<String>>,
+    private val serverSyncStatus: ServerSyncStatus,
 ) {
     fun observeArtists(): Flow<List<Artist>> =
-        shownServerIds.flatMapLatest { artistDao.observeAll(it) }.map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { artistDao.observeAll(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::artists)
 
     fun observeAlbums(): Flow<List<Album>> =
-        shownServerIds.flatMapLatest { albumDao.observeAll(it) }.map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { albumDao.observeAll(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::albums)
 
     fun observeAlbumsByArtist(artistId: String): Flow<List<Album>> =
         albumDao.observeByArtist(artistId).map { it.map { entity -> entity.toDomain() } }
@@ -61,25 +75,25 @@ class LibraryRepository(
     // once at the top, never per track row; see toTrack's doc for why this
     // matters (a real, measured cost, not a theoretical one).
     fun observeTracksByAlbum(albumId: String): Flow<List<Track>> =
-        combine(trackDao.observeByAlbum(albumId), downloadRepository.observeAll()) { entities, downloads ->
+        combine(trackDao.observeByAlbum(albumId).retryOnTransientDbError(), downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
         }
 
     fun observeFavoriteArtists(): Flow<List<Artist>> =
-        shownServerIds.flatMapLatest { artistDao.observeFavorites(it) }.map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { artistDao.observeFavorites(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::artists)
 
     fun observeFavoriteAlbums(): Flow<List<Album>> =
-        shownServerIds.flatMapLatest { albumDao.observeFavorites(it) }.map { it.map { entity -> entity.toDomain() } }
+        shownServerIds.flatMapLatest { albumDao.observeFavorites(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::albums)
 
     // includeCoverArt = false — Favorites' Tracks section shows no per-row
     // art (showFavorite = false is TrackRow's only override there); see
     // toTrack's doc.
     fun observeFavoriteTracks(): Flow<List<Track>> =
-        combine(shownServerIds.flatMapLatest { trackDao.observeFavorites(it) }, downloadRepository.observeAll()) { entities, downloads ->
+        combine(shownServerIds.flatMapLatest { trackDao.observeFavorites(it).retryOnTransientDbError() }, downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
-        }
+        }.labelledBy(ServerLabels::tracks)
 
     /**
      * Every track in the library, not just ones already pulled in via an
@@ -92,10 +106,10 @@ class LibraryRepository(
     // the first place (several thousand tracks vs. Albums'/Artists' low
     // hundreds), confirmed live 2026-09-18.
     fun observeAllTracks(): Flow<List<Track>> =
-        combine(shownServerIds.flatMapLatest { trackDao.observeAll(it) }, downloadRepository.observeAll()) { entities, downloads ->
+        combine(shownServerIds.flatMapLatest { trackDao.observeAll(it).retryOnTransientDbError() }, downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
-        }
+        }.labelledBy(ServerLabels::tracks)
 
     /** Batch lookup by id, e.g. restoring a persisted queue (issue #27) — order isn't preserved, callers reorder against their own id list. Silently drops any id no longer in the local cache. */
     suspend fun getTracksByIds(ids: List<String>): List<Track> {
@@ -120,17 +134,33 @@ class LibraryRepository(
      */
     private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (SubsonicApi) -> Unit) {
         if (!connectivity.currentStatus.isConnected) return
-        // A refresh of one artist/album goes to the server that owns it; a list refresh goes to the active server.
-        val api = (if (ownerId != null) apiHolder.forId(ownerId) else apiHolder.get()) ?: return
+        // A refresh of one artist/album goes to the server that owns it.
+        if (ownerId != null) {
+            apiHolder.forId(ownerId)?.let { runRefresh(label, it, action) }
+            return
+        }
+        // A list refresh covers every server that is on, each on its own so a slow or failing one never holds up the
+        // others. (A removed server whose downloads were kept has no login, so it has no api and is skipped.)
+        val servers = shownServerIds.first()
+        coroutineScope {
+            for (id in servers) launch { apiHolder.forServer(id)?.let { runRefresh(label, it, action) } }
+        }
+    }
+
+    private suspend fun runRefresh(label: String, api: SubsonicApi, action: suspend (SubsonicApi) -> Unit) {
         try {
             action(api)
+            serverSyncStatus.refreshed(api.serverId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            // Cache left as-is deliberately — see this function's own doc above.
-            AppLogger.e("LibraryRepository", "$label failed", e)
+            // Cache left as-is deliberately — see [refresh]'s own doc above.
+            AppLogger.e("LibraryRepository", "$label failed (server ${api.serverId})", e)
         }
     }
+
+    /** False once the server was removed while a refresh of it was still running: that refresh must not write its rows back. */
+    private fun live(api: SubsonicApi) = AppServerPrefs.servers.value.value.any { it.id == api.serverId }
 
     // The four list refreshes below (and PlaylistRepository.refreshPlaylists)
     // all go through mirrorFromServer — see its doc for what they share: only
@@ -148,8 +178,8 @@ class LibraryRepository(
             idOf = ArtistEntity::id,
             cached = { artistDao.getAllFor(api.serverId).associateBy { it.id } },
             fetchAll = { onPage -> onPage(api.getArtists().map { it.toEntity() }) },
-            write = { artistDao.upsertAll(it) },
-            remove = { artistDao.deleteByIds(it) },
+            write = { if (live(api)) artistDao.upsertAll(it) },
+            remove = { if (live(api)) artistDao.deleteByIds(it) },
             merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
         )
     }
@@ -174,8 +204,8 @@ class LibraryRepository(
                     onPage = onPage,
                 )
             },
-            write = { albumDao.upsertAll(it) },
-            remove = { albumDao.deleteByIds(it) },
+            write = { if (live(api)) albumDao.upsertAll(it) },
+            remove = { if (live(api)) albumDao.deleteByIds(it) },
             merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
         )
     }
@@ -213,8 +243,8 @@ class LibraryRepository(
                     onPage = onPage,
                 )
             },
-            write = { trackDao.upsertAll(it) },
-            remove = { trackDao.deleteByIds(it) },
+            write = { if (live(api)) trackDao.upsertAll(it) },
+            remove = { if (live(api)) trackDao.deleteByIds(it) },
             merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
             keep = { candidates ->
                 val downloaded = downloadRepository.observeAll().first().mapTo(HashSet()) { it.songId }
@@ -264,38 +294,78 @@ class LibraryRepository(
     }
 
     /**
-     * Server-side `search3` when reachable; falls back to a local Room
-     * `LIKE`-match (see [TrackDao.search]'s doc for why, and its own
-     * tradeoffs vs. the real thing) when offline, not configured, or the
-     * live request itself fails. Forgejo issue #45, reported live
-     * 2026-09-18: this used to just return empty results in all three
-     * cases — useless against a server that's only temporarily unreachable
-     * (e.g. Tailscale disconnected), even for a track that's already fully
-     * downloaded and sitting right there in the local cache.
+     * Search across every server that is on. What is already cached shows at once (the same LIKE-match fallback a
+     * server that cannot be reached always got, see [TrackDao.search]'s doc, so a server that is down still
+     * contributes what is cached); then each server's live `search3` result replaces that server's cached slice as
+     * it arrives (relevance-ranked and full-catalog, not just what is cached). A server that has not answered within
+     * [SEARCH_TIMEOUT_MS] is left with its cached slice, so one slow server never holds the results up. Offline, only
+     * the cached results are emitted. Forgejo issue #45 is why the cached fallback exists at all.
      */
-    suspend fun search(query: String): Triple<List<Artist>, List<Album>, List<Track>> {
-        if (query.isBlank()) return Triple(emptyList(), emptyList(), emptyList())
-        val api = apiHolder.get()
-        if (connectivity.currentStatus.isConnected && api != null) {
-            try {
-                val result = api.search(query)
-                val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
-                return Triple(
-                    result.artist.map { it.toEntity().toDomain() },
-                    result.album.map { it.toEntity().toDomain() },
-                    result.song.map { it.toTrackEntity().toTrack(apiHolder, downloadsById[it.id]) },
-                )
-            } catch (e: Exception) {
-                AppLogger.e("LibraryRepository", "search(\"$query\") failed, falling back to local cache", e)
+    fun searchStream(query: String): Flow<SearchResults> = channelFlow {
+        if (query.isBlank()) {
+            send(SearchResults(emptyList(), emptyList(), emptyList()))
+            return@channelFlow
+        }
+        val servers = shownServerIds.first()
+        val local = searchLocal(query)
+        send(labelled(local))
+        if (!connectivity.currentStatus.isConnected) return@channelFlow
+
+        val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
+        val live = HashMap<String, SearchResults>()
+        val lock = Mutex()
+        fun merged(): SearchResults {
+            fun <T> pick(id: String, fromLive: (SearchResults) -> List<T>, fromLocal: List<T>, serverOf: (T) -> String?) =
+                live[id]?.let(fromLive) ?: fromLocal.filter { serverOf(it) == id }
+            // Interleaved by rank, each server's best match first, so no server's results sit below another's whole page.
+            return labelled(
+                SearchResults(
+                    interleave(servers.map { id -> pick(id, { it.artists }, local.artists) { ServerScope.serverOf(it.id) } }),
+                    interleave(servers.map { id -> pick(id, { it.albums }, local.albums) { ServerScope.serverOf(it.id) } }),
+                    interleave(servers.map { id -> pick(id, { it.tracks }, local.tracks) { ServerScope.serverOf(it.id) } }),
+                ),
+            )
+        }
+        coroutineScope {
+            for (id in servers) {
+                launch {
+                    val api = apiHolder.forServer(id) ?: return@launch
+                    val result = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                        try {
+                            api.search(query)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            AppLogger.e("LibraryRepository", "search(\"$query\") failed on server $id, keeping its cached matches", e)
+                            null
+                        }
+                    } ?: return@launch
+                    lock.withLock {
+                        live[id] = SearchResults(
+                            result.artist.map { it.toEntity().toDomain() },
+                            result.album.map { it.toEntity().toDomain() },
+                            result.song.map { it.toTrackEntity().toTrack(apiHolder, downloadsById[it.id]) },
+                        )
+                        send(merged())
+                    }
+                }
             }
         }
-        return searchLocal(query)
     }
 
-    private suspend fun searchLocal(query: String): Triple<List<Artist>, List<Album>, List<Track>> {
+    /** First of each list, then second of each, and so on. */
+    private fun <T> interleave(lists: List<List<T>>): List<T> {
+        val longest = lists.maxOfOrNull { it.size } ?: return emptyList()
+        return buildList { for (rank in 0 until longest) for (list in lists) list.getOrNull(rank)?.let { add(it) } }
+    }
+
+    private fun labelled(results: SearchResults) =
+        SearchResults(ServerLabels.artists(results.artists), ServerLabels.albums(results.albums), ServerLabels.tracks(results.tracks))
+
+    private suspend fun searchLocal(query: String): SearchResults {
         val servers = shownServerIds.first()
         val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
-        return Triple(
+        return SearchResults(
             artistDao.search(query, servers).map { it.toDomain() },
             albumDao.search(query, servers).map { it.toDomain() },
             trackDao.search(query, servers).map { it.toTrack(apiHolder, downloadsById[it.id]) },
@@ -325,8 +395,9 @@ class LibraryRepository(
     }
 
     /** ArtistDetailScreen's "Top songs" section — same on-demand, not-Room-cached shape as [getSimilarArtists] above. [artistName] (not an id) — see [SubsonicApi.getTopSongs]'s doc for why. includeCoverArt = false — TopSongRow shows no per-row art; see toTrack's doc. */
-    suspend fun getTopSongs(artistName: String): List<Track> {
-        val api = apiHolder.get() ?: return emptyList()
+    suspend fun getTopSongs(artistId: String, artistName: String): List<Track> {
+        // The artist's own server: with several servers on, "the active one" is meaningless, and another server has never heard of them.
+        val api = apiHolder.forId(artistId) ?: return emptyList()
         return try {
             val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
             api.getTopSongs(artistName).map { it.toTrackEntity().toTrack(apiHolder, downloadsById[it.id], includeCoverArt = false) }

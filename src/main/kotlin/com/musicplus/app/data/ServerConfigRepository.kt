@@ -1,17 +1,29 @@
 package com.musicplus.app.data
 
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
+ * A server that was removed while its downloaded songs were kept. Its songs stay listed and playable ("<name> (removed)"),
+ * and adding a server with the same address and username again picks them back up. No password: nothing here can log in.
+ */
+@Serializable
+data class RemovedServer(val id: String, val name: String, val baseUrl: String, val username: String)
+
+/**
  * Persists every saved Navidrome/Subsonic server connection (multi-server
- * support), plus which one is currently active. Backed by the SDK's shared
+ * support), plus which of them are switched on. Backed by the SDK's shared
  * `DataStore<Preferences>` (`lightContext.dataStore` — see SDK reference notes),
  * not a DataStore instance of our own. Preferences DataStore only stores
  * primitives, so the list is kept as one JSON-encoded string rather than
@@ -28,7 +40,15 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
 
     private object Keys {
         val SERVERS_JSON = stringPreferencesKey("server_profiles_json")
+        // Older builds read this as "the" active server, so it is still written (the first server that is on); it
+        // no longer decides anything here.
         val ACTIVE_SERVER_ID = stringPreferencesKey("active_server_id")
+
+        // The servers that are switched on. A key of its own, not a field of [ServerProfile]: that list is decoded
+        // without ignoreUnknownKeys, so a build that predates this setting would read a profile with a new field as
+        // "no servers" the moment someone rolled back. Absent until the first switch: see [enabledIds].
+        val ENABLED_SERVER_IDS = stringSetPreferencesKey("enabled_server_ids")
+        val REMOVED_SERVERS = stringPreferencesKey("removed_servers_json")
 
         // Pre-multi-server single-config keys. Never written to anymore, and
         // actively removed once migrated (see migrateLegacyConfigIfNeeded) —
@@ -41,26 +61,69 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
 
     val servers: Flow<List<ServerProfile>> = dataStore.data.map { parseServers(it) }
 
-    val activeServerId: Flow<String?> = dataStore.data.map { prefs ->
-        prefs[Keys.ACTIVE_SERVER_ID] ?: parseServers(prefs).firstOrNull()?.id
-    }
+    /** The ids of the servers that are switched on. */
+    val enabledServerIds: Flow<Set<String>> = dataStore.data.map { prefs -> enabledIds(prefs, parseServers(prefs)) }.distinctUntilChanged()
 
-    /** The currently active server's whole profile, or null if none configured yet. */
-    val activeProfile: Flow<ServerProfile?> = dataStore.data.map { prefs ->
-        val servers = parseServers(prefs)
-        val activeId = prefs[Keys.ACTIVE_SERVER_ID]
-        servers.find { it.id == activeId } ?: servers.firstOrNull()
+    /** The servers that are switched on, in the order they were saved. */
+    val enabledServers: Flow<List<ServerProfile>> = dataStore.data.map { prefs ->
+        val all = parseServers(prefs)
+        val on = enabledIds(prefs, all)
+        all.filter { it.id in on }
     }
-
-    /** The currently active server's connection config, or null if none configured yet. */
-    val serverConfig: Flow<ServerConfig?> = activeProfile.map { it?.toServerConfig() }
 
     /**
-     * The servers whose content the app shows right now — every list, search and favorite is limited to these
-     * (see [ServerScope]). One at a time for now (the active one); it is the single place that changes when
-     * more than one server can be shown together.
+     * The first server that is on, or null when none is. This is what a call that needs "a server" and has no other
+     * context talks to (the id in hand names its own server, so most calls never use it).
      */
-    val shownServerIds: Flow<List<String>> = activeProfile.map { listOfNotNull(it?.id) }.distinctUntilChanged()
+    val activeProfile: Flow<ServerProfile?> = enabledServers.map { it.firstOrNull() }
+
+    val activeServerId: Flow<String?> = activeProfile.map { it?.id }
+
+    /** [activeProfile]'s connection config, or null if no server is on. */
+    val serverConfig: Flow<ServerConfig?> = activeProfile.map { it?.toServerConfig() }
+
+    /** Servers removed with their downloads kept — see [RemovedServer]. */
+    val removedServers: Flow<List<RemovedServer>> = dataStore.data.map { parseRemoved(it) }.distinctUntilChanged()
+
+    /**
+     * The servers whose content the app shows: every list, search and favorite is limited to these (see [ServerScope]).
+     * The servers that are on, then any removed one whose downloads were kept.
+     */
+    val shownServerIds: Flow<List<String>> =
+        combine(enabledServers, removedServers) { on, gone -> on.map { it.id } + gone.map { it.id } }.distinctUntilChanged()
+
+    /**
+     * Which servers are on. Until the first switch nothing is stored, and the server that was active before servers
+     * could be switched is the only one on (an install keeps working as it was). Ids of servers that no longer exist
+     * are ignored.
+     */
+    private fun enabledIds(prefs: Preferences, servers: List<ServerProfile>): Set<String> {
+        val stored = prefs[Keys.ENABLED_SERVER_IDS]
+        if (stored != null) {
+            val known = servers.mapTo(HashSet()) { it.id }
+            return stored.filterTo(HashSet()) { it in known }
+        }
+        val activeId = prefs[Keys.ACTIVE_SERVER_ID]
+        val primary = servers.find { it.id == activeId } ?: servers.firstOrNull()
+        return setOfNotNull(primary?.id)
+    }
+
+    /** Keeps [Keys.ACTIVE_SERVER_ID] pointing at the first server that is on, for a build that is rolled back to. */
+    private fun writeActive(prefs: MutablePreferences, servers: List<ServerProfile>, enabled: Set<String>) {
+        servers.firstOrNull { it.id in enabled }?.let { prefs[Keys.ACTIVE_SERVER_ID] = it.id }
+    }
+
+    private var removedFrom: String? = null
+    private var removed: List<RemovedServer> = emptyList()
+
+    private fun parseRemoved(prefs: Preferences): List<RemovedServer> {
+        val stored = prefs[Keys.REMOVED_SERVERS] ?: return emptyList()
+        synchronized(decodedLock) { if (stored == removedFrom) return removed }
+        val json = runCatching { EncryptedPrefsCipher.decrypt(stored) }.getOrDefault(stored)
+        val result = runCatching { Json.decodeFromString<List<RemovedServer>>(json) }
+        result.getOrNull()?.let { list -> synchronized(decodedLock) { removedFrom = stored; removed = list } }
+        return result.getOrDefault(emptyList())
+    }
 
     /**
      * Reads the saved server list, migrating a pre-multi-server single config
@@ -132,29 +195,74 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    /** Adds a new profile, or replaces the one with the same [ServerProfile.id]. First server saved becomes active automatically. */
+    /**
+     * Adds a new profile (switched on), or replaces the one with the same [ServerProfile.id]. A profile that takes
+     * over the id of a [RemovedServer] (see [findRemoved]) picks that server's kept downloads back up.
+     */
     suspend fun addOrUpdate(profile: ServerProfile) {
         dataStore.edit { prefs ->
             val current = parseServers(prefs).toMutableList()
+            val enabled = enabledIds(prefs, current).toMutableSet()
             val index = current.indexOfFirst { it.id == profile.id }
-            if (index >= 0) current[index] = profile else current += profile
+            if (index >= 0) {
+                current[index] = profile
+            } else {
+                current += profile
+                enabled += profile.id
+                prefs[Keys.ENABLED_SERVER_IDS] = enabled
+            }
             prefs[Keys.SERVERS_JSON] = EncryptedPrefsCipher.encrypt(Json.encodeToString(current))
-            if (prefs[Keys.ACTIVE_SERVER_ID] == null) prefs[Keys.ACTIVE_SERVER_ID] = profile.id
-        }
-    }
-
-    suspend fun remove(id: String) {
-        dataStore.edit { prefs ->
-            val remaining = parseServers(prefs).filterNot { it.id == id }
-            prefs[Keys.SERVERS_JSON] = EncryptedPrefsCipher.encrypt(Json.encodeToString(remaining))
-            if (prefs[Keys.ACTIVE_SERVER_ID] == id) {
-                val nextActive = remaining.firstOrNull()?.id
-                if (nextActive != null) prefs[Keys.ACTIVE_SERVER_ID] = nextActive else prefs.remove(Keys.ACTIVE_SERVER_ID)
+            writeActive(prefs, current, enabled)
+            val gone = parseRemoved(prefs)
+            if (gone.any { it.id == profile.id }) {
+                prefs[Keys.REMOVED_SERVERS] = EncryptedPrefsCipher.encrypt(Json.encodeToString(gone.filterNot { it.id == profile.id }))
             }
         }
     }
 
-    suspend fun setActive(id: String) {
-        dataStore.edit { prefs -> prefs[Keys.ACTIVE_SERVER_ID] = id }
+    /** Switches a server on or off. Off hides its content everywhere and stops refreshing it; nothing else about it changes. */
+    suspend fun setEnabled(id: String, on: Boolean) {
+        dataStore.edit { prefs ->
+            val all = parseServers(prefs)
+            val enabled = enabledIds(prefs, all).toMutableSet()
+            if (on) enabled += id else enabled -= id
+            prefs[Keys.ENABLED_SERVER_IDS] = enabled
+            writeActive(prefs, all, enabled)
+        }
+    }
+
+    /**
+     * Forgets a server's login. [keptDownloadsAs] is set when its downloaded songs stay on the phone: they stay listed
+     * under that record until they are deleted or a server with the same address and username is added again.
+     */
+    suspend fun remove(id: String, keptDownloadsAs: RemovedServer? = null) {
+        dataStore.edit { prefs ->
+            val all = parseServers(prefs)
+            val remaining = all.filterNot { it.id == id }
+            val enabled = enabledIds(prefs, all) - id
+            prefs[Keys.SERVERS_JSON] = EncryptedPrefsCipher.encrypt(Json.encodeToString(remaining))
+            prefs[Keys.ENABLED_SERVER_IDS] = enabled
+            if (prefs[Keys.ACTIVE_SERVER_ID] == id) prefs.remove(Keys.ACTIVE_SERVER_ID)
+            writeActive(prefs, remaining, enabled)
+            if (keptDownloadsAs != null) {
+                val gone = parseRemoved(prefs).filterNot { it.id == keptDownloadsAs.id } + keptDownloadsAs
+                prefs[Keys.REMOVED_SERVERS] = EncryptedPrefsCipher.encrypt(Json.encodeToString(gone))
+            }
+        }
+    }
+
+    /** Drops the record of a removed server (its kept downloads were deleted). */
+    suspend fun forgetRemoved(id: String) {
+        dataStore.edit { prefs ->
+            val gone = parseRemoved(prefs)
+            if (gone.none { it.id == id }) return@edit
+            prefs[Keys.REMOVED_SERVERS] = EncryptedPrefsCipher.encrypt(Json.encodeToString(gone.filterNot { it.id == id }))
+        }
+    }
+
+    /** The removed server a new login for [baseUrl] and [username] would re-attach to, if any. */
+    suspend fun findRemoved(baseUrl: String, username: String): RemovedServer? {
+        val address = baseUrl.trimEnd('/')
+        return parseRemoved(dataStore.data.first()).find { it.baseUrl.trimEnd('/').equals(address, ignoreCase = true) && it.username == username }
     }
 }

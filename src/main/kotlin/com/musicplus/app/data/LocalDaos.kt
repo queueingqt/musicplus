@@ -29,6 +29,9 @@ interface ArtistDao {
     @Query("UPDATE artists SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
 
+    @Query("SELECT id FROM artists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getIdsFor(serverId: String): List<String>
+
     /** One server's snapshot for [mirrorFromServer]'s diff — never observed, only read once per refresh pass. It must be per-server: a mirror pass removes whatever it doesn't see, and must never see another server's rows as missing. */
     @Query("SELECT * FROM artists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
     suspend fun getAllFor(serverId: String): List<ArtistEntity>
@@ -72,6 +75,9 @@ interface AlbumDao {
 
     @Query("UPDATE albums SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
+
+    @Query("SELECT id FROM albums WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getIdsFor(serverId: String): List<String>
 
     /** See [ArtistDao.getAllFor]. */
     @Query("SELECT * FROM albums WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
@@ -132,6 +138,9 @@ interface TrackDao {
     @Query("UPDATE tracks SET starred = :starred WHERE id = :id")
     suspend fun setStarred(id: String, starred: Boolean)
 
+    @Query("SELECT id FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getIdsFor(serverId: String): List<String>
+
     /** See [ArtistDao.getAllFor]. */
     @Query("SELECT * FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
     suspend fun getAllFor(serverId: String): List<TrackEntity>
@@ -168,6 +177,9 @@ interface PlaylistDao {
 
     @Query("DELETE FROM playlists WHERE id = :id")
     suspend fun delete(id: String)
+
+    @Query("SELECT id FROM playlists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun getIdsFor(serverId: String): List<String>
 
     /** See [ArtistDao.getAllFor]. */
     @Query("SELECT * FROM playlists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
@@ -280,6 +292,10 @@ interface PendingMutationDao {
     @Query("UPDATE pending_mutations SET attemptCount = attemptCount + 1, lastError = :error WHERE id = :id")
     suspend fun recordFailure(id: Long, error: String?)
 
+    /** Drops one server's still-pending edits (it was removed, so they can never be sent). */
+    @Query("DELETE FROM pending_mutations WHERE substr(targetId, 1, instr(targetId, ':') - 1) = :serverId")
+    suspend fun deleteForServer(serverId: String)
+
     /** Discards every still-pending mutation, synced or not — see LocalDataRepository's doc for why callers must warn about this first. */
     @Query("DELETE FROM pending_mutations")
     suspend fun deleteAll()
@@ -297,6 +313,10 @@ interface DownloadDao {
     fun observeBySongId(songId: String): Flow<DownloadEntity?>
 
     /** Used by DownloadRepository.retryFailed() — every download that gave up after MAX_DOWNLOAD_ATTEMPTS, re-armed on the next app start. */
+    /** Every download row of one server, whatever its state. */
+    @Query("SELECT * FROM downloads WHERE substr(songId, 1, instr(songId, ':') - 1) = :serverId")
+    suspend fun getForServer(serverId: String): List<DownloadEntity>
+
     @Query("SELECT * FROM downloads WHERE status = :status")
     suspend fun getByStatus(status: DownloadStatus): List<DownloadEntity>
 
@@ -321,9 +341,54 @@ interface QueueDao {
         insertAll(songIds.mapIndexed { index, id -> QueueItemEntity(position = index, songId = id) })
     }
 
+    /** One server's queued songs after [position] (the ones not yet played), for when the server is removed. */
+    @Query("DELETE FROM queue_items WHERE position > :position AND substr(songId, 1, instr(songId, ':') - 1) = :serverId")
+    suspend fun deleteAfter(serverId: String, position: Int)
+
     @Query("DELETE FROM queue_items")
     suspend fun clear()
 
     @Insert
     suspend fun insertAll(items: List<QueueItemEntity>)
+}
+
+/**
+ * What a removed server leaves behind, deleted in one transaction: one change notification for every list, instead of one
+ * per batch (a removal used to make each list re-run its whole query twenty-odd times while the next batch was writing).
+ */
+@Dao
+interface ServerCleanupDao {
+    /**
+     * Deletes [serverId]'s library. With [keepDownloads], the songs that have a finished download stay, and so do the
+     * albums and artists those songs belong to. Its playlists always go.
+     */
+    @Transaction
+    suspend fun pruneServer(serverId: String, keepDownloads: Boolean) {
+        if (keepDownloads) deleteTracksWithoutDownload(serverId) else deleteTracks(serverId)
+        deleteUnusedAlbums(serverId)
+        deleteUnusedArtists(serverId)
+        deletePlaylistTracks(serverId)
+        deletePlaylists(serverId)
+    }
+
+    @Query("DELETE FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun deleteTracks(serverId: String)
+
+    @Query(
+        "DELETE FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId AND id NOT IN " +
+            "(SELECT songId FROM downloads WHERE status = 'COMPLETE' AND substr(songId, 1, instr(songId, ':') - 1) = :serverId)",
+    )
+    suspend fun deleteTracksWithoutDownload(serverId: String)
+
+    @Query("DELETE FROM albums WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId AND id NOT IN (SELECT albumId FROM tracks WHERE albumId IS NOT NULL)")
+    suspend fun deleteUnusedAlbums(serverId: String)
+
+    @Query("DELETE FROM artists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId AND id NOT IN (SELECT artistId FROM tracks WHERE artistId IS NOT NULL)")
+    suspend fun deleteUnusedArtists(serverId: String)
+
+    @Query("DELETE FROM playlist_tracks WHERE substr(playlistId, 1, instr(playlistId, ':') - 1) = :serverId")
+    suspend fun deletePlaylistTracks(serverId: String)
+
+    @Query("DELETE FROM playlists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
+    suspend fun deletePlaylists(serverId: String)
 }

@@ -253,4 +253,25 @@ class SubsonicClient(private val config: ServerConfig) {
     } catch (e: Exception) {
         Result.failure(e)
     }
+
+    /**
+     * A login check that cannot be fooled. [ping] answers OK to anyone on some servers (Bandcamp's does, with no
+     * credentials at all), so this asks for something only a signed-in person gets: one album. A server that refuses
+     * the login says so as a Subsonic error (Navidrome: code 40) or, for Bandcamp, with a bare HTTP 500 and no body, which
+     * arrives here as an answer that is not Subsonic at all. From a server that could be reached, both mean the
+     * login was rejected. An unreachable server is still reported as what it is.
+     */
+    suspend fun checkLogin(): Result<Unit> = try {
+        call("getAlbumList2.view", listOf("type" to "newest", "size" to "1"))
+        Result.success(Unit)
+    } catch (e: SubsonicApiException) {
+        Result.failure(e)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        val unreachable = e is IOException ||
+            e is java.nio.channels.UnresolvedAddressException ||
+            e.toString().contains("Timeout")
+        Result.failure(if (unreachable) e else SubsonicApiException(-1, "The server did not accept the login"))
+    }
 }

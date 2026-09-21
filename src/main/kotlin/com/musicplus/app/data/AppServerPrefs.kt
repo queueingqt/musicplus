@@ -6,6 +6,12 @@ package com.musicplus.app.data
  */
 object AppServerPrefs {
     val servers = WarmedFlow<List<ServerProfile>>(emptyList())
+    /** The first server that is on — see [ServerConfigRepository.activeProfile]. */
     val activeServerId = WarmedFlow<String?>(null)
+    val enabledServerIds = WarmedFlow<Set<String>>(emptySet())
+    val removedServers = WarmedFlow<List<RemovedServer>>(emptyList())
+    /** When each server's lists last finished refreshing (epoch ms) — see [ServerSyncStatus]. */
+    val lastSyncedAt = WarmedFlow<Map<String, Long>>(emptyMap())
+    /** Whether any server is saved (on or off) — the setup splash is for when there is none. */
     val isConfigured = WarmedFlow(false)
 }
