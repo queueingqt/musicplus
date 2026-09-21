@@ -12,11 +12,45 @@ import java.io.File
  * on the way out, so no other code ever sees a server's raw id. An id that belongs to a different server
  * is refused rather than sent, since another server would answer it with somebody else's song or an error.
  */
-class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
+class SubsonicApi(
+    val serverId: String,
+    private val client: SubsonicClient,
+    /** Told when a real request shows that this server does or does not offer a feature — see [CapabilityRegistry]. */
+    private val learner: CapabilityLearner? = null,
+) {
 
     val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
 
     private fun scopeId(id: String) = ServerScope.scope(serverId, id)
+
+    /**
+     * Runs a real request for [capability] and tells the [learner] how it went: a success means the server offers it,
+     * and a failure that looks like the endpoint not being there (not a dropped connection, not the server understanding
+     * and refusing) makes it check again.
+     */
+    private suspend inline fun <T> learning(capability: Capability, block: () -> T): T {
+        val result = try {
+            block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: SubsonicApiException) {
+            throw e
+        } catch (e: Exception) {
+            if (!e.isUnreachable()) learner?.doubted(serverId, capability)
+            throw e
+        }
+        learner?.worked(serverId, capability)
+        return result
+    }
+
+    /** An ordinary, signed-in question — the control that says a "no" from [probe] means something. See [SubsonicClient.checkLogin]. */
+    suspend fun checkLogin(): Result<Unit> = client.checkLogin()
+
+    /** One harmless request that shows whether this server offers [capability]. Only meaningful right after [checkLogin] succeeded. */
+    suspend fun probe(capability: Capability): Support = client.probe(capability.probeMethod, capability.probeParams)
+
+    /** A cheap "is it there" request; the outcome reaches [ServerReachability] through the client. */
+    suspend fun ping(): Result<Unit> = client.ping()
 
     /** The id as this server knows it. An id that was never scoped is passed through and logged: it means a code path missed the scoping. */
     private fun native(id: String): String {
@@ -101,7 +135,7 @@ class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
         ).searchResult3?.song.orEmpty().map { it.scoped() }
 
     suspend fun getStarred(): SubsonicStarred =
-        client.call("getStarred2.view").starred2.let { starred ->
+        learning(Capability.STAR) { client.call("getStarred2.view") }.starred2.let { starred ->
             if (starred == null) SubsonicStarred() else SubsonicStarred(
                 artist = starred.artist.map { it.scoped() },
                 album = starred.album.map { it.scoped() },
@@ -111,11 +145,11 @@ class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
 
     /** [id] may be a song, album, or artist id — Subsonic stars any of the three the same way. */
     suspend fun star(id: String) {
-        client.call("star.view", listOf("id" to native(id)))
+        learning(Capability.STAR) { client.call("star.view", listOf("id" to native(id))) }
     }
 
     suspend fun unstar(id: String) {
-        client.call("unstar.view", listOf("id" to native(id)))
+        learning(Capability.STAR) { client.call("unstar.view", listOf("id" to native(id))) }
     }
 
     suspend fun getPlaylists(): List<SubsonicPlaylist> =
@@ -139,15 +173,15 @@ class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
             add("name" to name)
             songIds.forEach { add("songId" to native(it)) }
         }
-        return client.call("createPlaylist.view", params).playlist?.scoped()
+        return learning(Capability.PLAYLIST_WRITE) { client.call("createPlaylist.view", params) }.playlist?.scoped()
     }
 
     suspend fun renamePlaylist(playlistId: String, name: String) {
-        client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "name" to name))
+        learning(Capability.PLAYLIST_WRITE) { client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "name" to name)) }
     }
 
     suspend fun addSongToPlaylist(playlistId: String, songId: String) {
-        client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "songIdToAdd" to native(songId)))
+        learning(Capability.PLAYLIST_WRITE) { client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "songIdToAdd" to native(songId))) }
     }
 
     /**
@@ -160,7 +194,7 @@ class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
      * server's implementation, not guessed.
      */
     suspend fun removeSongFromPlaylist(playlistId: String, songIndex: Int) {
-        client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "songIndexToRemove" to songIndex.toString()))
+        learning(Capability.PLAYLIST_WRITE) { client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "songIndexToRemove" to songIndex.toString())) }
     }
 
     /** Full reorder — see [createPlaylist]'s playlistId-replace form. [songIds] is the complete new track order. */
@@ -169,7 +203,7 @@ class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
     }
 
     suspend fun deletePlaylist(id: String) {
-        client.call("deletePlaylist.view", listOf("id" to native(id)))
+        learning(Capability.PLAYLIST_WRITE) { client.call("deletePlaylist.view", listOf("id" to native(id))) }
     }
 
     /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. Only safe to use when [baseUrlIsHttps] — see PlaybackRepository.toAudioItem. */
@@ -228,7 +262,7 @@ class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
      * the server responds "ok" with an empty `lyricsList`, not an error.
      */
     suspend fun getLyricsBySongId(songId: String): List<SubsonicStructuredLyrics> =
-        client.call("getLyricsBySongId.view", listOf("id" to native(songId))).lyricsList?.structuredLyrics ?: emptyList()
+        learning(Capability.LYRICS) { client.call("getLyricsBySongId.view", listOf("id" to native(songId))) }.lyricsList?.structuredLyrics ?: emptyList()
 
     /**
      * ArtistDetailScreen's "Similar artists" section — `getArtistInfo2.view`,
@@ -272,7 +306,7 @@ class SubsonicApi(val serverId: String, private val client: SubsonicClient) {
      * not swallowed.
      */
     suspend fun scrobble(songId: String, submission: Boolean) {
-        client.call("scrobble.view", listOf("id" to native(songId), "submission" to submission.toString()))
+        learning(Capability.SCROBBLE) { client.call("scrobble.view", listOf("id" to native(songId), "submission" to submission.toString())) }
     }
 
     companion object {

@@ -14,8 +14,14 @@ import java.util.concurrent.ConcurrentHashMap
 class SubsonicApiHolder(private val serverConfigRepository: ServerConfigRepository) {
     private val apis = ConcurrentHashMap<String, SubsonicApi>()
 
+    /** Set once by [AppGraph] before any api is built: every client reports whether its server could be reached, and every api what its server can do. */
+    var reachability: ServerReachability? = null
+    var learner: CapabilityLearner? = null
+
     private fun apiFor(profile: ServerProfile): SubsonicApi =
-        apis.computeIfAbsent(profile.id) { SubsonicApi(profile.id, SubsonicClient(profile.toServerConfig())) }
+        apis.computeIfAbsent(profile.id) {
+            SubsonicApi(profile.id, SubsonicClient(profile.toServerConfig()) { reachable -> reachability?.report(profile.id, reachable) }, learner)
+        }
 
     /**
      * The active server's api, or null if none is configured. Once built it comes straight from memory: reading

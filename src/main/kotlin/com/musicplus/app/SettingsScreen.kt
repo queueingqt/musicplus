@@ -13,10 +13,12 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppDebugPrefs
 import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.AppScrobblePrefs
 import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.LocalDataRepository
 import com.musicplus.app.data.NewerVersion
+import com.musicplus.app.data.ServerScope
 import com.musicplus.app.data.SyncQueueRepository
 import com.musicplus.app.data.VersionCheckRepository
 import com.thelightphone.sdk.LightScreen
@@ -197,6 +199,21 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                                 ConfirmModal(
                                     title = "Clear all local data?",
                                     message = buildString {
+                                        // Phone Only playlists and the hearts kept on the phone for a server without
+                                        // favorites exist nowhere else, so this is the one thing here that cannot be brought back.
+                                        val phoneOnlyPlaylists = AppLibraryCache.playlists.value.value.count { ServerScope.isPhone(it.id) }
+                                        val phoneOnlyFavorites =
+                                            AppLibraryCache.favoriteTracks.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL } +
+                                                AppLibraryCache.favoriteAlbums.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL } +
+                                                AppLibraryCache.favoriteArtists.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL }
+                                        if (phoneOnlyPlaylists > 0 || phoneOnlyFavorites > 0) {
+                                            val parts = buildList {
+                                                if (phoneOnlyPlaylists > 0) add(if (phoneOnlyPlaylists == 1) "1 Phone Only playlist" else "$phoneOnlyPlaylists Phone Only playlists")
+                                                if (phoneOnlyFavorites > 0) add(if (phoneOnlyFavorites == 1) "1 favorite kept only on this phone" else "$phoneOnlyFavorites favorites kept only on this phone")
+                                            }
+                                            val total = phoneOnlyPlaylists + phoneOnlyFavorites
+                                            append("This permanently deletes ${parts.joinToString(" and ")}. ${if (total == 1) "It exists" else "They exist"} nowhere else. ")
+                                        }
                                         append(
                                             "Removes downloaded music, cached artwork and lyrics, and the library " +
                                                 "cache. Your server login stays saved.",

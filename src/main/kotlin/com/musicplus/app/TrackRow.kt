@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
 import com.musicplus.app.data.DownloadStatus
 import com.thelightphone.sdk.ui.LightIcon
@@ -47,10 +48,16 @@ fun TrackRow(
     showFavorite: Boolean = true,
     leading: (@Composable () -> Unit)? = null,
 ) {
+    // Greyed out when its server is off or cannot be reached and the phone has no copy; a tap says so instead of playing.
+    val unavailable = rememberTrackUnavailable(track)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .lightCombinedClickable(onClick = onPlay, onLongClick = onOpenActions)
+            .alpha(if (unavailable) UNAVAILABLE_ALPHA else 1f)
+            .lightCombinedClickable(
+                onClick = { if (unavailable) NoteModal.show(SERVER_NOT_REACHABLE_NOTE) else onPlay() },
+                onLongClick = onOpenActions,
+            )
             // end matches the SDK's own scrollbar track width — see
             // ScrollbarGutter.kt's doc (issue #39) for why this is fixed
             // rather than conditional on whether a scrollbar happens to show.
@@ -95,3 +102,6 @@ fun TrackRow(
         }
     }
 }
+
+/** How faint a song that cannot be played right now is drawn. */
+const val UNAVAILABLE_ALPHA = 0.4f

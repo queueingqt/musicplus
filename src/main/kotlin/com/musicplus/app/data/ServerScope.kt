@@ -15,6 +15,20 @@ object ServerScope {
     private const val SEPARATOR = ':'
 
     /**
+     * The owner of whatever lives only on this phone (a Phone Only playlist). It is not a server: nothing is ever sent to it,
+     * and it is always shown. A real server id is a UUID (or "legacy"), so this can never collide with one.
+     */
+    const val PHONE = "phone"
+
+    /** What the app calls things kept only on this phone. */
+    const val PHONE_ONLY_LABEL = "Phone Only"
+
+    /** A fresh id for a Phone Only playlist: `phone:<uuid>`. */
+    fun newPhoneId(): String = scope(PHONE, java.util.UUID.randomUUID().toString())
+
+    fun isPhone(id: String): Boolean = isScopedTo(id, PHONE)
+
+    /**
      * SQL for "the server this row's `id` belongs to". Room queries filter with `<this> IN (:serverIds)`.
      * A row whose id has no ':' (none should exist) yields '' and matches no server.
      */

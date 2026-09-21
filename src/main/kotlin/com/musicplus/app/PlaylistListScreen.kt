@@ -22,7 +22,9 @@ import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
+import com.musicplus.app.data.PlaylistHomes
 import com.musicplus.app.data.PlaylistRepository
+import com.musicplus.app.data.ServerScope
 import com.musicplus.app.data.SyncQueueRepository
 import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
@@ -82,18 +84,18 @@ class PlaylistListScreenViewModel(
     }
 
     /**
-     * Gives the new playlist's id to [onCreated] — real if it synced immediately, a local placeholder if it's now queued
-     * (see SyncQueueRepository), or null only if no server is configured at all.
+     * Makes a playlist at [home] (a server id, or Phone Only) and gives its id to [onCreated] — real if it synced
+     * immediately, a local placeholder if it's now queued (see SyncQueueRepository), or null if that server is not set up.
      *
-     * Runs on [viewModelScope], not the screen's `rememberCoroutineScope()`: this is called from the name editor's result
-     * callback, and while the editor is on top this screen is not composed, which cancels its scope. A create launched
-     * there never ran, so "New playlist" silently did nothing. [onCreated] runs on the main thread.
+     * Runs on [viewModelScope], not the screen's `rememberCoroutineScope()`: this is called from the result callback of the
+     * name editor (and the "Save to" list), and while those are on top this screen is not composed, which cancels its
+     * scope. A create launched there never ran, so a new playlist silently did not appear. [onCreated] runs on the main thread.
      */
-    fun createPlaylist(name: String, onCreated: (String?) -> Unit) {
+    fun createPlaylist(name: String, home: String, onCreated: (String?) -> Unit) {
         viewModelScope.launch {
-            val id = syncQueueRepository.createPlaylist(name)
-            playlistRepository.refreshPlaylists()
+            val id = syncQueueRepository.createPlaylist(name, home)
             onCreated(id)
+            if (home != ServerScope.PHONE) playlistRepository.refreshPlaylists()
         }
     }
 
@@ -162,8 +164,17 @@ class PlaylistListScreen(activity: SealedLightActivity) :
                     onNewPlaylist = {
                         navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
                             if (!name.isNullOrBlank()) {
-                                viewModel.createPlaylist(name) { id ->
-                                    if (id != null) navigateTo({ a -> PlaylistDetailScreen(a, id) })
+                                val open = { id: String? -> if (id != null) navigateTo({ a -> PlaylistDetailScreen(a, id) }) }
+                                // A playlist that starts from nothing has no server to belong to yet, so the person picks
+                                // where it is saved: any server that is on and can keep playlists, or Phone Only. When
+                                // Phone Only is the only place there is, there is nothing to ask.
+                                val choices = PlaylistHomes.choices()
+                                if (choices.size == 1) {
+                                    viewModel.createPlaylist(name.trim(), choices.first().id, open)
+                                } else {
+                                    navigateTo({ a -> SaveToScreen(a, choices) }) { home ->
+                                        if (home != null) viewModel.createPlaylist(name.trim(), home, open)
+                                    }
                                 }
                             }
                         }

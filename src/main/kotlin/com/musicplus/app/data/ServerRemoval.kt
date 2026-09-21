@@ -30,6 +30,8 @@ class ServerRemoval(
     private val lightContext: SealedLightContext,
     private val serverConfigRepository: ServerConfigRepository,
     private val serverSyncStatus: ServerSyncStatus,
+    private val capabilityRegistry: CapabilityRegistry,
+    private val reachability: ServerReachability,
     private val apiHolder: SubsonicApiHolder,
     private val playbackStateRepository: PlaybackStateRepository,
     private val downloadRepository: DownloadRepository,
@@ -68,6 +70,8 @@ class ServerRemoval(
         AppGraph.serversChanged(serverConfigRepository.activeServerId.first(), serverConfigRepository.enabledServerIds.first())
         apiHolder.forget(serverId)
         serverSyncStatus.forget(serverId)
+        capabilityRegistry.forget(serverId)
+        reachability.forget(serverId)
 
         pendingMutationDao.deleteForServer(serverId)
         dropFromQueue(serverId)

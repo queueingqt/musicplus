@@ -1,5 +1,6 @@
 package com.musicplus.app.data
 
+import com.musicplus.app.NoteModal
 import com.musicplus.app.PlaybackState
 import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
@@ -480,6 +481,15 @@ class PlaybackRepository(
                     "\"${track?.title}\" queueIndex=${s.currentIndex} of ${s.queue.size} position=${s.positionMs}ms",
             )
             if (err.kind != LightAudioErrorKind.Source || track == null) return@collect
+            // A network failure at the start of a song tells us its server cannot be reached, even before a request of
+            // ours has noticed.
+            if (err.diagnostic.contains("NETWORK_CONNECTION") || err.diagnostic.contains("TIMEOUT")) {
+                ServerScope.serverOf(track.id)?.let { apiHolder.reachability?.report(it, false) }
+            }
+            if (!TrackAvailability.isPlayable(track)) {
+                skipUnavailable(s)
+                return@collect
+            }
             // A file that is gone (its download was removed while the song sat in the
             // queue) is not a flaky start, and `s.positionMs` says nothing about it: the
             // player can still be reporting the previous item's position, which is what
@@ -497,6 +507,31 @@ class PlaybackRepository(
         }
     }
 
+    /** How many songs in a row were skipped because they could not be played; a queue with nothing playable stops instead of looping. */
+    private var unavailableSkipStreak = 0
+    private val skipStreakReset = scope.launch { player.isPlaying.collect { if (it) unavailableSkipStreak = 0 } }
+
+    /**
+     * The song that just failed cannot be played (its server is off or unreachable and the phone has no copy). Say so
+     * briefly and move on to the next one; when the queue has nothing left that plays, stop and say so.
+     */
+    private fun skipUnavailable(s: PlaybackState) {
+        val track = s.currentTrack ?: return
+        unavailableSkipStreak++
+        val next = s.queue.indices.firstOrNull { it > s.currentIndex && TrackAvailability.isPlayable(s.queue[it]) }
+        val wraps = next == null && repeatMode.value == RepeatMode.REPEAT_QUEUE && s.queue.any { TrackAvailability.isPlayable(it) }
+        if ((next == null && !wraps) || unavailableSkipStreak > s.queue.size) {
+            AppLogger.d("PlaybackRepository", "nothing left to play in the queue, stopping")
+            player.pause()
+            unavailableSkipStreak = 0
+            NoteModal.show("Server not reachable")
+            return
+        }
+        AppLogger.d("PlaybackRepository", "skipping \"${track.title}\" (${track.id}): its server is not reachable")
+        NoteModal.show("Skipped \"${track.title}\": server not reachable")
+        if (next != null) jumpToAsync(next) else scope.launch { play(s.queue, s.queue.indexOfFirst { TrackAvailability.isPlayable(it) }) }
+    }
+
     /**
      * Fire-and-forget on its own child coroutine — scrobbling must never block
      * or otherwise affect actual playback. Failures are logged AND surfaced to
@@ -505,16 +540,35 @@ class PlaybackRepository(
      */
     private fun sendScrobble(songId: String, submission: Boolean) {
         scope.launch {
-            val api = apiHolder.forId(songId) ?: return@launch
+            val target = scrobbleTarget(songId)
+            if (target == null) {
+                AppLogger.d("PlaybackRepository", "scrobble(songId=$songId): no server can count it")
+                return@launch
+            }
+            val api = apiHolder.forId(target) ?: return@launch
             try {
-                api.scrobble(songId, submission)
-                AppLogger.d("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) succeeded")
+                api.scrobble(target, submission)
+                AppLogger.d("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) succeeded" + if (target != songId) " on another server, as $target" else "")
                 AppScrobblePrefs.lastError.set(null)
             } catch (e: Exception) {
                 AppLogger.e("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) failed", e)
                 AppScrobblePrefs.lastError.set(e.message ?: "Scrobble failed")
             }
         }
+    }
+
+    private fun canScrobbleOn(serverId: String?): Boolean =
+        serverId != null && serverId in AppServerPrefs.enabledServerIds.value.value && Capabilities.can(serverId, Capability.SCROBBLE)
+
+    /**
+     * Which song to scrobble, so the play is counted somewhere: the song itself when its own server is on and offers
+     * scrobbling, otherwise the exact same song (same artist, title and album) on another server that does, otherwise
+     * none (the play is not counted).
+     */
+    private suspend fun scrobbleTarget(songId: String): String? {
+        val own = ServerScope.serverOf(songId)
+        if (canScrobbleOn(own)) return songId
+        return libraryRepository.sameSongElsewhere(songId).firstOrNull { canScrobbleOn(ServerScope.serverOf(it)) }
     }
 
     // --- Sleep timer — ephemeral, in-memory only, by design (see
@@ -801,8 +855,12 @@ class PlaybackRepository(
      * scheme — and hands the rest of the queue to [extendToFullQueue] to fill
      * in around it once the audio is already flowing.
      */
-    suspend fun play(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
+    suspend fun play(tracks: List<Track>, requestedIndex: Int, albumArtUrl: String? = null) {
         if (!player.awaitReady()) return
+        // A song that cannot be played (its server is off or unreachable, nothing on the phone) is not started: the
+        // first one after it that can be is.
+        val startIndex = tracks.indices.firstOrNull { it >= requestedIndex && TrackAvailability.isPlayable(tracks[it]) } ?: requestedIndex
+        if (startIndex != requestedIndex) NoteModal.show("Skipped \"${tracks[requestedIndex].title}\": server not reachable")
         beginPlay(tracks, startIndex, albumArtUrl)
         val myGeneration = playGeneration
         isActivelyLoading.value = true
@@ -1470,6 +1528,11 @@ class PlaybackRepository(
         val downloadedFile = localFilePath?.let { File(it) }?.takeIf { it.isFile }
         val source = when {
             downloadedFile != null -> LightAudioSource.FileSource(downloadedFile)
+            // Its server is off or cannot be reached and the phone has no copy: fetching would only stall the whole queue
+            // build. It stays in the queue as an item that will not play, and playback skips it (see skipUnavailable).
+            !TrackAvailability.serverUsable(ServerScope.serverOf(id)) ->
+                TrackAvailability.streamCopy(id)?.let { LightAudioSource.FileSource(it) }
+                    ?: LightAudioSource.FileSource(File(filesDir, "streamcache/${ServerScope.fileKey(id)}-unreachable"))
             api == null -> throw java.io.IOException("the server for \"$title\" is not set up")
             api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
             else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps, rank))

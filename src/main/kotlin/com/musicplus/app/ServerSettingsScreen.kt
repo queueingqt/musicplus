@@ -64,6 +64,8 @@ class ServerSettingsScreenViewModel(
     val enabledServerIds: StateFlow<Set<String>> = AppServerPrefs.enabledServerIds.value
 
     val lastSyncedAt: StateFlow<Map<String, Long>> = AppServerPrefs.lastSyncedAt.value
+    /** Servers that are on but could not be reached at their last request. */
+    val unreachable: StateFlow<Set<String>> = AppServerPrefs.unreachableServerIds.value
 
     /** Servers removed with their downloads kept: they stay listed below the live ones, until those downloads are deleted. */
     val removedServers: StateFlow<List<RemovedServer>> = AppServerPrefs.removedServers.value
@@ -106,6 +108,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
         val servers by viewModel.servers.collectAsState()
         val enabledServerIds by viewModel.enabledServerIds.collectAsState()
         val lastSyncedAt by viewModel.lastSyncedAt.collectAsState()
+        val unreachable by viewModel.unreachable.collectAsState()
         val removedServers by viewModel.removedServers.collectAsState()
         val downloadSummaries by viewModel.downloadSummaries.collectAsState()
 
@@ -148,6 +151,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                             isOn = isOn,
                             status = when {
                                 !isOn -> "Off"
+                                server.id in unreachable -> "Can't reach server"
                                 else -> lastSyncedAt[server.id]?.let { "Synced ${agoText(it)}" } ?: "Not synced yet"
                             },
                             onClick = { navigateTo({ a -> ServerEditScreen(a, serverId = server.id) }) },

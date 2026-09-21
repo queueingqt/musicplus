@@ -1,18 +1,23 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
+import com.musicplus.app.data.AppServerPrefs
+import com.musicplus.app.data.ListRefresher
+import com.musicplus.app.data.PlaylistHomes
 import com.musicplus.app.data.PlaylistRepository
+import com.musicplus.app.data.ServerLabels
+import com.musicplus.app.data.ServerScope
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -21,6 +26,7 @@ import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
+import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -28,57 +34,64 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
+/**
+ * Everything here that outlives a tap runs on [viewModelScope], and reports back through a callback that
+ * runs on the main thread. The screen's own `rememberCoroutineScope()` is cancelled whenever another screen (the name
+ * editor, say) is on top of this one, so a create launched from the editor's result callback on that scope never ran:
+ * "New playlist" silently did nothing.
+ */
 class PlaylistPickerScreenViewModel(
     private val playlistRepository: PlaylistRepository,
     private val syncQueueRepository: SyncQueueRepository,
     private val listRefresher: ListRefresher,
+    private val songId: String,
 ) : LightViewModel<Unit>() {
 
-    // The page opens straight from the cache; this re-checks the server in the
-    // background and any additions or deletions arrive through the cache
-    // itself — no spinner. See ListRefresher's doc.
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         listRefresher.refreshOnOpen(ListRefresher.Target.PLAYLISTS)
     }
 
+    /**
+     * Every playlist, each with its home shown by its row. The ones that take this song as they are come first, so the common
+     * choice needs no warning; the rest follow, in name order within each group.
+     */
+    val playlists: StateFlow<List<Playlist>> =
+        combine(AppLibraryCache.playlists.value, AppServerPrefs.capabilities.value, AppServerPrefs.enabledServerIds.value) { all, _, _ ->
+            val (takesAsIs, needsCopy) = all.partition { PlaylistHomes.takesAsIs(it.id, songId) }
+            takesAsIs + needsCopy
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    // See AppLibraryCache's doc — reads the already-live, process-lifetime
-    // cache instead of re-subscribing to playlistRepository.observePlaylists()
-    // on every fresh per-visit ViewModel.
-    val playlists: StateFlow<List<Playlist>> = AppLibraryCache.playlists.value
-
-    suspend fun addToExisting(playlistId: String, songId: String) {
-        syncQueueRepository.addTrack(playlistId, songId)
+    fun addToExisting(playlistId: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            syncQueueRepository.addTrack(playlistId, songId)
+            onDone()
+        }
     }
 
-    /** Creates the playlist (real, or a local placeholder if it's queued — see SyncQueueRepository.createPlaylist), adds [songId], then calls [onDone] on the main thread. */
-    fun createAndAdd(name: String, songId: String, onDone: () -> Unit) {
-        // viewModelScope, not the screen's rememberCoroutineScope(): this runs from the name editor's result callback, and
-        // that scope is cancelled while the editor is on top of this screen, so the create used to silently never run.
+    /** Adds the song to a new Phone Only copy of [playlistId]; [onDone] gets the copy's id, or null if the original could not be read in full. */
+    fun addToPhoneCopy(playlistId: String, onDone: (String?) -> Unit) {
+        viewModelScope.launch { onDone(syncQueueRepository.addToPhoneCopy(playlistId, songId)) }
+    }
+
+    /** A new playlist made from this song goes to the song's own server, or the phone when that server cannot keep playlists. */
+    fun createAndAdd(name: String, onDone: () -> Unit) {
         viewModelScope.launch {
-            val id = syncQueueRepository.createPlaylist(name)
+            val home = PlaylistHomes.homeOfSong(songId)
+            val id = syncQueueRepository.createPlaylist(name, home)
             if (id != null) syncQueueRepository.addTrack(id, songId)
             onDone()
-            playlistRepository.refreshPlaylists()
+            if (home != ServerScope.PHONE) playlistRepository.refreshPlaylists()
         }
     }
 }
 
-/**
- * Minimal "add to playlist" picker for track rows in AlbumDetailScreen/
- * SearchScreen/FavoritesScreen (issue #5, item 5). Documented choice: a small
- * dedicated screen rather than reusing PlaylistListScreen in a "pick mode" —
- * PlaylistListScreen already owns its own forward-navigation (into
- * PlaylistDetailScreen), search-filter state, and "new playlist" flow; threading a
- * second pick-mode behavior through all of that for every row's onClick would cost
- * more than this file, which is a simple flat list + one "new playlist" row.
- * Tapping a row (existing or new) adds the track immediately and navigates back —
- * no further confirmation UI, matching the rest of this feature's "make it work,
- * keep it small" first pass.
- */
 class PlaylistPickerScreen(
     activity: SealedLightActivity,
     private val songId: String,
@@ -88,12 +101,33 @@ class PlaylistPickerScreen(
 
     override fun createViewModel(): PlaylistPickerScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistPickerScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.listRefresher)
+        return PlaylistPickerScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.listRefresher, songId)
+    }
+
+    /**
+     * Adding this song would make [playlist] differ from the one on its server, so it goes to a new Phone Only copy instead,
+     * and this asks first, every time. The original is not touched.
+     */
+    private fun confirmCopy(playlist: Playlist) {
+        val server = ServerLabels.nameOf(ServerScope.serverOf(playlist.id)) ?: "its server"
+        LightModalManager.show(
+            ConfirmModal(
+                title = "Add to a Phone Only copy?",
+                message = "${PlaylistHomes.whyCopy(playlist.id, songId)} Adding it makes a Phone Only copy of \"${playlist.name}\". The original stays on $server.",
+                confirmContentDescription = "Add",
+                onConfirm = {
+                    viewModel.addToPhoneCopy(playlist.id) { copyId ->
+                        if (copyId == null) NoteModal.show("Couldn't copy \"${playlist.name}\"")
+                        goBack()
+                    }
+                },
+            ),
+            duration = 30.seconds,
+        )
     }
 
     @Composable
     override fun Content() {
-        val scope = rememberCoroutineScope()
         val playlists by viewModel.playlists.collectAsState()
 
         MusicPlusScaffold(
@@ -115,7 +149,7 @@ class PlaylistPickerScreen(
                     .fillMaxWidth()
                     .lightClickable {
                         navigateTo({ a -> TextEditScreen(a, "Playlist name", "") }) { name ->
-                            if (!name.isNullOrBlank()) viewModel.createAndAdd(name, songId) { goBack() }
+                            if (!name.isNullOrBlank()) viewModel.createAndAdd(name.trim()) { goBack() }
                         }
                     }
                     .padding(vertical = 1f.gridUnitsAsDp(), horizontal = 1f.gridUnitsAsDp()),
@@ -132,15 +166,14 @@ class PlaylistPickerScreen(
                 uniformItemHeightGridUnits = 3f,
             ) {
                 items(playlists, key = { it.id }) { playlist ->
-                    LightText(
-                        text = playlist.name,
-                        variant = LightTextVariant.Copy,
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .lightClickable {
-                                scope.launch {
-                                    viewModel.addToExisting(playlist.id, songId)
-                                    goBack()
+                                if (PlaylistHomes.takesAsIs(playlist.id, songId)) {
+                                    viewModel.addToExisting(playlist.id) { goBack() }
+                                } else {
+                                    confirmCopy(playlist)
                                 }
                             }
                             // end matches the SDK's own scrollbar track width —
@@ -148,7 +181,10 @@ class PlaylistPickerScreen(
                             // this is fixed rather than conditional on whether a
                             // scrollbar happens to show.
                             .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
-                    )
+                    ) {
+                        LightText(text = playlist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        LightText(text = playlist.detailLine, variant = LightTextVariant.Fine)
+                    }
                 }
             }
         }

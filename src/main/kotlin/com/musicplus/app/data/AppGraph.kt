@@ -42,6 +42,9 @@ object AppGraph {
 
     @Volatile private var instance: Graph? = null
 
+    /** Bump when the capability probes change, so every server is asked again on the next launch even within one app version. */
+    private const val CAPABILITY_PROBE_REVISION = 1
+
     private val VERSION_CHECK_INTERVAL_MS = TimeUnit.HOURS.toMillis(24)
 
     // Process-lifetime, not tied to any screen's own viewModelScope — needed so
@@ -117,6 +120,8 @@ object AppGraph {
         mirrorInto(serverSyncStatus.lastSynced, AppServerPrefs.lastSyncedAt::set)
         mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs.scrobblingEnabled::set)
         val apiHolder = SubsonicApiHolder(serverConfigRepository)
+        val reachability = ServerReachability(appScope, apiHolder)
+        apiHolder.reachability = reachability
         // Existing rows and files predate server-scoped ids. They belong to whichever server is active now,
         // which lives in DataStore, so the (one-time) migration asks for it only if it has something to migrate.
         val database = MusicPlusDatabase.create(lightContext) {
@@ -126,6 +131,12 @@ object AppGraph {
         // to a consumer module like this one) — it already exposes a `connectivity`
         // property built from it for exactly this reason.
         val connectivity = lightContext.connectivity
+        // What each server can do (favorites, scrobbling, lyrics, playlists), found out with harmless requests when a
+        // server is added or turned on and after every app update, and corrected by real use. See CapabilityRegistry.
+        val capabilityRegistry = CapabilityRegistry(lightContext.dataStore, appScope, apiHolder, connectivity, build = "${BuildConfig.VERSION_NAME}#$CAPABILITY_PROBE_REVISION")
+        apiHolder.learner = capabilityRegistry
+        mirrorInto(capabilityRegistry.all, AppServerPrefs.capabilities::set)
+        TrackAvailability.init(lightContext.filesDir)
         // Lets FetchGate choose how many transfers to run at once: few on cellular, many on Wi-Fi.
         FetchGate.attach(connectivity)
         // Built before libraryRepository/playlistRepository — both now take
@@ -268,6 +279,7 @@ object AppGraph {
                 .distinctUntilChanged()
                 .collect { isConnected ->
                     if (isConnected) {
+                        reachability.recheckNow()
                         LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
                         // Each list on its own coroutine, not awaited in
                         // sequence — refreshAllSongs in particular can be a
@@ -278,11 +290,22 @@ object AppGraph {
                 }
         }
 
+        // A server that gains favorites gets the hearts that were kept on the phone in the meantime.
+        capabilityRegistry.onStarGained = { serverId ->
+            appScope.launch {
+                syncQueueRepository.sendPhoneOnlyFavorites(serverId)
+                LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-favorites")
+            }
+        }
+        capabilityRegistry.watch(serverConfigRepository.enabledServers)
+
         val serverRemoval = ServerRemoval(
             scope = appScope,
             lightContext = lightContext,
             serverConfigRepository = serverConfigRepository,
             serverSyncStatus = serverSyncStatus,
+            capabilityRegistry = capabilityRegistry,
+            reachability = reachability,
             apiHolder = apiHolder,
             playbackStateRepository = playbackStateRepository,
             downloadRepository = downloadRepository,

@@ -10,6 +10,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
@@ -177,6 +178,8 @@ private fun QueueScreenRow(
     onRemove: () -> Unit,
     onTap: () -> Unit,
 ) {
+    // Its server is off or cannot be reached and the phone has no copy: the title is greyed and a tap says so.
+    val unavailable = rememberTrackUnavailable(track)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -184,7 +187,7 @@ private fun QueueScreenRow(
             // region (this one and the icons' own, below) — Compose consumes
             // a tap at the innermost clickable it lands on, so tapping an
             // icon triggers that icon's own action, never both.
-            .lightClickable(onClick = onTap)
+            .lightClickable(onClick = { if (unavailable) NoteModal.show(SERVER_NOT_REACHABLE_NOTE) else onTap() })
             // end matches the SDK's own Inside scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed rather
             // than conditional on whether a scrollbar happens to show.
@@ -226,7 +229,7 @@ private fun QueueScreenRow(
             variant = if (isCurrent) LightTextVariant.Heading else LightTextVariant.Copy,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).alpha(if (unavailable) UNAVAILABLE_ALPHA else 1f),
         )
         if (canRemove) {
             LightIcon(

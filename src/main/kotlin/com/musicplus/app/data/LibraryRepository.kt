@@ -81,10 +81,10 @@ class LibraryRepository(
         }
 
     fun observeFavoriteArtists(): Flow<List<Artist>> =
-        shownServerIds.flatMapLatest { artistDao.observeFavorites(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::artists)
+        shownServerIds.flatMapLatest { artistDao.observeFavorites(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::favoriteArtists)
 
     fun observeFavoriteAlbums(): Flow<List<Album>> =
-        shownServerIds.flatMapLatest { albumDao.observeFavorites(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::albums)
+        shownServerIds.flatMapLatest { albumDao.observeFavorites(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::favoriteAlbums)
 
     // includeCoverArt = false — Favorites' Tracks section shows no per-row
     // art (showFavorite = false is TrackRow's only override there); see
@@ -93,7 +93,7 @@ class LibraryRepository(
         combine(shownServerIds.flatMapLatest { trackDao.observeFavorites(it).retryOnTransientDbError() }, downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
-        }.labelledBy(ServerLabels::tracks)
+        }.labelledBy(ServerLabels::favoriteTracks)
 
     /**
      * Every track in the library, not just ones already pulled in via an
@@ -171,6 +171,9 @@ class LibraryRepository(
     private suspend fun pendingFavoriteIds(): Set<String> =
         pendingMutationDao.getTargetIdsByType("FAVORITE").toHashSet()
 
+    /** The cached heart wins over the server's answer: an edit still waiting to be sent has it, and a server that cannot keep favorites never has any. */
+    private fun keepsLocalStar(id: String) = Capabilities.cannot(ServerScope.serverOf(id), Capability.STAR)
+
     suspend fun refreshArtists() = refresh("refreshArtists") { api ->
         val pending = pendingFavoriteIds()
         mirrorFromServer(
@@ -178,9 +181,9 @@ class LibraryRepository(
             idOf = ArtistEntity::id,
             cached = { artistDao.getAllFor(api.serverId).associateBy { it.id } },
             fetchAll = { onPage -> onPage(api.getArtists().map { it.toEntity() }) },
-            write = { if (live(api)) artistDao.upsertAll(it) },
+            write = { if (live(api)) artistDao.upsertAll(artistDao.keepingPhoneStars(it)) },
             remove = { if (live(api)) artistDao.deleteByIds(it) },
-            merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
+            merge = { fetched, local -> if (local != null && (fetched.id in pending || keepsLocalStar(fetched.id))) fetched.copy(starred = local.starred) else fetched },
         )
     }
 
@@ -204,20 +207,20 @@ class LibraryRepository(
                     onPage = onPage,
                 )
             },
-            write = { if (live(api)) albumDao.upsertAll(it) },
+            write = { if (live(api)) albumDao.upsertAll(albumDao.keepingPhoneStars(it)) },
             remove = { if (live(api)) albumDao.deleteByIds(it) },
-            merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
+            merge = { fetched, local -> if (local != null && (fetched.id in pending || keepsLocalStar(fetched.id))) fetched.copy(starred = local.starred) else fetched },
         )
     }
 
     suspend fun refreshArtistDetail(artistId: String) = refresh("refreshArtistDetail($artistId)", ownerId = artistId) { api ->
         val detail = api.getArtist(artistId) ?: return@refresh
-        albumDao.upsertAll(detail.album.map { it.toEntity() })
+        albumDao.upsertAll(albumDao.keepingPhoneStars(detail.album.map { it.toEntity() }))
     }
 
     suspend fun refreshAlbumDetail(albumId: String) = refresh("refreshAlbumDetail($albumId)", ownerId = albumId) { api ->
         val detail = api.getAlbum(albumId) ?: return@refresh
-        trackDao.upsertAll(detail.song.map { it.toTrackEntity() })
+        trackDao.upsertAll(trackDao.keepingPhoneStars(detail.song.map { it.toTrackEntity() }))
     }
 
     /**
@@ -243,9 +246,9 @@ class LibraryRepository(
                     onPage = onPage,
                 )
             },
-            write = { if (live(api)) trackDao.upsertAll(it) },
+            write = { if (live(api)) trackDao.upsertAll(trackDao.keepingPhoneStars(it)) },
             remove = { if (live(api)) trackDao.deleteByIds(it) },
-            merge = { fetched, local -> if (local != null && fetched.id in pending) fetched.copy(starred = local.starred) else fetched },
+            merge = { fetched, local -> if (local != null && (fetched.id in pending || keepsLocalStar(fetched.id))) fetched.copy(starred = local.starred) else fetched },
             keep = { candidates ->
                 val downloaded = downloadRepository.observeAll().first().mapTo(HashSet()) { it.songId }
                 candidates.filterTo(HashSet()) { it in downloaded }
@@ -259,6 +262,9 @@ class LibraryRepository(
      * client show up without walking the whole library — see [mirrorStarred].
      */
     suspend fun refreshFavorites() = refresh("refreshFavorites") { api ->
+        // A server without favorites has nothing to bring down, and its hearts live on the phone only: mirroring an
+        // empty (or unanswerable) list would erase them.
+        if (Capabilities.cannot(api.serverId, Capability.STAR)) return@refresh
         val starred = api.getStarred()
         val pending = pendingFavoriteIds()
         mirrorStarred(
@@ -342,9 +348,9 @@ class LibraryRepository(
                     } ?: return@launch
                     lock.withLock {
                         live[id] = SearchResults(
-                            result.artist.map { it.toEntity().toDomain() },
-                            result.album.map { it.toEntity().toDomain() },
-                            result.song.map { it.toTrackEntity().toTrack(apiHolder, downloadsById[it.id]) },
+                            artistDao.keepingPhoneStars(result.artist.map { it.toEntity() }).map { it.toDomain() },
+                            albumDao.keepingPhoneStars(result.album.map { it.toEntity() }).map { it.toDomain() },
+                            trackDao.keepingPhoneStars(result.song.map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id]) },
                         )
                         send(merged())
                     }
@@ -387,7 +393,7 @@ class LibraryRepository(
     suspend fun getSimilarArtists(artistId: String): List<Artist> {
         val api = apiHolder.forId(artistId) ?: return emptyList()
         return try {
-            api.getSimilarArtists(artistId).map { it.toEntity().toDomain() }
+            artistDao.keepingPhoneStars(api.getSimilarArtists(artistId).map { it.toEntity() }).map { it.toDomain() }
         } catch (e: Exception) {
             AppLogger.e("LibraryRepository", "getSimilarArtists($artistId) failed", e)
             emptyList()
@@ -400,12 +406,24 @@ class LibraryRepository(
         val api = apiHolder.forId(artistId) ?: return emptyList()
         return try {
             val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
-            api.getTopSongs(artistName).map { it.toTrackEntity().toTrack(apiHolder, downloadsById[it.id], includeCoverArt = false) }
+            trackDao.keepingPhoneStars(api.getTopSongs(artistName).map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id], includeCoverArt = false) }
         } catch (e: Exception) {
             AppLogger.e("LibraryRepository", "getTopSongs(\"$artistName\") failed", e)
             emptyList()
         }
     }
+
+    /** The ids of the exact same song (same artist, title and album) held by other servers than [songId]'s own. */
+    suspend fun sameSongElsewhere(songId: String): List<String> {
+        val song = trackDao.getByIds(listOf(songId)).firstOrNull() ?: return emptyList()
+        return trackDao.findSame(song.title, song.artistName.orEmpty(), song.albumName.orEmpty(), ServerScope.serverOf(songId).orEmpty()).map { it.id }
+    }
+
+    /** Everything hearted on [serverId] as (type, id), for [SyncQueueRepository.sendPhoneOnlyFavorites]. */
+    suspend fun localFavorites(serverId: String): List<Pair<String, String>> =
+        artistDao.getStarredIds(serverId).map { "artist" to it } +
+            albumDao.getStarredIds(serverId).map { "album" to it } +
+            trackDao.getStarredIds(serverId).map { "track" to it }
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { artistDao.setStarred(id, favorite) }
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = setFavorite(id, favorite) { albumDao.setStarred(id, favorite) }
@@ -420,6 +438,9 @@ class LibraryRepository(
      */
     private suspend inline fun setFavorite(id: String, favorite: Boolean, updateLocal: () -> Unit): WriteOutcome {
         updateLocal() // optimistic — reflect it immediately, reconcile on next refresh if this fails
+        // A server that cannot keep favorites never hears about this one: the heart stays on the phone only, so there
+        // is nothing to send and nothing to queue.
+        if (Capabilities.cannot(ServerScope.serverOf(id), Capability.STAR)) return WriteOutcome.NOT_CONFIGURED
         val api = apiHolder.forId(id) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             if (favorite) api.star(id) else api.unstar(id)

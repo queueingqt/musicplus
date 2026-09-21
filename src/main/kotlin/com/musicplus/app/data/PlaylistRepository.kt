@@ -41,22 +41,64 @@ class PlaylistRepository(
     private val shownServerIds: Flow<List<String>>,
     private val serverSyncStatus: ServerSyncStatus,
 ) {
+    /** The playlists of every server that is on, and the ones kept only on this phone, which are always shown. */
     fun observePlaylists(): Flow<List<Playlist>> =
-        shownServerIds.flatMapLatest { playlistDao.observeAll(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::playlists)
+        shownServerIds.map { it + ServerScope.PHONE }.flatMapLatest { playlistDao.observeAll(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::playlists)
 
     /** Read-only passthrough for [SyncQueueRepository], which needs the just-applied local order to build a PLAYLIST_REORDER payload without reaching into the DAO layer directly. */
     suspend fun currentSongIds(playlistId: String): List<String> = playlistDao.getSongIdsInOrder(playlistId)
 
     /**
      * Local-only row for a playlist [SyncQueueRepository] just created offline, so it shows up immediately (empty)
-     * exactly like a real one, before the create has actually synced. Returns its placeholder id (scoped to the
-     * active server, which is where the create will be replayed), or null when no server is configured.
+     * exactly like a real one, before the create has actually synced. Returns its placeholder id (scoped to
+     * [homeServerId], which is where the create will be replayed), or null when that server is not set up.
      */
-    suspend fun adoptLocalPlaylist(name: String): String? {
-        val api = apiHolder.get() ?: return null
+    suspend fun adoptLocalPlaylist(name: String, homeServerId: String): String? {
+        val api = apiHolder.forServer(homeServerId) ?: return null
         val placeholderId = ServerScope.scope(api.serverId, PLACEHOLDER_PREFIX + UUID.randomUUID())
         playlistDao.upsert(PlaylistEntity(placeholderId, name, songCount = 0, durationSec = 0))
         return placeholderId
+    }
+
+    /** A playlist that exists only on this phone, holding [songIds] (which can come from any servers). Returns its id. Nothing is ever sent to a server for it. */
+    suspend fun createPhonePlaylist(name: String, songIds: List<String> = emptyList()): String {
+        val id = ServerScope.newPhoneId()
+        playlistDao.upsert(PlaylistEntity(id, name, songIds.size, durationOf(songIds)))
+        if (songIds.isNotEmpty()) playlistDao.insertTracks(songIds.mapIndexed { i, songId -> PlaylistTrackEntity(id, i, songId) })
+        return id
+    }
+
+    /** [wanted], or "<wanted> 2", "<wanted> 3" ... when a Phone Only playlist already has that name. Playlists on servers are told apart by their label, so only Phone Only ones count. */
+    suspend fun uniquePhoneName(wanted: String): String {
+        val taken = playlistDao.getAllFor(ServerScope.PHONE).mapTo(HashSet()) { it.name.trim().lowercase() }
+        if (wanted.trim().lowercase() !in taken) return wanted
+        var n = 2
+        while ("$wanted $n".trim().lowercase() in taken) n++
+        return "$wanted $n"
+    }
+
+    /**
+     * A new Phone Only copy of [playlistId] with [songId] added at the end. The original is not touched. Reads the
+     * original's songs fresh first (a playlist that was never opened has none cached), and returns null instead of a
+     * copy that would be missing some of them.
+     */
+    suspend fun copyToPhone(playlistId: String, songId: String): String? {
+        refreshPlaylistDetail(playlistId)
+        val original = playlistDao.getById(playlistId) ?: return null
+        val songs = playlistDao.getSongIdsInOrder(playlistId)
+        if (songs.size < original.songCount) return null
+        return createPhonePlaylist(uniquePhoneName(original.name), songs + songId)
+    }
+
+    private suspend fun durationOf(songIds: List<String>): Int =
+        songIds.chunked(500).sumOf { chunk -> trackDao.getByIds(chunk).sumOf { it.durationSec } }
+
+    /** A Phone Only playlist's count and length come from what it holds; there is no server to tell it. */
+    private suspend fun recountIfPhone(playlistId: String) {
+        if (!ServerScope.isPhone(playlistId)) return
+        val entity = playlistDao.getById(playlistId) ?: return
+        val songs = playlistDao.getSongIdsInOrder(playlistId)
+        playlistDao.upsert(entity.copy(songCount = songs.size, durationSec = durationOf(songs)))
     }
 
     /** A playlist can only hold songs from its own server; anything else is kept on the phone and never sent. */
@@ -135,17 +177,16 @@ class PlaylistRepository(
     suspend fun refreshPlaylistDetail(playlistId: String) = refresh("refreshPlaylistDetail($playlistId)", ownerId = playlistId) { api ->
         val detail = api.getPlaylist(playlistId) ?: return@refresh
         playlistDao.upsert(detail.toEntity())
-        trackDao.upsertAll(detail.entry.map { it.toTrackEntity() })
+        trackDao.upsertAll(trackDao.keepingPhoneStars(detail.entry.map { it.toTrackEntity() }))
         playlistDao.replaceTracks(
             playlistId,
             detail.entry.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
         )
     }
 
-    /** Returns the new playlist's server id on success — see [SyncQueueRepository] for the offline case, which this alone doesn't handle. */
-    suspend fun createPlaylist(name: String, onServerOf: String? = null): CreatePlaylistResult {
-        // A new playlist goes on the active server; a replayed offline create goes on the server its placeholder was made for.
-        val api = (if (onServerOf != null) apiHolder.forId(onServerOf) else apiHolder.get()) ?: return CreatePlaylistResult.NotConfigured
+    /** Creates a playlist on [homeServerId] and returns its server id on success — see [SyncQueueRepository] for the offline case, which this alone doesn't handle. */
+    suspend fun createPlaylist(name: String, homeServerId: String): CreatePlaylistResult {
+        val api = apiHolder.forServer(homeServerId) ?: return CreatePlaylistResult.NotConfigured
         return try {
             val created = api.createPlaylist(name) ?: return CreatePlaylistResult.Failed
             playlistDao.upsert(created.toEntity())
@@ -192,7 +233,7 @@ class PlaylistRepository(
             AppLogger.e("PlaylistRepository", "deletePlaylist($playlistId) server call failed", e)
             WriteOutcome.FAILED
         }
-        playlistDao.delete(playlistId)
+        playlistDao.deleteWithTracks(listOf(playlistId))
         return outcome
     }
 
@@ -206,6 +247,7 @@ class PlaylistRepository(
     suspend fun addTrack(playlistId: String, songId: String): WriteOutcome {
         val nextPosition = playlistDao.getSongIdsInOrder(playlistId).size
         playlistDao.insertTracks(listOf(PlaylistTrackEntity(playlistId, nextPosition, songId)))
+        recountIfPhone(playlistId)
         if (!holdsOnly(playlistId, listOf(songId))) return WriteOutcome.NOT_CONFIGURED
         val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
@@ -230,6 +272,7 @@ class PlaylistRepository(
         if (position !in songIds.indices) return WriteOutcome.FAILED
         songIds.removeAt(position)
         playlistDao.replaceTracks(playlistId, songIds.mapIndexed { i, id -> PlaylistTrackEntity(playlistId, i, id) })
+        recountIfPhone(playlistId)
         val api = apiHolder.forId(playlistId) ?: return WriteOutcome.NOT_CONFIGURED
         return try {
             api.removeSongFromPlaylist(playlistId, position)

@@ -113,6 +113,13 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<TrackEntity>
 
+    /** The same song (title, artist and album all equal, ignoring case) as held by any server other than [excludedServerId]. */
+    @Query(
+        "SELECT * FROM tracks WHERE title = :title COLLATE NOCASE AND COALESCE(artistName, '') = :artist COLLATE NOCASE " +
+            "AND COALESCE(albumName, '') = :album COLLATE NOCASE AND ${ServerScope.SQL_SERVER_OF_ID} != :excludedServerId",
+    )
+    suspend fun findSame(title: String, artist: String, album: String, excludedServerId: String): List<TrackEntity>
+
     @Query("SELECT * FROM tracks WHERE starred = 1 AND ${ServerScope.SQL_SERVER_OF_ID} IN (:serverIds) ORDER BY title COLLATE NOCASE")
     fun observeFavorites(serverIds: List<String>): Flow<List<TrackEntity>>
 
@@ -369,7 +376,22 @@ interface ServerCleanupDao {
         deleteUnusedArtists(serverId)
         deletePlaylistTracks(serverId)
         deletePlaylists(serverId)
+        // Phone Only playlists can hold this server's songs: the ones that went with it leave those playlists too.
+        deleteOrphanedPhonePlaylistTracks()
+        recountPhonePlaylists()
     }
+
+    @Query("DELETE FROM playlist_tracks WHERE playlistId LIKE 'phone:%' AND songId NOT IN (SELECT id FROM tracks)")
+    suspend fun deleteOrphanedPhonePlaylistTracks()
+
+    @Query(
+        "UPDATE playlists SET " +
+            "songCount = (SELECT COUNT(*) FROM playlist_tracks WHERE playlist_tracks.playlistId = playlists.id), " +
+            "durationSec = COALESCE((SELECT SUM(tracks.durationSec) FROM playlist_tracks JOIN tracks ON tracks.id = playlist_tracks.songId " +
+            "WHERE playlist_tracks.playlistId = playlists.id), 0) " +
+            "WHERE id LIKE 'phone:%'",
+    )
+    suspend fun recountPhonePlaylists()
 
     @Query("DELETE FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
     suspend fun deleteTracks(serverId: String)

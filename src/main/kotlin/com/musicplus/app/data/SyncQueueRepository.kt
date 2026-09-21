@@ -154,16 +154,35 @@ class SyncQueueRepository(
         }
     }
 
-    /** Returns the playlist's id — real if the create succeeded (or a placeholder if it's now queued) — or null only when no server is configured at all. */
-    suspend fun createPlaylist(name: String): String? {
-        return when (val result = playlistRepository.createPlaylist(name)) {
+    /**
+     * Makes a playlist at [home]: a server id, or [ServerScope.PHONE] for one that lives only on the phone (nothing is
+     * sent or queued for that). Returns the playlist's id — real if the create succeeded (or a placeholder if it's now
+     * queued) — or null when that server is not set up.
+     */
+    suspend fun createPlaylist(name: String, home: String): String? {
+        if (home == ServerScope.PHONE) return playlistRepository.createPhonePlaylist(name)
+        return when (val result = playlistRepository.createPlaylist(name, home)) {
             is CreatePlaylistResult.Created -> result.id
             CreatePlaylistResult.NotConfigured -> null
             CreatePlaylistResult.Failed -> {
-                val placeholderId = playlistRepository.adoptLocalPlaylist(name) ?: return null
+                val placeholderId = playlistRepository.adoptLocalPlaylist(name, home) ?: return null
                 enqueue(placeholderId, PendingMutation.PlaylistCreate(name))
                 placeholderId
             }
+        }
+    }
+
+    /** A new Phone Only copy of [playlistId] with [songId] added; the server's playlist stays exactly as it was. Returns the copy's id, or null if the original could not be read in full. */
+    suspend fun addToPhoneCopy(playlistId: String, songId: String): String? =
+        playlistRepository.copyToPhone(playlistId, songId)
+
+    /**
+     * A server that did not keep favorites now does: the hearts made on the phone in the meantime are sent to it. A
+     * heart already there is simply set again.
+     */
+    suspend fun sendPhoneOnlyFavorites(serverId: String) {
+        for ((type, id) in libraryRepository.localFavorites(serverId)) {
+            enqueue(id, PendingMutation.Favorite(type, true))
         }
     }
 
@@ -240,8 +259,8 @@ class SyncQueueRepository(
         var drained = true
         val perServer = pendingMutationDao.getAllInOrder().groupBy { ServerScope.serverOf(it.targetId) }
         for ((server, rows) in perServer) {
-            if (server == null) {
-                // An edit that names no server can never be sent anywhere.
+            if (server == null || server == ServerScope.PHONE) {
+                // An edit that names no server, or only the phone, can never be sent anywhere.
                 rows.forEach { pendingMutationDao.delete(it.id) }
                 continue
             }
@@ -272,12 +291,15 @@ class SyncQueueRepository(
                 "album" -> libraryRepository.setAlbumFavorite(row.targetId, mutation.favorite)
                 else -> libraryRepository.setTrackFavorite(row.targetId, mutation.favorite)
             }
-            is PendingMutation.PlaylistCreate -> when (val result = playlistRepository.createPlaylist(mutation.name, onServerOf = row.targetId)) {
-                is CreatePlaylistResult.Created -> {
-                    reassignPlaceholder(row.targetId, result.id)
-                    WriteOutcome.SUCCESS
+            is PendingMutation.PlaylistCreate -> {
+                val home = ServerScope.serverOf(row.targetId) ?: return WriteOutcome.FAILED
+                when (val result = playlistRepository.createPlaylist(mutation.name, home)) {
+                    is CreatePlaylistResult.Created -> {
+                        reassignPlaceholder(row.targetId, result.id)
+                        WriteOutcome.SUCCESS
+                    }
+                    CreatePlaylistResult.NotConfigured, CreatePlaylistResult.Failed -> WriteOutcome.FAILED
                 }
-                CreatePlaylistResult.NotConfigured, CreatePlaylistResult.Failed -> WriteOutcome.FAILED
             }
             is PendingMutation.PlaylistRename -> playlistRepository.renamePlaylist(row.targetId, mutation.name)
             PendingMutation.PlaylistDelete -> playlistRepository.deletePlaylist(row.targetId)

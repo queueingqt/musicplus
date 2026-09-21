@@ -58,7 +58,11 @@ class SubsonicApiException(val code: Int, message: String) : Exception(message)
  * Confirmed necessary via on-device testing against a real http:// server
  * (2026-09-17) — see project memory note.
  */
-class SubsonicClient(private val config: ServerConfig) {
+class SubsonicClient(
+    private val config: ServerConfig,
+    /** Told after every API request whether the server could be reached (true) or not (false) — see [ServerReachability]. */
+    private val onReachable: (Boolean) -> Unit = {},
+) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -153,10 +157,24 @@ class SubsonicClient(private val config: ServerConfig) {
 
     /** Calls a JSON endpoint and unwraps the `subsonic-response` envelope. */
     suspend fun call(method: String, params: List<Pair<String, String>> = emptyList()): SubsonicResponse {
-        val response: SubsonicEnvelope = http.get("$baseUrl/rest/$method") {
-            (authParams() + params).forEach { (k, v) -> parameter(k, v) }
-            timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
-        }.body()
+        val httpResponse = try {
+            http.get("$baseUrl/rest/$method") {
+                (authParams() + params).forEach { (k, v) -> parameter(k, v) }
+                timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e.isUnreachable()) onReachable(false)
+            throw e
+        }
+        // A proxy in front of a server that is down answers for it with a 502-504.
+        if (httpResponse.status.value in 502..504) {
+            onReachable(false)
+            throw IOException("server answered ${httpResponse.status}")
+        }
+        onReachable(true)
+        val response: SubsonicEnvelope = httpResponse.body()
         val body = response.response
         if (!body.isOk) {
             val error = body.error
@@ -168,10 +186,18 @@ class SubsonicClient(private val config: ServerConfig) {
     /** Raw bytes from a small binary endpoint (getCoverArt.view — a few tens of KB) — same client/engine as [call], so it gets the same cleartext-over-CIO handling. Never use this for a full track (see [downloadToFile]'s doc). */
     suspend fun getBytes(method: String, params: List<Pair<String, String>> = emptyList()): ByteArray {
         AppLogger.d("SubsonicClient", "getBytes($method): issuing request")
-        val response = http.get("$baseUrl/rest/$method") {
-            (authParams() + params).forEach { (k, v) -> parameter(k, v) }
-            timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
+        val response = try {
+            http.get("$baseUrl/rest/$method") {
+                (authParams() + params).forEach { (k, v) -> parameter(k, v) }
+                timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e.isUnreachable()) onReachable(false)
+            throw e
         }
+        onReachable(response.status.value !in 502..504)
         AppLogger.d("SubsonicClient", "getBytes($method): got response ${response.status}, contentLength=${response.contentLength()}")
         val bytes: ByteArray = response.body()
         AppLogger.d("SubsonicClient", "getBytes($method): read ${bytes.size} bytes")
@@ -269,9 +295,40 @@ class SubsonicClient(private val config: ServerConfig) {
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e
     } catch (e: Exception) {
-        val unreachable = e is IOException ||
-            e is java.nio.channels.UnresolvedAddressException ||
-            e.toString().contains("Timeout")
-        Result.failure(if (unreachable) e else SubsonicApiException(-1, "The server did not accept the login"))
+        Result.failure(if (e.isUnreachable()) e else SubsonicApiException(-1, "The server did not accept the login"))
+    }
+
+    /**
+     * One harmless request that shows whether the server offers a feature (see [CapabilityRegistry]). Only meant for a
+     * server that has just answered an ordinary question: an answer that is not Subsonic at all then means this
+     * one endpoint is missing. Anything the server understood and refused ("not found", "missing parameter") counts as
+     * having the feature; "not authorised" means this account cannot use it.
+     */
+    suspend fun probe(method: String, params: List<Pair<String, String>> = emptyList()): Support = try {
+        call(method, params)
+        Support.YES
+    } catch (e: SubsonicApiException) {
+        when (e.code) {
+            NOT_FOUND, MISSING_PARAMETER -> Support.YES
+            NOT_AUTHORIZED -> Support.NO
+            else -> Support.UNKNOWN
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        if (e.isUnreachable()) Support.UNKNOWN else Support.NO
     }
 }
+
+/** What a probe found out. UNKNOWN means it could not tell (the server was unreachable, or answered oddly), so nothing is concluded. */
+enum class Support { YES, NO, UNKNOWN }
+
+private const val MISSING_PARAMETER = 10
+private const val NOT_AUTHORIZED = 50
+private const val NOT_FOUND = 70
+
+/** True when a request failed because the server could not be reached (or took too long), as opposed to it answering with something we did not like. */
+internal fun Throwable.isUnreachable(): Boolean =
+    this is IOException ||
+        this is java.nio.channels.UnresolvedAddressException ||
+        toString().contains("Timeout")

@@ -44,6 +44,8 @@ class LyricsRepository(
 
     suspend fun getLyrics(trackId: String): LyricsState {
         readFromDisk(trackId)?.let { return it.toState() }
+        // A server known not to offer lyrics is not asked: it would only answer with an error.
+        if (Capabilities.cannot(ServerScope.serverOf(trackId), Capability.LYRICS)) return LyricsState.NoLyrics
 
         val api = apiHolder.forId(trackId) ?: return LyricsState.Error("Not connected to a server")
         return try {
