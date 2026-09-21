@@ -25,6 +25,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * for a list refreshed less than [OPEN_COOLDOWN_MS] ago — opening an album and
  * coming back to the Albums page shouldn't re-walk the whole library. Coming
  * back online ignores the cooldown, since the last attempt can't have worked.
+ * A forced refresh (that, or a server being switched on or added) that arrives
+ * while a pass is running is not dropped: the pass under way may have started
+ * without that server, so it runs once more when the pass finishes.
  */
 class ListRefresher(
     private val scope: CoroutineScope,
@@ -34,6 +37,7 @@ class ListRefresher(
     enum class Target { ARTISTS, ALBUMS, SONGS, PLAYLISTS, FAVORITES }
 
     private val inFlight = Target.values().associateWith { AtomicBoolean(false) }
+    private val rerunRequested = Target.values().associateWith { AtomicBoolean(false) }
     private val lastFinishedAtMs = ConcurrentHashMap<Target, Long>()
 
     /** A list page was opened. Returns immediately; the refresh happens in the background. */
@@ -47,7 +51,10 @@ class ListRefresher(
             val last = lastFinishedAtMs[target]
             if (last != null && System.currentTimeMillis() - last < OPEN_COOLDOWN_MS) return
         }
-        if (!inFlight.getValue(target).compareAndSet(false, true)) return
+        if (!inFlight.getValue(target).compareAndSet(false, true)) {
+            if (!respectCooldown) rerunRequested.getValue(target).set(true)
+            return
+        }
         scope.launch {
             try {
                 when (target) {
@@ -60,6 +67,7 @@ class ListRefresher(
             } finally {
                 lastFinishedAtMs[target] = System.currentTimeMillis()
                 inFlight.getValue(target).set(false)
+                if (rerunRequested.getValue(target).getAndSet(false)) start(target, respectCooldown = false)
             }
         }
     }
