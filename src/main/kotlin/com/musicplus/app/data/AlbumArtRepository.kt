@@ -4,12 +4,20 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Fetches, decodes, and caches cover art. There's no image-loading library
@@ -76,6 +84,42 @@ class AlbumArtRepository(
     private val failedKeys = ConcurrentHashMap.newKeySet<String>()
     private val diskCacheDir = File(filesDir, "albumart").apply { mkdirs() }
 
+    /**
+     * A server answers a request for the art of an album it has none for with a stock "no artwork" picture, as an ordinary
+     * successful answer, and it hands that same picture to every such album. That picture used to be kept on disk forever
+     * like any other art, so an album whose real art turned up on the server afterwards (found by a later scan, or fetched
+     * from an outside source that had not answered the first time) kept showing the stock picture for good: "Stoney" showed
+     * Navidrome's blue vinyl while its songs, whose art is a different id, showed the cover. A picture that is the same
+     * to the byte for more than one cached entry is that stock picture, so it is asked for again, at most once per
+     * [NO_ART_RECHECK_MS] per entry. Computed once per process, from the files on disk.
+     */
+    private val stockPictures: StockPictures by lazy {
+        val files = diskCacheDir.listFiles()?.filter { it.isFile }.orEmpty()
+        // Only files that share a byte size with another can be the same picture, so only those are read.
+        val sameSize = files.groupBy { it.length() }.filterValues { it.size >= 2 }
+        val counts = HashMap<String, Int>()
+        for (group in sameSize.values) for (file in group) runCatching { counts.merge(sha256(file.readBytes()), 1, Int::plus) }
+        StockPictures(sizes = sameSize.keys, digests = counts.filterValues { it >= 2 }.keys)
+    }
+
+    private class StockPictures(val sizes: Set<Long>, val digests: Set<String>)
+
+    /** Entries already asked about again in this process (whatever the answer), so a slow or unreachable server is never asked twice for the same one. */
+    private val recheckedKeys = ConcurrentHashMap.newKeySet<String>()
+    private val recheckFailuresInARow = AtomicInteger(0)
+
+    /**
+     * Re-checks in progress, by entry. They run on this repository's own scope, not the caller's: a list re-emits its rows
+     * with fresh art URLs (each carries a new auth token) and every row's effect is restarted, which cancels the caller
+     * mid-request. A re-check tied to the caller was cancelled that way, counted as done, and never finished. Whoever asks
+     * next waits for the one already running instead.
+     */
+    private val rechecksInProgress = ConcurrentHashMap<String, Deferred<Bitmap?>>()
+    private val recheckScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** At most this many stock pictures are being asked about at once. Separate from [fetchMutex]: a slow answer must not hold up the art behind it. */
+    private val recheckSlots = Semaphore(2)
+
     // A single mutex serializes fetches rather than one-lock-per-key: cover art
     // requests are small, infrequent relative to playback traffic, and bounding
     // concurrency to 1 avoids a fast-scrolling list firing a burst of simultaneous
@@ -96,6 +140,9 @@ class AlbumArtRepository(
         val key = cacheKey(coverArtId, size)
         memoryCache.get(key)?.let { return it }
         if (key in failedKeys) return null
+        // The server's stock "no artwork" picture on disk is asked about again before anything is shown: outside the lock
+        // below, so a slow answer cannot hold up other art, and without ever putting the stock picture in memory first.
+        recheckedStockPicture(coverArtId, size, key)?.let { return it }
         return fetchMutex.withLock {
             memoryCache.get(key)?.let { return@withLock it }
             if (key in failedKeys) return@withLock null
@@ -176,6 +223,54 @@ class AlbumArtRepository(
 
     private fun cacheKey(coverArtId: String, size: Int) = "$coverArtId:$size"
 
+    private fun sha256(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /**
+     * If the cached picture for this entry is the server's stock "no artwork" picture (see [stockPictures]) and it has
+     * not been asked about lately, asks the server again and returns the answer decoded, or null to carry on with what is
+     * cached. The answer is written to disk (and so timestamped, which is what spaces the checks out).
+     */
+    private suspend fun recheckedStockPicture(coverArtId: String, size: Int, key: String): Bitmap? {
+        if (key in recheckedKeys) return null
+        val running = rechecksInProgress.computeIfAbsent(key) {
+            recheckScope.async {
+                try {
+                    recheckStockPicture(coverArtId, size, key)
+                } finally {
+                    recheckedKeys += key
+                    rechecksInProgress.remove(key)
+                }
+            }
+        }
+        return running.await()
+    }
+
+    private suspend fun recheckStockPicture(coverArtId: String, size: Int, key: String): Bitmap? {
+        // A server that is down, or that has been too slow to ask twice running, is left alone.
+        if (ServerScope.serverOf(coverArtId) in AppServerPrefs.unreachableServerIds.value.value) return null
+        if (recheckFailuresInARow.get() >= MAX_RECHECK_FAILURES) return null
+        val file = diskCacheFile(coverArtId, size)
+        if (!file.exists() || System.currentTimeMillis() - file.lastModified() < NO_ART_RECHECK_MS) return null
+        if (file.length() !in stockPictures.sizes || sha256(file.readBytes()) !in stockPictures.digests) return null
+        return try {
+            recheckSlots.withPermit {
+                val fresh = withTimeoutOrNull(RECHECK_TIMEOUT_MS) { fetchFromNetwork(coverArtId, size) }
+                if (fresh == null) {
+                    recheckFailuresInARow.incrementAndGet()
+                    return@withPermit null
+                }
+                recheckFailuresInARow.set(0)
+                decodeSampled(fresh, size)?.also { memoryCache.put(key, it) }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            recheckFailuresInARow.incrementAndGet()
+            null
+        }
+    }
+
     private fun readFromDisk(coverArtId: String, size: Int): ByteArray? {
         val file = diskCacheFile(coverArtId, size)
         return if (file.exists()) file.readBytes() else null
@@ -228,5 +323,16 @@ class AlbumArtRepository(
         } else {
             null
         }
+    }
+
+    private companion object {
+        /** How long a stock picture is trusted before the server is asked again. */
+        const val NO_ART_RECHECK_MS = 12L * 60 * 60 * 1000
+
+        /** How long a re-check waits for the server. Generous: the phone is often still busy syncing when the first art is asked for. */
+        const val RECHECK_TIMEOUT_MS = 6_000L
+
+        /** After this many re-checks that got no answer, none are tried for the rest of the process. */
+        const val MAX_RECHECK_FAILURES = 2
     }
 }
