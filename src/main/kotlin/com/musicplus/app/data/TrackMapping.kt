@@ -3,7 +3,7 @@ package com.musicplus.app.data
 import com.musicplus.app.Track
 
 /**
- * Shared SubsonicSong -> TrackEntity -> Track mapping. [LibraryRepository]
+ * Shared ApiSong -> TrackEntity -> Track mapping. [LibraryRepository]
  * and [PlaylistRepository] both independently hand-rolled an identical copy
  * of this pair (the latter's own doc comment even called out the
  * duplication as a deliberate choice) — confirmed live, 2026-09-18
@@ -12,8 +12,8 @@ import com.musicplus.app.Track
  * top-level function shared across two repository classes, each with their
  * own `apiHolder` instance.
  */
-fun SubsonicSong.toTrackEntity() =
-    TrackEntity(id, title, albumId, album, artistId, artist, track, duration, coverArt, suffix, starred != null)
+fun ApiSong.toTrackEntity() =
+    TrackEntity(id, title, albumId, album, artistId, artist, trackNumber, durationSec, coverArtId, suffix, starred)
 
 /**
  * [download] is this track's own row from [DownloadRepository.observeAll]
@@ -40,7 +40,7 @@ fun SubsonicSong.toTrackEntity() =
  * contributor (alongside the md5Hex fix) to Songs' full-library load
  * measuring several real seconds on-device.
  */
-fun TrackEntity.toTrack(apiHolder: SubsonicApiHolder, download: DownloadEntity?, includeCoverArt: Boolean = true) = Track(
+fun TrackEntity.toTrack(apiHolder: ApiHolder, download: DownloadEntity?, includeCoverArt: Boolean = true) = Track(
     id, title, albumId, albumName, artistId, artistName, trackNumber, durationSec,
     if (includeCoverArt) coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) } else null, starred,
     downloadStatus = download?.status,

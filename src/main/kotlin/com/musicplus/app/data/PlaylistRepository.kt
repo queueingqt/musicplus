@@ -32,7 +32,7 @@ import java.util.UUID
  * reason, 2026-09-18 architecture review + this session's own /grilling pass).
  */
 class PlaylistRepository(
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
     private val playlistDao: PlaylistDao,
     private val trackDao: TrackDao,
     private val connectivity: LightConnectivity,
@@ -130,7 +130,7 @@ class PlaylistRepository(
      * [LibraryRepository.refresh]; see its doc for why the connectivity check
      * alone isn't sufficient.
      */
-    private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (SubsonicApi) -> Unit) {
+    private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (MusicApi) -> Unit) {
         if (!connectivity.currentStatus.isConnected) return
         if (ownerId != null) {
             apiHolder.forId(ownerId)?.let { runRefresh(label, it, action) }
@@ -143,7 +143,7 @@ class PlaylistRepository(
         }
     }
 
-    private suspend fun runRefresh(label: String, api: SubsonicApi, action: suspend (SubsonicApi) -> Unit) {
+    private suspend fun runRefresh(label: String, api: MusicApi, action: suspend (MusicApi) -> Unit) {
         try {
             action(api)
             serverSyncStatus.refreshed(api.serverId)
@@ -155,7 +155,7 @@ class PlaylistRepository(
         }
     }
 
-    private fun live(api: SubsonicApi) = AppServerPrefs.servers.value.value.any { it.id == api.serverId }
+    private fun live(api: MusicApi) = AppServerPrefs.servers.value.value.any { it.id == api.serverId }
 
     /**
      * Additions, renames and deletions on the server — see [mirrorFromServer].
@@ -177,10 +177,10 @@ class PlaylistRepository(
     suspend fun refreshPlaylistDetail(playlistId: String) = refresh("refreshPlaylistDetail($playlistId)", ownerId = playlistId) { api ->
         val detail = api.getPlaylist(playlistId) ?: return@refresh
         playlistDao.upsert(detail.toEntity())
-        trackDao.upsertAll(trackDao.keepingPhoneStars(detail.entry.map { it.toTrackEntity() }))
+        trackDao.upsertAll(trackDao.keepingPhoneStars(detail.entries.map { it.toTrackEntity() }))
         playlistDao.replaceTracks(
             playlistId,
-            detail.entry.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
+            detail.entries.mapIndexed { index, song -> PlaylistTrackEntity(playlistId, index, song.id) },
         )
     }
 
@@ -358,10 +358,10 @@ class PlaylistRepository(
         }
     }
 
-    private fun SubsonicPlaylist.toEntity() = PlaylistEntity(id, name, songCount, duration)
-    private fun SubsonicPlaylistDetail.toEntity() = PlaylistEntity(id, name, songCount, duration)
+    private fun ApiPlaylist.toEntity() = PlaylistEntity(id, name, songCount, durationSec)
+    private fun ApiPlaylistDetail.toEntity() = PlaylistEntity(id, name, songCount, durationSec)
     private fun PlaylistEntity.toDomain() = Playlist(id, name, songCount, durationSec)
-    // SubsonicSong.toTrackEntity() / TrackEntity.toTrack() — see TrackMapping.kt
+    // ApiSong.toTrackEntity() / TrackEntity.toTrack() — see TrackMapping.kt
     // (previously duplicated verbatim from LibraryRepository here).
 }
 

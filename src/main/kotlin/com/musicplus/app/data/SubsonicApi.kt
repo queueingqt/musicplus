@@ -13,13 +13,13 @@ import java.io.File
  * is refused rather than sent, since another server would answer it with somebody else's song or an error.
  */
 class SubsonicApi(
-    val serverId: String,
+    override val serverId: String,
     private val client: SubsonicClient,
     /** Told when a real request shows that this server does or does not offer a feature — see [CapabilityRegistry]. */
     private val learner: CapabilityLearner? = null,
-) {
+) : MusicApi {
 
-    val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
+    override val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
 
     private fun scopeId(id: String) = ServerScope.scope(serverId, id)
 
@@ -44,13 +44,13 @@ class SubsonicApi(
     }
 
     /** An ordinary, signed-in question — the control that says a "no" from [probe] means something. See [SubsonicClient.checkLogin]. */
-    suspend fun checkLogin(): Result<Unit> = client.checkLogin()
+    override suspend fun checkLogin(): Result<Unit> = client.checkLogin()
 
     /** One harmless request that shows whether this server offers [capability]. Only meaningful right after [checkLogin] succeeded. */
     suspend fun probe(capability: Capability): Support = client.probe(capability.probeMethod, capability.probeParams)
 
     /** A cheap "is it there" request; the outcome reaches [ServerReachability] through the client. */
-    suspend fun ping(): Result<Unit> = client.ping()
+    override suspend fun ping(): Result<Unit> = client.ping()
 
     /** The id as this server knows it. An id that was never scoped is passed through and logged: it means a code path missed the scoping. */
     private fun native(id: String): String {
@@ -76,26 +76,36 @@ class SubsonicApi(
     private fun SubsonicPlaylistDetail.scoped() =
         copy(id = scopeId(id), coverArt = coverArt?.let { scopeId(it) }, entry = entry.map { it.scoped() })
 
-    suspend fun getArtists(): List<SubsonicArtist> =
-        (client.call("getArtists.view").artists?.index?.flatMap { it.artist } ?: emptyList()).map { it.scoped() }
+    // --- Already-scoped Subsonic DTOs -> the shared MusicApi shape. Called right after .scoped(), never on a raw wire DTO. ---
+    private fun SubsonicArtist.toApi() = ApiArtist(id, name, coverArt, albumCount, starred != null)
+    private fun SubsonicArtistDetail.toApi() = ApiArtistDetail(id, name, coverArt, albumCount, starred != null, album.map { it.toApi() })
+    private fun SubsonicAlbum.toApi() = ApiAlbum(id, name, artist, artistId, coverArt, songCount, duration, year, genre, starred != null)
+    private fun SubsonicAlbumDetail.toApi() =
+        ApiAlbumDetail(id, name, artist, artistId, coverArt, songCount, duration, year, genre, starred != null, song.map { it.toApi() })
+    private fun SubsonicSong.toApi() = ApiSong(id, title, album, albumId, artist, artistId, track, duration, coverArt, suffix, size, starred != null)
+    private fun SubsonicPlaylist.toApi() = ApiPlaylist(id, name, songCount, duration, coverArt)
+    private fun SubsonicPlaylistDetail.toApi() = ApiPlaylistDetail(id, name, songCount, duration, coverArt, entry.map { it.toApi() })
+    private fun SubsonicStructuredLyrics.toApi() = ApiLyricEntry(kind, synced, line.map { ApiLyricLine(it.start, it.value) })
 
-    suspend fun getArtist(id: String): SubsonicArtistDetail? =
-        client.call("getArtist.view", listOf("id" to native(id))).artist?.scoped()
+    override suspend fun getArtists(): List<ApiArtist> =
+        (client.call("getArtists.view").artists?.index?.flatMap { it.artist } ?: emptyList()).map { it.scoped().toApi() }
 
-    /** type: newest | recent | frequent | alphabeticalByName | alphabeticalByArtist | starred */
-    suspend fun getAlbumList(type: String, size: Int = 50, offset: Int = 0): List<SubsonicAlbum> =
+    override suspend fun getArtist(id: String): ApiArtistDetail? =
+        client.call("getArtist.view", listOf("id" to native(id))).artist?.scoped()?.toApi()
+
+    override suspend fun getAlbumList(size: Int, offset: Int): List<ApiAlbum> =
         client.call(
             "getAlbumList2.view",
-            listOf("type" to type, "size" to size.toString(), "offset" to offset.toString()),
-        ).albumList2?.album.orEmpty().map { it.scoped() }
+            listOf("type" to "alphabeticalByName", "size" to size.toString(), "offset" to offset.toString()),
+        ).albumList2?.album.orEmpty().map { it.scoped().toApi() }
 
-    suspend fun getAlbum(id: String): SubsonicAlbumDetail? =
-        client.call("getAlbum.view", listOf("id" to native(id))).album?.scoped()
+    override suspend fun getAlbum(id: String): ApiAlbumDetail? =
+        client.call("getAlbum.view", listOf("id" to native(id))).album?.scoped()?.toApi()
 
-    suspend fun getSong(id: String): SubsonicSong? =
-        client.call("getSong.view", listOf("id" to native(id))).song?.scoped()
+    override suspend fun getSong(id: String): ApiSong? =
+        client.call("getSong.view", listOf("id" to native(id))).song?.scoped()?.toApi()
 
-    suspend fun search(query: String, artistCount: Int = 20, albumCount: Int = 20, songCount: Int = 30): SubsonicSearchResult =
+    override suspend fun search(query: String, artistCount: Int, albumCount: Int, songCount: Int): ApiSearchResult =
         client.call(
             "search3.view",
             listOf(
@@ -105,10 +115,10 @@ class SubsonicApi(
                 "songCount" to songCount.toString(),
             ),
         ).searchResult3.let { result ->
-            if (result == null) SubsonicSearchResult() else SubsonicSearchResult(
-                artist = result.artist.map { it.scoped() },
-                album = result.album.map { it.scoped() },
-                song = result.song.map { it.scoped() },
+            if (result == null) ApiSearchResult() else ApiSearchResult(
+                artists = result.artist.map { it.scoped().toApi() },
+                albums = result.album.map { it.scoped().toApi() },
+                songs = result.song.map { it.scoped().toApi() },
             )
         }
 
@@ -122,7 +132,7 @@ class SubsonicApi(
      * library too large for one call. See [LibraryRepository.refreshAllSongs]
      * for the paging loop.
      */
-    suspend fun getSongsPage(songCount: Int, songOffset: Int): List<SubsonicSong> =
+    override suspend fun getSongsPage(songCount: Int, songOffset: Int): List<ApiSong> =
         client.call(
             "search3.view",
             listOf(
@@ -132,31 +142,31 @@ class SubsonicApi(
                 "songCount" to songCount.toString(),
                 "songOffset" to songOffset.toString(),
             ),
-        ).searchResult3?.song.orEmpty().map { it.scoped() }
+        ).searchResult3?.song.orEmpty().map { it.scoped().toApi() }
 
-    suspend fun getStarred(): SubsonicStarred =
+    override suspend fun getStarred(): ApiStarred =
         learning(Capability.STAR) { client.call("getStarred2.view") }.starred2.let { starred ->
-            if (starred == null) SubsonicStarred() else SubsonicStarred(
-                artist = starred.artist.map { it.scoped() },
-                album = starred.album.map { it.scoped() },
-                song = starred.song.map { it.scoped() },
+            if (starred == null) ApiStarred() else ApiStarred(
+                artists = starred.artist.map { it.scoped().toApi() },
+                albums = starred.album.map { it.scoped().toApi() },
+                songs = starred.song.map { it.scoped().toApi() },
             )
         }
 
     /** [id] may be a song, album, or artist id — Subsonic stars any of the three the same way. */
-    suspend fun star(id: String) {
+    override suspend fun star(id: String) {
         learning(Capability.STAR) { client.call("star.view", listOf("id" to native(id))) }
     }
 
-    suspend fun unstar(id: String) {
+    override suspend fun unstar(id: String) {
         learning(Capability.STAR) { client.call("unstar.view", listOf("id" to native(id))) }
     }
 
-    suspend fun getPlaylists(): List<SubsonicPlaylist> =
-        client.call("getPlaylists.view").playlists?.playlist.orEmpty().map { it.scoped() }
+    override suspend fun getPlaylists(): List<ApiPlaylist> =
+        client.call("getPlaylists.view").playlists?.playlist.orEmpty().map { it.scoped().toApi() }
 
-    suspend fun getPlaylist(id: String): SubsonicPlaylistDetail? =
-        client.call("getPlaylist.view", listOf("id" to native(id))).playlist?.scoped()
+    override suspend fun getPlaylist(id: String): ApiPlaylistDetail? =
+        client.call("getPlaylist.view", listOf("id" to native(id))).playlist?.scoped()?.toApi()
 
     /**
      * Creates a new playlist ([playlistId] omitted), or replaces an existing one's
@@ -167,20 +177,24 @@ class SubsonicApi(
      * [reorderPlaylist] rewrites track order below, since the Subsonic API has no
      * dedicated "move" endpoint.
      */
-    suspend fun createPlaylist(name: String, songIds: List<String> = emptyList(), playlistId: String? = null): SubsonicPlaylistDetail? {
+    override suspend fun createPlaylist(name: String, songIds: List<String>): ApiPlaylistDetail? =
+        createPlaylistOrReplace(name, songIds, playlistId = null)
+
+    /** [reorderPlaylist]'s playlistId-replace form shares this — see its own doc. */
+    private suspend fun createPlaylistOrReplace(name: String, songIds: List<String>, playlistId: String?): ApiPlaylistDetail? {
         val params = buildList {
             if (playlistId != null) add("playlistId" to native(playlistId))
             add("name" to name)
             songIds.forEach { add("songId" to native(it)) }
         }
-        return learning(Capability.PLAYLIST_WRITE) { client.call("createPlaylist.view", params) }.playlist?.scoped()
+        return learning(Capability.PLAYLIST_WRITE) { client.call("createPlaylist.view", params) }.playlist?.scoped()?.toApi()
     }
 
-    suspend fun renamePlaylist(playlistId: String, name: String) {
+    override suspend fun renamePlaylist(playlistId: String, name: String) {
         learning(Capability.PLAYLIST_WRITE) { client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "name" to name)) }
     }
 
-    suspend fun addSongToPlaylist(playlistId: String, songId: String) {
+    override suspend fun addSongToPlaylist(playlistId: String, songId: String) {
         learning(Capability.PLAYLIST_WRITE) { client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "songIdToAdd" to native(songId))) }
     }
 
@@ -193,21 +207,21 @@ class SubsonicApi(
      * never states this explicitly; this was verified against the real target
      * server's implementation, not guessed.
      */
-    suspend fun removeSongFromPlaylist(playlistId: String, songIndex: Int) {
+    override suspend fun removeSongFromPlaylist(playlistId: String, songIndex: Int) {
         learning(Capability.PLAYLIST_WRITE) { client.call("updatePlaylist.view", listOf("playlistId" to native(playlistId), "songIndexToRemove" to songIndex.toString())) }
     }
 
-    /** Full reorder — see [createPlaylist]'s playlistId-replace form. [songIds] is the complete new track order. */
-    suspend fun reorderPlaylist(playlistId: String, name: String, songIds: List<String>) {
-        createPlaylist(name = name, songIds = songIds, playlistId = playlistId)
+    /** Full reorder — see [createPlaylistOrReplace]'s playlistId-replace form. [songIds] is the complete new track order. */
+    override suspend fun reorderPlaylist(playlistId: String, name: String, songIds: List<String>) {
+        createPlaylistOrReplace(name = name, songIds = songIds, playlistId = playlistId)
     }
 
-    suspend fun deletePlaylist(id: String) {
+    override suspend fun deletePlaylist(id: String) {
         learning(Capability.PLAYLIST_WRITE) { client.call("deletePlaylist.view", listOf("id" to native(id))) }
     }
 
     /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. Only safe to use when [baseUrlIsHttps] — see PlaybackRepository.toAudioItem. */
-    fun streamUrl(songId: String, maxBitRateKbps: Int? = null): String {
+    override fun streamUrl(songId: String, maxBitRateKbps: Int?): String {
         val params = buildList {
             add("id" to native(songId))
             if (maxBitRateKbps != null) add("maxBitRate" to maxBitRateKbps.toString())
@@ -216,7 +230,7 @@ class SubsonicApi(
     }
 
     /** Same content as [streamUrl], streamed straight to [destination] through Ktor/CIO — for the http:// download-then-play fallback. See [SubsonicClient.downloadToFile]'s doc for why this streams to a file rather than returning bytes. */
-    suspend fun streamToFile(songId: String, destination: File, maxBitRateKbps: Int? = null, lease: FetchGate.Lease? = null) {
+    override suspend fun streamToFile(songId: String, destination: File, maxBitRateKbps: Int?, lease: FetchGate.Lease?) {
         val params = buildList {
             add("id" to native(songId))
             if (maxBitRateKbps != null) add("maxBitRate" to maxBitRateKbps.toString())
@@ -229,7 +243,7 @@ class SubsonicApi(
         client.endpointUrl("download.view", listOf("id" to native(songId)))
 
     /** Streams the original file straight to [destination] through the same Ktor/CIO client as every other call, so it's not subject to Android's cleartext-traffic block. See [SubsonicClient.downloadToFile]'s doc for why this streams rather than returning bytes. */
-    suspend fun downloadToFile(songId: String, destination: File, lease: FetchGate.Lease? = null) =
+    override suspend fun downloadToFile(songId: String, destination: File, lease: FetchGate.Lease?) =
         client.downloadToFile("download.view", destination, listOf("id" to native(songId)), lease)
 
     /**
@@ -237,14 +251,14 @@ class SubsonicApi(
      * `id`, so it stays a valid request, and adds [COVER_ART_SERVER_PARAM] so [AlbumArtRepository], which reads
      * the id and size back out of it, knows which server the art belongs to.
      */
-    fun coverArtUrl(coverArtId: String, size: Int = 300): String =
+    override fun coverArtUrl(coverArtId: String, size: Int): String =
         client.endpointUrl(
             "getCoverArt.view",
             listOf("id" to native(coverArtId), "size" to size.toString(), COVER_ART_SERVER_PARAM to serverId),
         )
 
-    /** Same content as [coverArtUrl], fetched through Ktor/CIO — same shape as [downloadBytes]/[streamBytes], and for the same reason (cleartext http:// servers). */
-    suspend fun coverArtBytes(coverArtId: String, size: Int = 300): ByteArray =
+    /** Same content as [coverArtUrl], fetched through Ktor/CIO — for the same reason (cleartext http:// servers). */
+    override suspend fun coverArtBytes(coverArtId: String, size: Int): ByteArray =
         client.getBytes("getCoverArt.view", listOf("id" to native(coverArtId), "size" to size.toString()))
 
     /**
@@ -261,8 +275,9 @@ class SubsonicApi(
      * Returns an empty list, never throws, when a track genuinely has no lyrics —
      * the server responds "ok" with an empty `lyricsList`, not an error.
      */
-    suspend fun getLyricsBySongId(songId: String): List<SubsonicStructuredLyrics> =
-        learning(Capability.LYRICS) { client.call("getLyricsBySongId.view", listOf("id" to native(songId))) }.lyricsList?.structuredLyrics ?: emptyList()
+    override suspend fun getLyrics(songId: String): List<ApiLyricEntry> =
+        (learning(Capability.LYRICS) { client.call("getLyricsBySongId.view", listOf("id" to native(songId))) }.lyricsList?.structuredLyrics ?: emptyList())
+            .map { it.toApi() }
 
     /**
      * ArtistDetailScreen's "Similar artists" section — `getArtistInfo2.view`,
@@ -273,11 +288,11 @@ class SubsonicApi(
      * (SubsonicDtos.kt) for the full spec citation this was verified against.
      * [artistId] is the artist's own id, per spec.
      */
-    suspend fun getSimilarArtists(artistId: String, count: Int = 20): List<SubsonicArtist> =
+    override suspend fun getSimilarArtists(artistId: String, count: Int): List<ApiArtist> =
         client.call(
             "getArtistInfo2.view",
             listOf("id" to native(artistId), "count" to count.toString()),
-        ).artistInfo2?.similarArtist.orEmpty().map { it.scoped() }
+        ).artistInfo2?.similarArtist.orEmpty().map { it.scoped().toApi() }
 
     /**
      * ArtistDetailScreen's "Top songs" section — `getTopSongs.view`.
@@ -286,11 +301,12 @@ class SubsonicApi(
      * [SubsonicTopSongs]'s doc) — the OpenSubsonic `topSongsByArtistId`
      * extension would allow an id instead, but isn't assumed supported here.
      */
-    suspend fun getTopSongs(artistName: String, count: Int = 20): List<SubsonicSong> =
+    /** [artistId] is unused — Subsonic's `getTopSongs` is keyed by name; see the interface doc. */
+    override suspend fun getTopSongs(artistId: String, artistName: String, count: Int): List<ApiSong> =
         client.call(
             "getTopSongs.view",
             listOf("artist" to artistName, "count" to count.toString()),
-        ).topSongs?.song.orEmpty().map { it.scoped() }
+        ).topSongs?.song.orEmpty().map { it.scoped().toApi() }
 
     /**
      * `submission = false` is a "now playing" notification (fired once a track
@@ -309,8 +325,4 @@ class SubsonicApi(
         learning(Capability.SCROBBLE) { client.call("scrobble.view", listOf("id" to native(songId), "submission" to submission.toString())) }
     }
 
-    companion object {
-        /** Extra query parameter on a cover-art URL naming its server. Servers ignore parameters they don't know. */
-        const val COVER_ART_SERVER_PARAM = "musicplusServer"
-    }
 }

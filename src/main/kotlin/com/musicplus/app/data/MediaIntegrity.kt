@@ -55,7 +55,7 @@ class MediaIntegrity(
      * again; false when the server couldn't be asked about some song (offline,
      * error), so it should be tried again next launch.
      */
-    suspend fun repair(lightContext: SealedLightContext, apiHolder: SubsonicApiHolder, requeue: Boolean): Boolean {
+    suspend fun repair(lightContext: SealedLightContext, apiHolder: ApiHolder, requeue: Boolean): Boolean {
         val startedAt = System.currentTimeMillis()
         var answeredAll = true
         var checked = 0
@@ -71,7 +71,7 @@ class MediaIntegrity(
             // Only an original-format file can be compared with the server's size.
             if (track.suffix == null || !file.extension.equals(track.suffix, ignoreCase = true)) continue
             val serverBytes = try {
-                apiHolder.forId(download.songId)?.getSong(download.songId)?.size
+                apiHolder.forId(download.songId)?.getSong(download.songId)?.sizeBytes
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

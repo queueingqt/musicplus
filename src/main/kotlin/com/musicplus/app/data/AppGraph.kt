@@ -19,14 +19,14 @@ import java.util.concurrent.TimeUnit
  * Composition root. A single process-lifetime instance, built synchronously the
  * first time any screen asks for it — `LightScreen.createViewModel()` isn't a
  * suspend function, so nothing here can await an async read (see
- * [SubsonicApiHolder] for how the server-dependent pieces defer past that).
+ * [ApiHolder] for how the server-dependent pieces defer past that).
  */
 object AppGraph {
     class Graph(
         val serverConfigRepository: ServerConfigRepository,
         val appSettingsRepository: AppSettingsRepository,
         val playbackStateRepository: PlaybackStateRepository,
-        val apiHolder: SubsonicApiHolder,
+        val apiHolder: ApiHolder,
         val database: MusicPlusDatabase,
         val libraryRepository: LibraryRepository,
         val playlistRepository: PlaylistRepository,
@@ -119,7 +119,7 @@ object AppGraph {
         val serverSyncStatus = ServerSyncStatus(lightContext.dataStore)
         mirrorInto(serverSyncStatus.lastSynced, AppServerPrefs.lastSyncedAt::set)
         mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs.scrobblingEnabled::set)
-        val apiHolder = SubsonicApiHolder(serverConfigRepository)
+        val apiHolder = ApiHolder(serverConfigRepository)
         val reachability = ServerReachability(appScope, apiHolder)
         apiHolder.reachability = reachability
         // Existing rows and files predate server-scoped ids. They belong to whichever server is active now,

@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
  */
 class ServerReachability(
     private val scope: CoroutineScope,
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
 ) {
     private val down = MutableStateFlow<Set<String>>(emptySet())
     private var recheckJob: Job? = null

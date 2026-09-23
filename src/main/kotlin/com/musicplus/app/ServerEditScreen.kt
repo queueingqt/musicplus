@@ -1,5 +1,6 @@
 package com.musicplus.app
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -8,13 +9,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.DownloadSummary
+import com.musicplus.app.data.JellyfinApiException
 import com.musicplus.app.data.ServerConfig
 import com.musicplus.app.data.ServerConfigRepository
+import com.musicplus.app.data.ServerKind
 import com.musicplus.app.data.ServerProfile
 import com.musicplus.app.data.ServerRemoval
 import com.musicplus.app.data.SubsonicApiException
 import com.musicplus.app.data.SubsonicClient
+import com.musicplus.app.data.authenticateJellyfin
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -44,10 +49,14 @@ import java.util.UUID
  * "creating a new one" (a fresh id is minted on save); non-null loads and edits
  * that existing profile. Reached from [ServerSettingsScreen]'s list (tap a row
  * to edit, its top-bar ADD icon to create).
+ *
+ * [kind] can only be chosen for a brand-new server — an existing profile's kind never changes (there is no sensible
+ * "convert this Subsonic login into a Jellyfin one" operation; delete and re-add instead).
  */
 class ServerEditScreenViewModel(
     private val serverConfigRepository: ServerConfigRepository,
     private val serverRemoval: ServerRemoval,
+    private val appSettingsRepository: AppSettingsRepository,
     private val serverId: String?,
 ) : LightViewModel<Unit>() {
 
@@ -62,6 +71,9 @@ class ServerEditScreenViewModel(
 
     private val _password = MutableStateFlow("")
     val password: StateFlow<String> = _password.asStateFlow()
+
+    private val _kind = MutableStateFlow(ServerKind.SUBSONIC)
+    val kind: StateFlow<ServerKind> = _kind.asStateFlow()
 
     private val _testResult = MutableStateFlow<String?>(null)
     val testResult: StateFlow<String?> = _testResult.asStateFlow()
@@ -82,6 +94,7 @@ class ServerEditScreenViewModel(
             _baseUrl.value = existing.baseUrl
             _username.value = existing.username
             _password.value = existing.password
+            _kind.value = existing.kind
         }
     }
 
@@ -89,16 +102,31 @@ class ServerEditScreenViewModel(
     fun onBaseUrlChange(value: String) { _baseUrl.value = value }
     fun onUsernameChange(value: String) { _username.value = value }
     fun onPasswordChange(value: String) { _password.value = value }
+    fun onKindChange(value: ServerKind) {
+        _kind.value = value
+        _testResult.value = null
+    }
 
     fun testConnection() {
         viewModelScope.launch {
             _testResult.value = "Testing..."
-            // checkLogin, not ping: ping says OK to a wrong password on some servers (Bandcamp's).
-            val result = SubsonicClient(ServerConfig(_baseUrl.value, _username.value, _password.value)).checkLogin()
-            _testResult.value = result.fold(
-                onSuccess = { "Connected, login OK" },
-                onFailure = { if (it is SubsonicApiException) "Login rejected: ${it.message}" else "Failed: ${it::class.simpleName}: ${it.message}" },
-            )
+            _testResult.value = when (_kind.value) {
+                ServerKind.SUBSONIC -> {
+                    // checkLogin, not ping: ping says OK to a wrong password on some servers (Bandcamp's).
+                    val result = SubsonicClient(ServerConfig(_baseUrl.value, _username.value, _password.value)).checkLogin()
+                    result.fold(
+                        onSuccess = { "Connected, login OK" },
+                        onFailure = { if (it is SubsonicApiException) "Login rejected: ${it.message}" else "Failed: ${it::class.simpleName}: ${it.message}" },
+                    )
+                }
+                ServerKind.JELLYFIN -> {
+                    val result = authenticateJellyfin(_baseUrl.value, _username.value, _password.value, appSettingsRepository.jellyfinDeviceId(), BuildConfig.VERSION_NAME)
+                    result.fold(
+                        onSuccess = { "Connected, login OK" },
+                        onFailure = { if (it is JellyfinApiException) "Login rejected: ${it.message}" else "Failed: ${it::class.simpleName}: ${it.message}" },
+                    )
+                }
+            }
         }
     }
 
@@ -108,13 +136,37 @@ class ServerEditScreenViewModel(
             // A new login for a server that was removed with its downloads kept takes that server's id, so those
             // downloads come back with it instead of sitting beside a second copy.
             val reattach = if (serverId == null) serverConfigRepository.findRemoved(baseUrl, _username.value) else null
-            val profile = ServerProfile(
-                id = serverId ?: reattach?.id ?: UUID.randomUUID().toString(),
-                name = _name.value.ifBlank { _baseUrl.value },
-                baseUrl = baseUrl,
-                username = _username.value,
-                password = _password.value,
-            )
+            val id = serverId ?: reattach?.id ?: UUID.randomUUID().toString()
+            val profile = when (_kind.value) {
+                ServerKind.SUBSONIC -> ServerProfile(
+                    id = id,
+                    name = _name.value.ifBlank { _baseUrl.value },
+                    baseUrl = baseUrl,
+                    username = _username.value,
+                    password = _password.value,
+                    kind = ServerKind.SUBSONIC,
+                )
+                // Jellyfin's own access token is obtained here, not read back from testConnection() — a person can
+                // hit Save without ever tapping Test connection first, and a saved Jellyfin profile without a token
+                // is not something the rest of the app can do anything with (see ApiHolder.apiFor).
+                ServerKind.JELLYFIN -> {
+                    val auth = authenticateJellyfin(baseUrl, _username.value, _password.value, appSettingsRepository.jellyfinDeviceId(), BuildConfig.VERSION_NAME)
+                        .getOrElse {
+                            _saveMessage.value = if (it is JellyfinApiException) "Login rejected: ${it.message}" else "Couldn't save: ${it.message}"
+                            return@launch
+                        }
+                    ServerProfile(
+                        id = id,
+                        name = _name.value.ifBlank { _baseUrl.value },
+                        baseUrl = baseUrl,
+                        username = _username.value,
+                        password = _password.value,
+                        kind = ServerKind.JELLYFIN,
+                        jellyfinAccessToken = auth.AccessToken,
+                        jellyfinUserId = auth.User?.Id,
+                    )
+                }
+            }
             serverConfigRepository.addOrUpdate(profile)
             AppGraph.invalidateApi()
             AppGraph.serversChanged(serverConfigRepository.activeServerId.first(), serverConfigRepository.enabledServerIds.first())
@@ -141,7 +193,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
     override val viewModelClass = ServerEditScreenViewModel::class.java
 
     override fun createViewModel() =
-        AppGraph.from(lightContext).let { ServerEditScreenViewModel(it.serverConfigRepository, it.serverRemoval, serverId) }
+        AppGraph.from(lightContext).let { ServerEditScreenViewModel(it.serverConfigRepository, it.serverRemoval, it.appSettingsRepository, serverId) }
 
     @Composable
     override fun Content() {
@@ -149,6 +201,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
         val baseUrl by viewModel.baseUrl.collectAsState()
         val username by viewModel.username.collectAsState()
         val password by viewModel.password.collectAsState()
+        val kind by viewModel.kind.collectAsState()
         val testResult by viewModel.testResult.collectAsState()
         val saveMessage by viewModel.saveMessage.collectAsState()
 
@@ -162,6 +215,19 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
             },
         ) {
             LightScrollView(modifier = Modifier.fillMaxWidth().padding(1f.gridUnitsAsDp())) {
+                if (viewModel.isNew) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 1f.gridUnitsAsDp())) {
+                        ServerKindOption("Subsonic", kind == ServerKind.SUBSONIC) { viewModel.onKindChange(ServerKind.SUBSONIC) }
+                        ServerKindOption("Jellyfin", kind == ServerKind.JELLYFIN) { viewModel.onKindChange(ServerKind.JELLYFIN) }
+                    }
+                } else {
+                    LightText(
+                        text = if (kind == ServerKind.JELLYFIN) "Jellyfin server" else "Subsonic server",
+                        variant = LightTextVariant.Fine,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 0.5f.gridUnitsAsDp()),
+                    )
+                }
+
                 LightTextField(
                     label = "Name",
                     value = name,
@@ -179,7 +245,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
                 LightTextField(
                     label = "Server URL",
                     value = baseUrl,
-                    placeholder = "https://music.example.com",
+                    placeholder = if (kind == ServerKind.JELLYFIN) "http://jellyfin.example.com:8096" else "https://music.example.com",
                     onClick = {
                         navigateTo({ a -> TextEditScreen(a, "Server URL", baseUrl) }) { result ->
                             viewModel.onBaseUrlChange(result)
@@ -253,4 +319,16 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
             }
         }
     }
+}
+
+/** One of the two "which kind of server is this" choices — a plain text row (checked with a leading mark), matching [SelectableRow]'s look without pulling in its single-selected-row-in-a-list shape for what's really two side-by-side options. */
+@Composable
+private fun ServerKindOption(label: String, selected: Boolean, onClick: () -> Unit) {
+    LightText(
+        text = if (selected) "◉ $label" else "○ $label",
+        variant = LightTextVariant.Copy,
+        modifier = Modifier
+            .lightClickable(onClick = onClick)
+            .padding(end = 2f.gridUnitsAsDp(), top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp()),
+    )
 }

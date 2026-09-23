@@ -37,7 +37,7 @@ private fun CachedLyrics.toState(): LyricsState = when (kind) {
  * retried next time rather than permanently remembered as "no lyrics."
  */
 class LyricsRepository(
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
     filesDir: File,
 ) {
     private val diskCacheDir = File(filesDir, "lyrics").apply { mkdirs() }
@@ -49,20 +49,20 @@ class LyricsRepository(
 
         val api = apiHolder.forId(trackId) ?: return LyricsState.Error("Not connected to a server")
         return try {
-            val entries = api.getLyricsBySongId(trackId)
+            val entries = api.getLyrics(trackId)
             // Prefer an explicit "main" entry if the server bothers to tag one
             // (spec allows translation/pronunciation alongside it); otherwise
             // take the first synced entry, then just the first entry with any
             // lines at all. Real probes against this project's Navidrome only
             // ever returned a single entry with no `kind` set, so this is
             // defensive rather than exercised.
-            val best = entries.firstOrNull { it.kind == "main" && it.line.isNotEmpty() }
-                ?: entries.firstOrNull { it.synced && it.line.isNotEmpty() }
-                ?: entries.firstOrNull { it.line.isNotEmpty() }
+            val best = entries.firstOrNull { it.kind == "main" && it.lines.isNotEmpty() }
+                ?: entries.firstOrNull { it.synced && it.lines.isNotEmpty() }
+                ?: entries.firstOrNull { it.lines.isNotEmpty() }
             val cached = when {
                 best == null -> CachedLyrics(kind = "none")
-                best.synced -> CachedLyrics(kind = "synced", lines = best.line.map { CachedLine(it.start, it.value) })
-                else -> CachedLyrics(kind = "plain", text = best.line.joinToString("\n") { it.value }.trim())
+                best.synced -> CachedLyrics(kind = "synced", lines = best.lines.map { CachedLine(it.startMs, it.text) })
+                else -> CachedLyrics(kind = "plain", text = best.lines.joinToString("\n") { it.text }.trim())
             }
             writeToDisk(trackId, cached)
             cached.toState()

@@ -32,7 +32,7 @@ class ServerRemoval(
     private val serverSyncStatus: ServerSyncStatus,
     private val capabilityRegistry: CapabilityRegistry,
     private val reachability: ServerReachability,
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
     private val playbackStateRepository: PlaybackStateRepository,
     private val downloadRepository: DownloadRepository,
     private val serverCleanupDao: ServerCleanupDao,

@@ -51,7 +51,7 @@ private const val ALBUM_LIST_PAGE_SIZE = 500
  * localFilePath was always null too.
  */
 class LibraryRepository(
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
     private val artistDao: ArtistDao,
     private val albumDao: AlbumDao,
     private val trackDao: TrackDao,
@@ -132,7 +132,7 @@ class LibraryRepository(
      * `UnresolvedAddressException` from `HomeScreenViewModel.onScreenShow`'s
      * unguarded `refreshAlbumList()`/`refreshArtists()` calls, 2026-09-17.
      */
-    private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (SubsonicApi) -> Unit) {
+    private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (MusicApi) -> Unit) {
         if (!connectivity.currentStatus.isConnected) return
         // A refresh of one artist/album goes to the server that owns it.
         if (ownerId != null) {
@@ -147,7 +147,7 @@ class LibraryRepository(
         }
     }
 
-    private suspend fun runRefresh(label: String, api: SubsonicApi, action: suspend (SubsonicApi) -> Unit) {
+    private suspend fun runRefresh(label: String, api: MusicApi, action: suspend (MusicApi) -> Unit) {
         try {
             action(api)
             serverSyncStatus.refreshed(api.serverId)
@@ -160,7 +160,7 @@ class LibraryRepository(
     }
 
     /** False once the server was removed while a refresh of it was still running: that refresh must not write its rows back. */
-    private fun live(api: SubsonicApi) = AppServerPrefs.servers.value.value.any { it.id == api.serverId }
+    private fun live(api: MusicApi) = AppServerPrefs.servers.value.value.any { it.id == api.serverId }
 
     // The four list refreshes below (and PlaylistRepository.refreshPlaylists)
     // all go through mirrorFromServer — see its doc for what they share: only
@@ -203,7 +203,7 @@ class LibraryRepository(
             fetchAll = { onPage ->
                 pageThrough(
                     idOf = AlbumEntity::id,
-                    fetchPage = { offset -> api.getAlbumList("alphabeticalByName", ALBUM_LIST_PAGE_SIZE, offset).map { it.toEntity() } },
+                    fetchPage = { offset -> api.getAlbumList(ALBUM_LIST_PAGE_SIZE, offset).map { it.toEntity() } },
                     onPage = onPage,
                 )
             },
@@ -215,12 +215,12 @@ class LibraryRepository(
 
     suspend fun refreshArtistDetail(artistId: String) = refresh("refreshArtistDetail($artistId)", ownerId = artistId) { api ->
         val detail = api.getArtist(artistId) ?: return@refresh
-        albumDao.upsertAll(albumDao.keepingPhoneStars(detail.album.map { it.toEntity() }))
+        albumDao.upsertAll(albumDao.keepingPhoneStars(detail.albums.map { it.toEntity() }))
     }
 
     suspend fun refreshAlbumDetail(albumId: String) = refresh("refreshAlbumDetail($albumId)", ownerId = albumId) { api ->
         val detail = api.getAlbum(albumId) ?: return@refresh
-        trackDao.upsertAll(trackDao.keepingPhoneStars(detail.song.map { it.toTrackEntity() }))
+        trackDao.upsertAll(trackDao.keepingPhoneStars(detail.songs.map { it.toTrackEntity() }))
     }
 
     /**
@@ -269,7 +269,7 @@ class LibraryRepository(
         val pending = pendingFavoriteIds()
         mirrorStarred(
             label = "favorite artists",
-            fetched = starred.artist.map { it.toEntity().copy(starred = true) },
+            fetched = starred.artists.map { it.toEntity().copy(starred = true) },
             idOf = ArtistEntity::id,
             cachedByIds = { artistDao.getByIds(it) },
             write = { artistDao.upsertAll(it) },
@@ -279,7 +279,7 @@ class LibraryRepository(
         )
         mirrorStarred(
             label = "favorite albums",
-            fetched = starred.album.map { it.toEntity().copy(starred = true) },
+            fetched = starred.albums.map { it.toEntity().copy(starred = true) },
             idOf = AlbumEntity::id,
             cachedByIds = { albumDao.getByIds(it) },
             write = { albumDao.upsertAll(it) },
@@ -289,7 +289,7 @@ class LibraryRepository(
         )
         mirrorStarred(
             label = "favorite songs",
-            fetched = starred.song.map { it.toTrackEntity().copy(starred = true) },
+            fetched = starred.songs.map { it.toTrackEntity().copy(starred = true) },
             idOf = TrackEntity::id,
             cachedByIds = { trackDao.getByIds(it) },
             write = { trackDao.upsertAll(it) },
@@ -348,9 +348,9 @@ class LibraryRepository(
                     } ?: return@launch
                     lock.withLock {
                         live[id] = SearchResults(
-                            artistDao.keepingPhoneStars(result.artist.map { it.toEntity() }).map { it.toDomain() },
-                            albumDao.keepingPhoneStars(result.album.map { it.toEntity() }).map { it.toDomain() },
-                            trackDao.keepingPhoneStars(result.song.map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id]) },
+                            artistDao.keepingPhoneStars(result.artists.map { it.toEntity() }).map { it.toDomain() },
+                            albumDao.keepingPhoneStars(result.albums.map { it.toEntity() }).map { it.toDomain() },
+                            trackDao.keepingPhoneStars(result.songs.map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id]) },
                         )
                         send(merged())
                     }
@@ -406,7 +406,7 @@ class LibraryRepository(
         val api = apiHolder.forId(artistId) ?: return emptyList()
         return try {
             val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
-            trackDao.keepingPhoneStars(api.getTopSongs(artistName).map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id], includeCoverArt = false) }
+            trackDao.keepingPhoneStars(api.getTopSongs(artistId, artistName).map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id], includeCoverArt = false) }
         } catch (e: Exception) {
             AppLogger.e("LibraryRepository", "getTopSongs(\"$artistName\") failed", e)
             emptyList()
@@ -453,13 +453,13 @@ class LibraryRepository(
         }
     }
 
-    private fun SubsonicArtist.toEntity() = ArtistEntity(id, name, coverArt, albumCount, starred != null)
-    private fun SubsonicAlbum.toEntity() = AlbumEntity(id, name, artistId, artist, coverArt, songCount, duration, year, genre, starred != null)
+    private fun ApiArtist.toEntity() = ArtistEntity(id, name, coverArtId, albumCount, starred)
+    private fun ApiAlbum.toEntity() = AlbumEntity(id, name, artistId, artist, coverArtId, songCount, durationSec, year, genre, starred)
 
     // `apiHolder.peek()` — best-effort: returns null (no cover art URL yet) until a
     // suspend refresh has run at least once and resolved the client. Acceptable for
     // a stub; screens should trigger a refresh on first show (see HomeScreen).
     private fun ArtistEntity.toDomain() = Artist(id, name, coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) }, albumCount, starred)
     private fun AlbumEntity.toDomain() = Album(id, name, artistId, artistName, coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) }, songCount, durationSec, year, starred)
-    // SubsonicSong.toTrackEntity() / TrackEntity.toTrack() — see TrackMapping.kt.
+    // ApiSong.toTrackEntity() / TrackEntity.toTrack() — see TrackMapping.kt.
 }

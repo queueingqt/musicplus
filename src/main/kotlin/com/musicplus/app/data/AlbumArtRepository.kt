@@ -52,7 +52,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * why it masked the bug as "occasionally slow" rather than "always broken."
  */
 class AlbumArtRepository(
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
     filesDir: File,
 ) {
     // Reported live: after a long session touching many albums/artists/playlists,
@@ -312,7 +312,7 @@ class AlbumArtRepository(
             when (key) {
                 "id" -> id = value
                 "size" -> size = value.toIntOrNull()
-                SubsonicApi.COVER_ART_SERVER_PARAM -> server = value
+                COVER_ART_SERVER_PARAM -> server = value
             }
         }
         val resolvedId = id

@@ -95,7 +95,7 @@ interface CapabilityLearner {
 class CapabilityRegistry(
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
     private val connectivity: LightConnectivity,
     /** Identifies this build of the app; a different one probes again. */
     private val build: String,
@@ -146,7 +146,20 @@ class CapabilityRegistry(
     }
 
     private suspend fun probe(serverId: String) {
-        val api = apiHolder.forServer(serverId) ?: return
+        val profile = AppServerPrefs.servers.value.value.find { it.id == serverId } ?: return
+        if (profile.kind == ServerKind.JELLYFIN) {
+            // A real Jellyfin server's whole feature set is documented by its own API — nothing here is undocumented
+            // the way an arbitrary Subsonic mount (Bandcamp) can be, so there is nothing to find out by probing.
+            // scrobble is deliberately left false: it means "this server takes a Subsonic-style scrobble.view relay",
+            // which Jellyfin has no equivalent of — its own playback-progress reporting is unconditional and never
+            // goes through this capability at all. See MusicApi's class doc and PlaybackRepository's Jellyfin watcher.
+            save(serverId) { ServerCapabilities(star = true, scrobble = false, lyrics = true, playlistWrite = true, probedBy = build) }
+            AppLogger.d("Capabilities", "${describe(serverId)}: Jellyfin, star/lyrics/playlistWrite assumed offered")
+            return
+        }
+        // probe() itself is Subsonic-specific (its harmless-request vocabulary is .view endpoints) — only ever
+        // reached for a Subsonic profile, per the branch just above.
+        val api = apiHolder.forServer(serverId) as? SubsonicApi ?: return
         if (api.checkLogin().isFailure) {
             AppLogger.d("Capabilities", "${describe(serverId)} did not answer an ordinary request, will ask again later")
             return

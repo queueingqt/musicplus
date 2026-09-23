@@ -84,7 +84,7 @@ private class EdgeDetector {
  */
 class PlaybackRepository(
     audio: LightAudio,
-    private val apiHolder: SubsonicApiHolder,
+    private val apiHolder: ApiHolder,
     private val filesDir: File,
     private val libraryRepository: LibraryRepository,
     private val queueDao: QueueDao,
@@ -459,6 +459,70 @@ class PlaybackRepository(
             }
     }
 
+    private fun isJellyfinTrack(songId: String): Boolean =
+        ServerScope.serverOf(songId)?.let { serverId -> AppServerPrefs.servers.value.value.find { it.id == serverId }?.kind } == ServerKind.JELLYFIN
+
+    /** A fresh id per queue-position-change, not per app launch — matches how a real "playback session" starts over each time a different track becomes current. Jellyfin only uses this to tell concurrent sessions apart; nothing here reads it back. */
+    private var jellyfinPlaySessionId: String? = null
+    private var jellyfinReportedTrackId: String? = null
+    private var jellyfinProgressTicker: Job? = null
+
+    /**
+     * Reports playback progress to a Jellyfin server — unconditional, never gated by [AppSettingsRepository.scrobblingEnabled];
+     * see [MusicApi]'s class doc for why this is deliberately not the same mechanism as [scrobbleWatcher]. Drives that
+     * server's own resume-position and play history, nothing to do with any Last.fm/ListenBrainz relay.
+     *
+     * Simplified from what a full Jellyfin client session tracks: reports Start once when a Jellyfin track becomes
+     * current and playing, Progress every [JELLYFIN_PROGRESS_INTERVAL_MS] for as long as it stays current (playing or
+     * paused — so a pause still saves roughly where playback left off), and Stopped once it stops being current
+     * (the queue moves on, is cleared, or the player is released). A pause/resume in between doesn't get its own
+     * dedicated report; the next periodic tick (or the eventual Stopped) carries the accurate position regardless.
+     */
+    private val jellyfinPlaybackReportWatcher = scope.launch {
+        state.collect { s ->
+            val track = s.currentTrack
+            val current = track?.takeIf { isJellyfinTrack(it.id) }
+
+            if (jellyfinReportedTrackId != null && jellyfinReportedTrackId != current?.id) {
+                val stoppedId = jellyfinReportedTrackId!!
+                val sessionId = jellyfinPlaySessionId!!
+                val lastKnownPositionMs = s.positionMs
+                jellyfinReportedTrackId = null
+                jellyfinProgressTicker?.cancel()
+                reportJellyfin("stop") { (apiHolder.forId(stoppedId) as? JellyfinApi)?.reportPlaybackStopped(stoppedId, lastKnownPositionMs, sessionId) }
+            }
+
+            if (current == null || !s.isPlaying || s.durationMs <= 0L) return@collect
+            if (jellyfinReportedTrackId == current.id) return@collect
+
+            jellyfinReportedTrackId = current.id
+            val sessionId = java.util.UUID.randomUUID().toString()
+            jellyfinPlaySessionId = sessionId
+            reportJellyfin("start") { (apiHolder.forId(current.id) as? JellyfinApi)?.reportPlaybackStart(current.id, s.positionMs, sessionId) }
+            jellyfinProgressTicker = scope.launch {
+                while (true) {
+                    delay(JELLYFIN_PROGRESS_INTERVAL_MS)
+                    val snap = currentSnapshot()
+                    if (snap.currentTrack?.id != current.id) break
+                    reportJellyfin("progress") { (apiHolder.forId(current.id) as? JellyfinApi)?.reportPlaybackProgress(current.id, snap.positionMs, !snap.isPlaying, sessionId) }
+                }
+            }
+        }
+    }
+
+    /** Fire-and-forget, same reasoning as [sendScrobble] — this must never block or affect actual playback, and a Jellyfin server being briefly unreachable is not worth surfacing as an error the way a failed scrobble is. */
+    private fun reportJellyfin(label: String, call: suspend () -> Unit) {
+        scope.launch {
+            try {
+                call()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e("PlaybackRepository", "Jellyfin playback-$label report failed", e)
+            }
+        }
+    }
+
     // Playback errors (issues #47/#50). The SDK's LightAudioError only ever
     // reached the screen as Now Playing's "Playback error: ..." line — nothing
     // recorded it, so an ERROR_CODE_IO_UNSPECIFIED that hit right as a track
@@ -545,7 +609,10 @@ class PlaybackRepository(
                 AppLogger.d("PlaybackRepository", "scrobble(songId=$songId): no server can count it")
                 return@launch
             }
-            val api = apiHolder.forId(target) ?: return@launch
+            // scrobble() is Subsonic-only (not part of MusicApi — see its class doc); scrobbleTarget() only ever
+            // returns a target whose server has Capability.SCROBBLE, which a Jellyfin server is never given, so this
+            // cast always succeeds in practice — defensive, not a silent drop, if that assumption is ever wrong.
+            val api = apiHolder.forId(target) as? SubsonicApi ?: return@launch
             try {
                 api.scrobble(target, submission)
                 AppLogger.d("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) succeeded" + if (target != songId) " on another server, as $target" else "")
@@ -949,7 +1016,7 @@ class PlaybackRepository(
      * Null when that server was removed: its downloaded songs still play, from their files, and only a song that
      * has to be streamed needs the api (see [toAudioItem]).
      */
-    private suspend fun apiFor(track: Track): SubsonicApi? = apiHolder.forId(track.id)
+    private suspend fun apiFor(track: Track): MusicApi? = apiHolder.forId(track.id)
 
     private suspend fun resolveAll(tracks: List<Track>, stillWanted: () -> Boolean = { true }): List<LightAudioItem>? {
         val items = arrayOfNulls<LightAudioItem>(tracks.size)
@@ -1515,7 +1582,7 @@ class PlaybackRepository(
      * multi-second block).
      */
     private suspend fun Track.toAudioItem(
-        api: SubsonicApi?,
+        api: MusicApi?,
         rank: () -> FetchGate.Priority = { FetchGate.Priority.QUEUE },
     ): LightAudioItem {
         val maxBitRateKbps = currentStreamMaxBitRateKbps()
@@ -1576,7 +1643,7 @@ class PlaybackRepository(
      * (streamcache has no eviction policy regardless — see "Clear all local
      * data" for the manual escape hatch).
      */
-    private suspend fun Track.cachedStreamFile(api: SubsonicApi, maxBitRateKbps: Int?, rank: () -> FetchGate.Priority): File {
+    private suspend fun Track.cachedStreamFile(api: MusicApi, maxBitRateKbps: Int?, rank: () -> FetchGate.Priority): File {
         val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
         val name = "${ServerScope.fileKey(id)}-${maxBitRateKbps ?: "orig"}.mp3"
         val cached = File(cacheDir, name)
@@ -1668,6 +1735,9 @@ class PlaybackRepository(
 
         /** See [scrobbleWatcher]'s doc — Last.fm's own "half the track, or this, whichever is smaller" scrobble threshold. */
         const val SCROBBLE_THRESHOLD_MS = 240_000L
+
+        /** See [jellyfinPlaybackReportWatcher]'s doc — how often a still-current Jellyfin track's position is re-sent, so its own resume-position stays reasonably fresh without a request on every position tick (the mistake issue #56 tracks for album art). */
+        const val JELLYFIN_PROGRESS_INTERVAL_MS = 15_000L
     }
 }
 

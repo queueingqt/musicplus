@@ -30,6 +30,14 @@ data class ServerConfig(
  * a stable [id] and a person-facing [name] so more than one can be listed/picked
  * between. [ServerConfigRepository] persists a list of these; exactly one is
  * "active" at a time (the one [ServerConfigRepository.serverConfig] resolves to).
+ *
+ * [kind] defaults to [ServerKind.SUBSONIC] so every profile saved before Jellyfin support existed decodes unchanged.
+ * [username]/[password] mean different things per [kind]: for Subsonic they're sent on every request (see
+ * [SubsonicClient.authParams]); for Jellyfin they're used only to obtain [jellyfinAccessToken] in the first place
+ * (see [authenticateJellyfin]) and kept afterward only so a future version could silently re-authenticate if that
+ * token is ever revoked — every real Jellyfin request uses [jellyfinAccessToken] alone. [jellyfinUserId] is the
+ * account's own id on that server, needed by nearly every Jellyfin endpoint (favorites, playlists, browsing are all
+ * scoped to a signed-in user, unlike Subsonic). Both are null for a Subsonic profile.
  */
 @Serializable
 data class ServerProfile(
@@ -38,6 +46,9 @@ data class ServerProfile(
     val baseUrl: String,
     val username: String,
     val password: String,
+    val kind: ServerKind = ServerKind.SUBSONIC,
+    val jellyfinAccessToken: String? = null,
+    val jellyfinUserId: String? = null,
 ) {
     fun toServerConfig() = ServerConfig(baseUrl = baseUrl, username = username, password = password)
 }
