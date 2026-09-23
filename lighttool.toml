@@ -3,8 +3,8 @@
 [tool]
 id            = "com.musicplus.app"
 label         = "Music +"
-versionCode   = 9
-versionName   = "0.6.0"
+versionCode   = 10
+versionName   = "0.7.0"
 
 # INTERNET is for the Navidrome/Subsonic API. Do NOT list FOREGROUND_SERVICE or
 # FOREGROUND_SERVICE_MEDIA_PLAYBACK here — the "detached-audio" capability below
