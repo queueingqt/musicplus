@@ -275,10 +275,15 @@ object AppGraph {
         // background the way a periodic schedule is supposed to.
         appScope.launch {
             connectivity.observeNetworkStatus()
-                .map { it.isConnected }
+                // Not `.map { it.isConnected }` — that collapsed a VPN taking over the route (e.g. Tailscale
+                // connecting) while Wi-Fi was already "connected" into a no-op, since `isConnected` never toggled
+                // false in between. Confirmed live, 2026-09-22: a server unreachable before Tailscale connected
+                // stayed marked unreachable — recovered only via ServerReachability's 30s backstop, minutes later,
+                // never through this near-instant path. `NetworkStatus` as a whole (isConnected/isWifi/isMetered)
+                // changing is itself the "worth rechecking" signal; distinctUntilChanged() still drops true repeats.
                 .distinctUntilChanged()
-                .collect { isConnected ->
-                    if (isConnected) {
+                .collect { status ->
+                    if (status.isConnected) {
                         reachability.recheckNow()
                         LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
                         // Each list on its own coroutine, not awaited in
