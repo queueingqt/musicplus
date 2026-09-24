@@ -148,6 +148,13 @@ object FetchGate {
         block: suspend (Lease) -> T,
     ): T? {
         val waiter = synchronized(lock) {
+            // The controller only watches the connection while something is queued or running, so after an
+            // idle spell the flag can be from before the phone left Wi-Fi: a burst then started at the Wi-Fi
+            // limit of six on a weak cellular link (seen 2026-09-23, five songs at once starving the stream).
+            if (running.isEmpty() && waiting.isEmpty()) {
+                val wifiNow = detectWifi()
+                if (wifiNow != onWifi) applyConnectionLocked(wifiNow)
+            }
             val w = Waiter(lane, rank, transcoding, key, nextSeq++)
             waiting += w
             ensureControllerLocked()

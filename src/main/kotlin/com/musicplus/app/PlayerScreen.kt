@@ -16,9 +16,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -61,6 +67,30 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** [inner] drawn in a single [tint], which is what [LightIcon] does to its drawable — used to draw an icon at a lower alpha. */
+private class TintedPainter(private val inner: Painter, private val tint: Color) : Painter() {
+    override val intrinsicSize: Size get() = inner.intrinsicSize
+
+    override fun DrawScope.onDraw() {
+        with(inner) { draw(size, colorFilter = ColorFilter.tint(tint)) }
+    }
+}
+
+/**
+ * A bar button that looks unavailable while [enabled] is false. [LightBarButton] has no disabled state: a null
+ * `onClick` only removes the click, and the icon keeps full contrast, so a button that does nothing reads as broken.
+ * A [LightBarButton.Icon] carries its own painter, so the same drawable is drawn faint the way a song that cannot be
+ * played is (see [UNAVAILABLE_ALPHA]), with no click and no haptic.
+ */
+@Composable
+private fun seekButton(enabled: Boolean, icon: LightIconConfiguration, description: String, onClick: () -> Unit): LightBarButton {
+    if (enabled) return LightBarButton.LightIcon(icon, onClick, contentDescription = description)
+    val drawable = painterResource(icon.drawableResource)
+    val faint = LightThemeTokens.colors.content.copy(alpha = UNAVAILABLE_ALPHA)
+    val painter = remember(drawable, faint) { TintedPainter(drawable, faint) }
+    return LightBarButton.Icon(painter, onClick = null, contentDescription = "$description, available once the song has loaded")
+}
 
 /**
  * Which URL actually counts as "the current album art" — shared by
@@ -253,7 +283,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 LightBottomBar(
                     items = listOf(
                         LightBarButton.LightIcon(LightIcons.REWIND, viewModel::skipToPrevious, contentDescription = "Previous track"),
-                        LightBarButton.LightIcon(LightIcons.SKIP_BACKWARD_FIFTEEN, viewModel::skipBack, contentDescription = "Back 15s"),
+                        seekButton(state.canSeek, LightIcons.SKIP_BACKWARD_FIFTEEN, "Back 15s", viewModel::skipBack),
                         LightBarButton.LightIcon(
                             // REFRESH during the loading window — see MusicPlusScaffold's
                             // identical mini-player treatment for why this can't just
@@ -270,7 +300,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                                 else -> "Play"
                             },
                         ),
-                        LightBarButton.LightIcon(LightIcons.SKIP_FORWARD_FIFTEEN, viewModel::skipForward, contentDescription = "Forward 15s"),
+                        seekButton(state.canSeek, LightIcons.SKIP_FORWARD_FIFTEEN, "Forward 15s", viewModel::skipForward),
                         LightBarButton.LightIcon(LightIcons.FAST_FORWARD, viewModel::skipToNext, contentDescription = "Next track"),
                     ),
                 )

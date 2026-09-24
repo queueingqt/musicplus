@@ -31,8 +31,11 @@ const val COVER_ART_SERVER_PARAM = "musicplusServer"
 interface MusicApi {
     val serverId: String
 
-    /** Only meaningful for a server reachable over a raw URL fed straight to the player — see [PlaybackRepository.toAudioItem]. */
+    /** A server reachable over https:// — its songs go straight to the player and are never kept in the stream cache; see [PlaybackRepository.toAudioItem]. */
     val baseUrlIsHttps: Boolean
+
+    /** Whether the player itself can fetch [streamUrl] (https://, or http:// on a build that permits cleartext) — see [playerCanFetch]. An http:// server that can be fetched streams the song being started but keeps its stream cache and prefetch. */
+    val playerCanFetchDirectly: Boolean
 
     /** An ordinary, signed-in question — the control that says a "no" from a capability probe means something. */
     suspend fun checkLogin(): Result<Unit>
@@ -74,7 +77,7 @@ interface MusicApi {
     suspend fun reorderPlaylist(playlistId: String, name: String, songIds: List<String>)
     suspend fun deletePlaylist(id: String)
 
-    /** Direct playback URL, fully authenticated — only safe to feed straight to the player when [baseUrlIsHttps]; see [PlaybackRepository.toAudioItem]. */
+    /** Direct playback URL, fully authenticated — only safe to feed straight to the player when [playerCanFetchDirectly]; see [PlaybackRepository.toAudioItem]. */
     fun streamUrl(songId: String, maxBitRateKbps: Int? = null): String
 
     /** Same content as [streamUrl] (transcoded to [maxBitRateKbps] when given), streamed to [destination] through the app's own HTTP client — the http:// download-then-play fallback, and the capped-quality download path. */

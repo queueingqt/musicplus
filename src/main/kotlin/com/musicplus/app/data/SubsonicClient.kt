@@ -89,8 +89,11 @@ class SubsonicClient(
     // error). Confirmed 2026-09-17.
     private val baseUrl: String = config.baseUrl.trimEnd('/')
 
-    /** Used by PlaybackRepository to decide streaming vs. download-then-play — see its toAudioItem. */
+    /** Used by PlaybackRepository to decide streaming vs. download-then-play — see its toAudioItem and [playerCanFetch]. */
     val baseUrlIsHttps: Boolean = baseUrl.startsWith("https://", ignoreCase = true)
+
+    /** Whether the player itself may fetch a stream URL (https, or http on a build that permits cleartext) — see [playerCanFetch]. */
+    val playerCanFetchDirectly: Boolean = playerCanFetch(baseUrl)
 
     companion object {
         private const val API_VERSION = "1.16.1"

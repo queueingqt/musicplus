@@ -23,6 +23,7 @@ class JellyfinApi(
 ) : MusicApi {
 
     override val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
+    override val playerCanFetchDirectly: Boolean get() = client.playerCanFetchDirectly
 
     private fun scopeId(id: String) = ServerScope.scope(serverId, id)
 

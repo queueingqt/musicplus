@@ -20,6 +20,7 @@ class SubsonicApi(
 ) : MusicApi {
 
     override val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
+    override val playerCanFetchDirectly: Boolean get() = client.playerCanFetchDirectly
 
     private fun scopeId(id: String) = ServerScope.scope(serverId, id)
 
@@ -220,12 +221,16 @@ class SubsonicApi(
         learning(Capability.PLAYLIST_WRITE) { client.call("deletePlaylist.view", listOf("id" to native(id))) }
     }
 
-    /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. Only safe to use when [baseUrlIsHttps] — see PlaybackRepository.toAudioItem. */
+    /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. Only safe to use when [playerCanFetchDirectly] — see PlaybackRepository.toAudioItem. */
     override fun streamUrl(songId: String, maxBitRateKbps: Int?): String {
         val params = buildList {
             add("id" to native(songId))
             if (maxBitRateKbps != null) add("maxBitRate" to maxBitRateKbps.toString())
         }
+        // No estimateContentLength, on purpose: a transcode then has no length, so the player starts at once but cannot
+        // seek until the queue hand-over swaps the song onto its file. With a length declared, the Ogg/Opus extractor
+        // seeks to the end for the duration, the server ignores the range, and the whole transcode is read first (about
+        // 100 s over a weak cellular link, 2026-09-23).
         return client.endpointUrl("stream.view", params)
     }
 

@@ -55,6 +55,9 @@ class JellyfinClient(
     val userId: String get() = config.userId
     val baseUrlIsHttps: Boolean = baseUrl.startsWith("https://", ignoreCase = true)
 
+    /** Whether the player itself may fetch a stream URL (https, or http on a build that permits cleartext) — see [playerCanFetch]. */
+    val playerCanFetchDirectly: Boolean = playerCanFetch(baseUrl)
+
     companion object {
         private const val API_CALL_TIMEOUT_MS = 60_000L
     }

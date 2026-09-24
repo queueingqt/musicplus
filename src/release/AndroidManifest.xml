@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged over the manifest the light-sdk plugin generates (which has no field for this): lets the
+     player stream from an http:// server instead of downloading the whole track first. Only the
+     src/main tree reaches the SDK's own builder, so a build made there simply lacks it and the app
+     falls back to download-then-play (see PlayerReach.kt). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true" />
+</manifest>

@@ -124,6 +124,13 @@ data class PlaybackState(
      * tap didn't do anything."
      */
     val isLoading: Boolean = false,
+    /**
+     * False while the current song is playing from a transcoded stream: it has no length until it has been read to the
+     * end, so the player cannot seek in it (skip back/forward do nothing). It is swapped onto its file soon after it
+     * starts, which makes this true again — see PlaybackRepository.extendToFullQueue. The screen dims the seek controls
+     * meanwhile rather than leave buttons that silently do nothing.
+     */
+    val canSeek: Boolean = true,
 ) {
     val currentTrack: Track? get() = queue.getOrNull(currentIndex)
 
