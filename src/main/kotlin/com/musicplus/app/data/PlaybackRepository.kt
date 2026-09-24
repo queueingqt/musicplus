@@ -4,6 +4,7 @@ import com.musicplus.app.NoteModal
 import com.musicplus.app.PlaybackState
 import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
+import com.musicplus.app.data.playback.AlbumArtHint
 import com.musicplus.app.data.playback.ErrorRecovery
 import com.musicplus.app.data.playback.JellyfinPlayReportSink
 import com.musicplus.app.data.playback.LightQueuePlayer
@@ -100,8 +101,8 @@ class PlaybackRepository(
 
     val state: Flow<PlaybackState> = playQueue.state
 
-    /** The explicit album-art hint passed to the current play, if any. */
-    val albumArtUrlHint: StateFlow<String?> = playQueue.albumArtUrl
+    /** The album-art hint of the current play, if any: applies only to songs of the album it was given for. */
+    val albumArtHint: StateFlow<AlbumArtHint?> = playQueue.albumArtHint
 
     /** The state, read synchronously: seeds a fresh screen's `stateIn` so Now Playing does not flash to empty on every navigation. */
     fun currentSnapshot(): PlaybackState = playQueue.snapshot()
@@ -157,7 +158,7 @@ class PlaybackRepository(
                 Recovery.Retry -> {
                     AppLogger.d("PlaybackRepository", "auto-retrying ${track?.id} once after ${err.diagnostic}")
                     delay(RETRY_DELAY_MS)
-                    if (s.currentIndex in s.queue.indices) playQueue.playAsync(s.queue, s.currentIndex, albumArtUrlHint.value)
+                    if (s.currentIndex in s.queue.indices) playQueue.playAsync(s.queue, s.currentIndex)
                 }
             }
         }

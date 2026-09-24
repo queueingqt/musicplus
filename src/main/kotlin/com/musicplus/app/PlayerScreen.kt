@@ -38,6 +38,7 @@ import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
+import com.musicplus.app.data.playback.AlbumArtHint
 import com.musicplus.app.data.playback.SleepTimerState
 import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
@@ -100,7 +101,8 @@ private fun seekButton(enabled: Boolean, icon: LightIconConfiguration, descripti
  *
  * Prefers, in order: (1) the explicit hint PlaybackRepository.play() was
  * given — set synchronously by the caller the same moment playback starts,
- * see PlaybackRepository.albumArtUrlHint's doc; (2) the *album's* art looked
+ * and only for songs of the album it was given for (#77), see [AlbumArtHint];
+ * (2) the *album's* art looked
  * up by id, for sessions that didn't supply a hint (e.g. resuming via the
  * mini-player, where nothing is "in progress" to pass one); (3) the track's
  * own art as a last resort. Navidrome assigns every individual track its own
@@ -113,8 +115,8 @@ private fun seekButton(enabled: Boolean, icon: LightIconConfiguration, descripti
  * resolve even when the answer is already known synchronously at
  * play()-time.
  */
-fun resolveAlbumArtUrl(track: Track?, albums: List<Album>, hint: String?): String? =
-    hint ?: albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
+fun resolveAlbumArtUrl(track: Track?, albums: List<Album>, hint: AlbumArtHint?): String? =
+    hint?.urlFor(track) ?: albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PlayerScreenViewModel(
@@ -142,13 +144,13 @@ class PlayerScreenViewModel(
     // playlist, or restored at launch) has its art on the first frame too;
     // the live albums flow below only confirms it (issue #54).
     val albumArtUrl: StateFlow<String?> = combine(
-        state, libraryRepository.observeAlbums(), playback.albumArtUrlHint,
+        state, libraryRepository.observeAlbums(), playback.albumArtHint,
     ) { s, albums, hint ->
         resolveAlbumArtUrl(s.currentTrack, albums, hint)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtUrlHint.value),
+        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
     )
 
     /** True while the current track's favorite state is still waiting to reach the server (issue #24) — the star's own filled/outline state already reflects the optimistic local value, so this drives a separate "still syncing" indicator rather than a third icon state. */

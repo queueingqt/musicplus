@@ -14,7 +14,7 @@ class PlaybackPersistenceTest {
     )
 
     private fun saved(index: Int = 0, shuffle: Boolean = false, repeat: RepeatMode = RepeatMode.OFF) =
-        Saved(currentIndex = index, positionMs = 42_000, shuffle = shuffle, repeatMode = repeat, albumArtUrl = "art")
+        Saved(currentIndex = index, positionMs = 42_000, shuffle = shuffle, repeatMode = repeat)
 
     private fun restore(ids: List<String>, known: List<String>, saved: Saved) =
         PlaybackPersistence.restoredFrom(ids, known.associateWith(::track), saved)
@@ -51,9 +51,8 @@ class PlaybackPersistenceTest {
     }
 
     @Test
-    fun theResumePositionAndArtComeBack() {
+    fun theResumePositionComesBack() {
         val r = restore(listOf("a"), listOf("a"), saved())!!
         assertEquals(42_000, r.positionMs)
-        assertEquals("art", r.albumArtUrl)
     }
 }

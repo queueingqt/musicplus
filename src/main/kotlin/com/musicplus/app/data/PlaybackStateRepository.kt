@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.first
 
 /**
  * Scalar "now playing" resume state — current queue index, playback position,
- * shuffle/repeat mode, and the album-art hint — so a restarted process can
+ * shuffle/repeat mode — so a restarted process can
  * restore what was playing (issue #27). The queue's own song-id order lives in
  * Room ([QueueDao]) instead, since that's genuinely a list, not a handful of
  * scalars; this only holds the small values that go with it. Backed by the
@@ -26,7 +26,9 @@ class PlaybackStateRepository(private val dataStore: DataStore<Preferences>) {
         val POSITION_MS = longPreferencesKey("playback_position_ms")
         val SHUFFLE = booleanPreferencesKey("playback_shuffle")
         val REPEAT_MODE = stringPreferencesKey("playback_repeat_mode")
-        val ALBUM_ART_URL = stringPreferencesKey("playback_album_art_url")
+
+        /** No longer saved (#77: a saved hint cannot say which song it was for); removed from what earlier versions left behind. */
+        val LEGACY_ALBUM_ART_URL = stringPreferencesKey("playback_album_art_url")
     }
 
     data class Saved(
@@ -34,7 +36,6 @@ class PlaybackStateRepository(private val dataStore: DataStore<Preferences>) {
         val positionMs: Long,
         val shuffle: Boolean,
         val repeatMode: RepeatMode,
-        val albumArtUrl: String?,
     )
 
     suspend fun read(): Saved {
@@ -47,7 +48,6 @@ class PlaybackStateRepository(private val dataStore: DataStore<Preferences>) {
             // throwing — a bad resume value should never be the reason playback
             // itself fails to restore.
             repeatMode = prefs[Keys.REPEAT_MODE]?.let { name -> runCatching { RepeatMode.valueOf(name) }.getOrNull() } ?: RepeatMode.OFF,
-            albumArtUrl = prefs[Keys.ALBUM_ART_URL],
         )
     }
 
@@ -57,7 +57,7 @@ class PlaybackStateRepository(private val dataStore: DataStore<Preferences>) {
             prefs[Keys.POSITION_MS] = saved.positionMs
             prefs[Keys.SHUFFLE] = saved.shuffle
             prefs[Keys.REPEAT_MODE] = saved.repeatMode.name
-            if (saved.albumArtUrl != null) prefs[Keys.ALBUM_ART_URL] = saved.albumArtUrl else prefs.remove(Keys.ALBUM_ART_URL)
+            prefs.remove(Keys.LEGACY_ALBUM_ART_URL)
         }
     }
 
@@ -68,7 +68,7 @@ class PlaybackStateRepository(private val dataStore: DataStore<Preferences>) {
             prefs.remove(Keys.POSITION_MS)
             prefs.remove(Keys.SHUFFLE)
             prefs.remove(Keys.REPEAT_MODE)
-            prefs.remove(Keys.ALBUM_ART_URL)
+            prefs.remove(Keys.LEGACY_ALBUM_ART_URL)
         }
     }
 }

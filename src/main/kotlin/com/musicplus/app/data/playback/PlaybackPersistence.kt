@@ -21,7 +21,6 @@ data class RestoredPlayback(
     val positionMs: Long,
     val shuffle: Boolean,
     val repeatMode: RepeatMode,
-    val albumArtUrl: String?,
 )
 
 /**
@@ -101,7 +100,6 @@ class PlaybackPersistence(
                 positionMs = saved.positionMs,
                 shuffle = saved.shuffle,
                 repeatMode = if (saved.shuffle && saved.repeatMode == RepeatMode.REPEAT_TRACK) RepeatMode.OFF else saved.repeatMode,
-                albumArtUrl = saved.albumArtUrl,
             )
         }
     }

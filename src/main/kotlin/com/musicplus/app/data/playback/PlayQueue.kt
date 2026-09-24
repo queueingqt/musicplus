@@ -39,6 +39,17 @@ internal fun loadFailureReason(e: Throwable): String = when {
     else -> e.message ?: e.toString()
 }
 
+/**
+ * The album art a caller already had in hand when it started a play (an album screen passes its own album's), kept with the album it
+ * is for. Now Playing shows it on the first frame, where looking the art up by album id needs an async lookup and flashed the song's own
+ * uncached art first (2026-09-18). It applies only to songs of that album: it used to be kept for the whole queue, so a song from
+ * another album showed the first album's art (#77).
+ */
+data class AlbumArtHint(val url: String, val albumId: String?) {
+    /** The hint's art if [track] is a song of its album, else null: the caller falls through to looking the album up. */
+    fun urlFor(track: Track?): String? = url.takeIf { albumId != null && albumId == track?.albumId }
+}
+
 /** What the player has been given for the current queue. It decides which index the screen shows and whether the queue can be edited without touching the player. */
 enum class Hold {
     /** Nothing: a queue restored from disk and not started, one that was cleared, or a play that has not reached the player yet. The queue is all there is to edit. */
@@ -181,10 +192,10 @@ class PlayQueue(
     )
 
     private val session = MutableStateFlow(Session())
-    private val art = MutableStateFlow<String?>(null)
+    private val art = MutableStateFlow<AlbumArtHint?>(null)
 
-    /** The explicit album-art hint passed to the current play, if any: set with the queue, so Now Playing does not show the song's own uncached art for a frame before the album lookup corrects it (2026-09-18). */
-    val albumArtUrl: StateFlow<String?> = art.asStateFlow()
+    /** The album-art hint of the current play, if any, set with the queue; see [AlbumArtHint]. */
+    val albumArtHint: StateFlow<AlbumArtHint?> = art.asStateFlow()
 
     /** The queue, for whoever keeps it saved. */
     val queue: Flow<List<Track>> = session.map { it.queue }.distinctUntilChanged()
@@ -308,7 +319,10 @@ class PlayQueue(
         // One assignment: the new queue, with nothing yet given to the player for it, and loading from this moment (so the icon shows
         // it even while the player is not ready).
         session.update { it.copy(queue = tracks, pendingIndex = startIndex, hold = Hold.NOTHING, holdingPlaying = null, loading = true, loadError = null) }
-        art.value = albumArtUrl
+        // A hint the caller gives is for the album of the song it starts; one already held is kept for a replay in the same album (a tap
+        // on a queue row, a retry) and dropped for a song of another.
+        val startAlbumId = tracks[startIndex].albumId
+        art.value = albumArtUrl?.let { AlbumArtHint(it, startAlbumId) } ?: art.value?.takeIf { it.albumId != null && it.albumId == startAlbumId }
         // Pause whatever was playing the instant the screen switches to the new song: loading can take a real, visible amount of
         // time, and leaving the old song running meant it kept audibly playing under the new song's title (reported live).
         player.pause()
@@ -618,7 +632,7 @@ class PlayQueue(
             val resumePositionMs = restoredPositionMs
             restoredPositionMs = 0L
             scope.launch {
-                play(s.queue, startIndex, art.value)
+                play(s.queue, startIndex)
                 if (resumePositionMs > 0L) {
                     withTimeoutOrNull(timing.durationWaitMs) { player.durationMs.first { it > 0L } }
                     player.seekTo(resumePositionMs)
@@ -639,7 +653,7 @@ class PlayQueue(
                 // After a playback error the player sits idle until it is prepared again, so a bare play() does nothing (pressing
                 // play left the error on screen for good, issue #50). Start the current song again, as tapping it in the queue does.
                 val now = snapshot()
-                if (now.currentIndex in now.queue.indices) playAsync(now.queue, now.currentIndex, art.value) else player.play()
+                if (now.currentIndex in now.queue.indices) playAsync(now.queue, now.currentIndex) else player.play()
             }
             else -> player.play()
         }
@@ -680,8 +694,8 @@ class PlayQueue(
         val s = session.value
         val index = queueIndex()
         when {
-            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == s.queue.lastIndex -> playAsync(s.queue, 0, art.value)
-            s.hold != Hold.WHOLE -> if (index + 1 in s.queue.indices) playAsync(s.queue, index + 1, art.value)
+            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == s.queue.lastIndex -> playAsync(s.queue, 0)
+            s.hold != Hold.WHOLE -> if (index + 1 in s.queue.indices) playAsync(s.queue, index + 1)
             else -> player.skipToNext()
         }
     }
@@ -691,10 +705,10 @@ class PlayQueue(
         val s = session.value
         val index = queueIndex()
         when {
-            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == 0 -> playAsync(s.queue, s.queue.lastIndex, art.value)
+            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == 0 -> playAsync(s.queue, s.queue.lastIndex)
             s.hold != Hold.WHOLE -> {
                 val wellIn = player.positionMs.value > PREVIOUS_RESTARTS_AFTER_MS && currentSongCanSeek()
-                if (wellIn || index == 0) player.seekTo(0) else playAsync(s.queue, index - 1, art.value)
+                if (wellIn || index == 0) player.seekTo(0) else playAsync(s.queue, index - 1)
             }
             else -> player.skipToPrevious()
         }
@@ -707,25 +721,25 @@ class PlayQueue(
     fun jumpToAsync(index: Int) {
         val current = session.value.queue
         if (index !in current.indices) return
-        playAsync(current, index, art.value)
+        playAsync(current, index)
     }
 
     suspend fun jumpTo(index: Int) {
         val current = session.value.queue
         if (index !in current.indices) return
-        play(current, index, art.value)
+        play(current, index)
     }
 
     // ---- saving, restoring, resetting ----
 
     /**
      * Puts back what was saved: a restore only reads, it never touches the player and fetches nothing, so every screen can show the
-     * restored song, art and modes at once without a cold-start network fetch nobody asked for. The player is loaded when the person
+     * restored song and modes at once without a cold-start network fetch nobody asked for. Its art comes from the album lookup: the
+     * hint is not saved, because a saved one cannot say which song it was for (#77). The player is loaded when the person
      * presses play ([togglePlayPause]).
      */
     fun restore(restored: RestoredPlayback) {
         session.update { it.copy(queue = restored.tracks, pendingIndex = restored.index, shuffle = restored.shuffle, repeatMode = restored.repeatMode) }
-        art.value = restored.albumArtUrl
         restoredPositionMs = restored.positionMs
     }
 
@@ -743,7 +757,6 @@ class PlayQueue(
             positionMs = player.positionMs.value,
             shuffle = s.shuffle,
             repeatMode = s.repeatMode,
-            albumArtUrl = art.value,
         )
     }
 

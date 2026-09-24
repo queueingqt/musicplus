@@ -45,13 +45,13 @@ class AlbumArtScreenViewModel(
     // (about 450 ms measured). The album is the same one Now Playing is showing, so its art is already
     // in memory (issue #54).
     val albumArtUrl: StateFlow<String?> = combine(
-        state, libraryRepository.observeAlbums(), playback.albumArtUrlHint,
+        state, libraryRepository.observeAlbums(), playback.albumArtHint,
     ) { s, albums, hint ->
         resolveAlbumArtUrl(s.currentTrack, albums, hint)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtUrlHint.value),
+        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
     )
 }
 

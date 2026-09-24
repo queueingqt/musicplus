@@ -55,8 +55,8 @@ class PlayQueueTest {
         }
     }
 
-    private fun track(n: Int, id: String = "a:$n", title: String = "t$n") = Track(
-        id = id, title = title, albumId = null, albumName = null, artistId = null, artistName = null, trackNumber = null,
+    private fun track(n: Int, id: String = "a:$n", title: String = "t$n", albumId: String? = null) = Track(
+        id = id, title = title, albumId = albumId, albumName = null, artistId = null, artistName = null, trackNumber = null,
         durationSec = 200, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = null,
     )
 
@@ -170,7 +170,7 @@ class PlayQueueTest {
     // ---- a queue restored from disk ----
 
     private fun restored(count: Int, index: Int, positionMs: Long = 42_000) =
-        RestoredPlayback(tracks(count), index, positionMs, shuffle = false, repeatMode = RepeatMode.OFF, albumArtUrl = "art")
+        RestoredPlayback(tracks(count), index, positionMs, shuffle = false, repeatMode = RepeatMode.OFF)
 
     /** Editing a queue nobody has started used to load all of it into the player, and to read the player's stale index 0 as the playing song. */
     @Test
@@ -198,7 +198,7 @@ class PlayQueueTest {
         assertFalse(s.isLoading, "#63: it used to read as loading")
         assertFalse(s.isPlaying)
         assertEquals(0L, s.positionMs)
-        assertEquals("art", queue.albumArtUrl.value)
+        assertNull(queue.albumArtHint.value, "a saved hint cannot say which song it was for, so none is restored (#77)")
     }
 
     @Test
@@ -498,7 +498,7 @@ class PlayQueueTest {
         queue.reset()
         // An empty queue has no song to be on: index 0, as the screens have always been given.
         assertEquals(PlaybackState().copy(currentIndex = 0), queue.snapshot())
-        assertNull(queue.albumArtUrl.value)
+        assertNull(queue.albumArtHint.value)
     }
 
     @Test
@@ -510,6 +510,44 @@ class PlayQueueTest {
         delay(200)
         assertFalse(queue.snapshot().isLoading)
         assertEquals(0, player.count("setMediaQueue"))
+    }
+
+    // ---- the album-art hint belongs to its album (#77) ----
+
+    private fun mixed() = listOf(track(0, albumId = "alb1"), track(1, albumId = "alb1"), track(2, albumId = "alb2"))
+
+    @Test
+    fun aHintAppliesToSongsOfItsAlbumAndNoOther() {
+        val hint = AlbumArtHint("http://art/alb1", albumId = "alb1")
+        assertEquals("http://art/alb1", hint.urlFor(track(0, albumId = "alb1")))
+        assertNull(hint.urlFor(track(2, albumId = "alb2")))
+        assertNull(hint.urlFor(null))
+        assertNull(AlbumArtHint("http://art/x", albumId = null).urlFor(track(0, albumId = null)), "a hint for no album applies to nothing")
+    }
+
+    @Test
+    fun theHintGivenToAPlayIsForTheAlbumOfTheSongItStarts() = run {
+        queue.play(mixed(), 0, albumArtUrl = "http://art/alb1")
+        assertEquals(AlbumArtHint("http://art/alb1", "alb1"), queue.albumArtHint.value)
+    }
+
+    @Test
+    fun aReplayInTheSameAlbumKeepsTheHintAndOneInAnotherAlbumDropsIt() = run {
+        queue.play(mixed(), 0, albumArtUrl = "http://art/alb1")
+        settled(3)
+        queue.jumpToAsync(1)
+        delay(80)
+        assertEquals("http://art/alb1", queue.albumArtHint.value?.url, "same album: the flash-free art is still right")
+        queue.jumpToAsync(2)
+        delay(80)
+        assertNull(queue.albumArtHint.value, "another album: the hint would show the wrong art")
+    }
+
+    @Test
+    fun aNewExplicitHintReplacesTheOldOne() = run {
+        queue.play(mixed(), 0, albumArtUrl = "http://art/alb1")
+        queue.play(mixed(), 2, albumArtUrl = "http://art/alb2")
+        assertEquals(AlbumArtHint("http://art/alb2", "alb2"), queue.albumArtHint.value)
     }
 
     // ---- one projection (#63) ----
