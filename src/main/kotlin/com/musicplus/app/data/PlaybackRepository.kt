@@ -4,6 +4,9 @@ import com.musicplus.app.NoteModal
 import com.musicplus.app.PlaybackState
 import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
+import com.musicplus.app.data.playback.JellyfinPlayReportSink
+import com.musicplus.app.data.playback.ListenReporting
+import com.musicplus.app.data.playback.ScrobbleSink
 import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
@@ -385,8 +388,6 @@ class PlaybackRepository(
     // watcher's lambda has to already exist by then, not just be scheduled
     // to exist later in constructor order.
     private val completionEdge = EdgeDetector()
-    private val nowPlayingEdge = EdgeDetector()
-    private val scrobbledEdge = EdgeDetector()
 
     // Position-polling workaround for REPEAT_TRACK/REPEAT_QUEUE, since
     // LightAudioPlayer's confirmed public surface has no track-completion or
@@ -447,96 +448,15 @@ class PlaybackRepository(
         }
     }
 
-    // Scrobbling — off by default (see AppSettingsRepository.scrobblingEnabled's
-    // doc). "Now playing" notification (submission=false) fires once a track
-    // starts; the real scrobble (submission=true) fires once it's played past
-    // the standard Last.fm threshold: half its duration or 4 minutes, whichever
-    // is smaller, and never at all for a track under 30s — the same rule
-    // Last.fm's own clients use, not something Subsonic's scrobble.view itself
-    // enforces (it'll happily record a scrobble at any position if asked).
-    // nowPlayingEdge/scrobbledEdge, same EdgeDetector shape as
-    // nearEndCompletionWatcher's own — a manual seek backward past an
-    // already-scrobbled position correctly does NOT re-fire, since both
-    // compare against currentIndex, not position.
-    private val scrobbleWatcher = scope.launch {
-        combine(state, appSettingsRepository.scrobblingEnabled) { s, enabled -> s to enabled }
-            .collect { (s, enabled) ->
-                if (!enabled || !s.isPlaying || s.durationMs <= 0L) return@collect
-                val track = s.currentTrack ?: return@collect
-
-                nowPlayingEdge.fireOnce(s.currentIndex) { sendScrobble(track.id, submission = false) }
-
-                if (s.durationMs < MIN_SCROBBLE_DURATION_MS) return@collect
-                val thresholdMs = minOf(s.durationMs / 2, SCROBBLE_THRESHOLD_MS)
-                if (s.positionMs >= thresholdMs) {
-                    scrobbledEdge.fireOnce(s.currentIndex) { sendScrobble(track.id, submission = true) }
-                }
-            }
-    }
-
-    private fun isJellyfinTrack(songId: String): Boolean =
-        ServerScope.serverOf(songId)?.let { serverId -> AppServerPrefs.servers.value.value.find { it.id == serverId }?.kind } == ServerKind.JELLYFIN
-
-    /** A fresh id per queue-position-change, not per app launch — matches how a real "playback session" starts over each time a different track becomes current. Jellyfin only uses this to tell concurrent sessions apart; nothing here reads it back. */
-    private var jellyfinPlaySessionId: String? = null
-    private var jellyfinReportedTrackId: String? = null
-    private var jellyfinProgressTicker: Job? = null
-
-    /**
-     * Reports playback progress to a Jellyfin server — unconditional, never gated by [AppSettingsRepository.scrobblingEnabled];
-     * see [MusicApi]'s class doc for why this is deliberately not the same mechanism as [scrobbleWatcher]. Drives that
-     * server's own resume-position and play history, nothing to do with any Last.fm/ListenBrainz relay.
-     *
-     * Simplified from what a full Jellyfin client session tracks: reports Start once when a Jellyfin track becomes
-     * current and playing, Progress every [JELLYFIN_PROGRESS_INTERVAL_MS] for as long as it stays current (playing or
-     * paused — so a pause still saves roughly where playback left off), and Stopped once it stops being current
-     * (the queue moves on, is cleared, or the player is released). A pause/resume in between doesn't get its own
-     * dedicated report; the next periodic tick (or the eventual Stopped) carries the accurate position regardless.
-     */
-    private val jellyfinPlaybackReportWatcher = scope.launch {
-        state.collect { s ->
-            val track = s.currentTrack
-            val current = track?.takeIf { isJellyfinTrack(it.id) }
-
-            if (jellyfinReportedTrackId != null && jellyfinReportedTrackId != current?.id) {
-                val stoppedId = jellyfinReportedTrackId!!
-                val sessionId = jellyfinPlaySessionId!!
-                val lastKnownPositionMs = s.positionMs
-                jellyfinReportedTrackId = null
-                jellyfinProgressTicker?.cancel()
-                reportJellyfin("stop") { (apiHolder.forId(stoppedId) as? JellyfinApi)?.reportPlaybackStopped(stoppedId, lastKnownPositionMs, sessionId) }
-            }
-
-            if (current == null || !s.isPlaying || s.durationMs <= 0L) return@collect
-            if (jellyfinReportedTrackId == current.id) return@collect
-
-            jellyfinReportedTrackId = current.id
-            val sessionId = java.util.UUID.randomUUID().toString()
-            jellyfinPlaySessionId = sessionId
-            reportJellyfin("start") { (apiHolder.forId(current.id) as? JellyfinApi)?.reportPlaybackStart(current.id, s.positionMs, sessionId) }
-            jellyfinProgressTicker = scope.launch {
-                while (true) {
-                    delay(JELLYFIN_PROGRESS_INTERVAL_MS)
-                    val snap = currentSnapshot()
-                    if (snap.currentTrack?.id != current.id) break
-                    reportJellyfin("progress") { (apiHolder.forId(current.id) as? JellyfinApi)?.reportPlaybackProgress(current.id, snap.positionMs, !snap.isPlaying, sessionId) }
-                }
-            }
-        }
-    }
-
-    /** Fire-and-forget, same reasoning as [sendScrobble] — this must never block or affect actual playback, and a Jellyfin server being briefly unreachable is not worth surfacing as an error the way a failed scrobble is. */
-    private fun reportJellyfin(label: String, call: suspend () -> Unit) {
-        scope.launch {
-            try {
-                call()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                AppLogger.e("PlaybackRepository", "Jellyfin playback-$label report failed", e)
-            }
-        }
-    }
+    // Reports listening (scrobbles, a Jellyfin server's play history). What counts as a listen is ListenTracker's business
+    // and where it is reported is the sinks': see data/playback.
+    private val listens = ListenReporting(
+        scope = scope,
+        sinks = listOf(
+            ScrobbleSink(apiHolder, libraryRepository) { appSettingsRepository.scrobblingEnabled.first() },
+            JellyfinPlayReportSink(apiHolder),
+        ),
+    ).also { it.start(state) }
 
     // Playback errors (issues #47/#50). The SDK's LightAudioError only ever
     // reached the screen as Now Playing's "Playback error: ..." line — nothing
@@ -609,48 +529,6 @@ class PlaybackRepository(
         AppLogger.d("PlaybackRepository", "skipping \"${track.title}\" (${track.id}): its server is not reachable")
         NoteModal.show("Skipped \"${track.title}\": server not reachable")
         if (next != null) jumpToAsync(next) else scope.launch { play(s.queue, s.queue.indexOfFirst { TrackAvailability.isPlayable(it) }) }
-    }
-
-    /**
-     * Fire-and-forget on its own child coroutine — scrobbling must never block
-     * or otherwise affect actual playback. Failures are logged AND surfaced to
-     * [AppScrobblePrefs.lastError] (cleared on the next success): required,
-     * not swallowed — see that property's own doc for why.
-     */
-    private fun sendScrobble(songId: String, submission: Boolean) {
-        scope.launch {
-            val target = scrobbleTarget(songId)
-            if (target == null) {
-                AppLogger.d("PlaybackRepository", "scrobble(songId=$songId): no server can count it")
-                return@launch
-            }
-            // scrobble() is Subsonic-only (not part of MusicApi — see its class doc); scrobbleTarget() only ever
-            // returns a target whose server has Capability.SCROBBLE, which a Jellyfin server is never given, so this
-            // cast always succeeds in practice — defensive, not a silent drop, if that assumption is ever wrong.
-            val api = apiHolder.forId(target) as? SubsonicApi ?: return@launch
-            try {
-                api.scrobble(target, submission)
-                AppLogger.d("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) succeeded" + if (target != songId) " on another server, as $target" else "")
-                AppScrobblePrefs.lastError.set(null)
-            } catch (e: Exception) {
-                AppLogger.e("PlaybackRepository", "scrobble(songId=$songId, submission=$submission) failed", e)
-                AppScrobblePrefs.lastError.set(e.message ?: "Scrobble failed")
-            }
-        }
-    }
-
-    private fun canScrobbleOn(serverId: String?): Boolean =
-        serverId != null && serverId in AppServerPrefs.enabledServerIds.value.value && Capabilities.can(serverId, Capability.SCROBBLE)
-
-    /**
-     * Which song to scrobble, so the play is counted somewhere: the song itself when its own server is on and offers
-     * scrobbling, otherwise the exact same song (same artist, title and album) on another server that does, otherwise
-     * none (the play is not counted).
-     */
-    private suspend fun scrobbleTarget(songId: String): String? {
-        val own = ServerScope.serverOf(songId)
-        if (canScrobbleOn(own)) return songId
-        return libraryRepository.sameSongElsewhere(songId).firstOrNull { canScrobbleOn(ServerScope.serverOf(it)) }
     }
 
     // --- Sleep timer — ephemeral, in-memory only, by design (see
@@ -1169,6 +1047,7 @@ class PlaybackRepository(
         // restoreFromDisk()'s doc. This has to win any race against it, not
         // just the `queue.value =` write two lines down.
         hasStartedRealPlay = true
+        listens.beginPlay()
         loadError.value = null
         playGeneration++
         // Whatever full-queue rebuild the previous play() left running is now
@@ -1823,14 +1702,8 @@ class PlaybackRepository(
         /** See [startSleepTimer]'s doc — how often the live countdown's [SleepTimerState.Countdown.remainingMs] ticks. */
         const val SLEEP_TIMER_TICK_MS = 1_000L
 
-        /** See [scrobbleWatcher]'s doc — Last.fm's own "don't scrobble anything shorter than this" rule. */
-        const val MIN_SCROBBLE_DURATION_MS = 30_000L
 
-        /** See [scrobbleWatcher]'s doc — Last.fm's own "half the track, or this, whichever is smaller" scrobble threshold. */
-        const val SCROBBLE_THRESHOLD_MS = 240_000L
 
-        /** See [jellyfinPlaybackReportWatcher]'s doc — how often a still-current Jellyfin track's position is re-sent, so its own resume-position stays reasonably fresh without a request on every position tick (the mistake issue #56 tracks for album art). */
-        const val JELLYFIN_PROGRESS_INTERVAL_MS = 15_000L
     }
 }
 
