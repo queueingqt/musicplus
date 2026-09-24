@@ -38,7 +38,8 @@ object AppGraph {
         val lyricsRepository: LyricsRepository,
         val syncQueueRepository: SyncQueueRepository,
         val localDataRepository: LocalDataRepository,
-        val serverRemoval: ServerRemoval,
+        val serverLifecycle: ServerLifecycle,
+        val serverLogin: ServerLogin,
         val connectivity: LightConnectivity,
         val streamCache: StreamCache,
     )
@@ -60,23 +61,6 @@ object AppGraph {
         instance ?: synchronized(this) {
             instance ?: build(lightContext).also { instance = it }
         }
-
-    /** Call after SettingsScreen saves a new server URL/credentials so the next API call re-resolves. */
-    fun invalidateApi() {
-        instance?.apiHolder?.invalidate()
-    }
-
-    /**
-     * Call after a server was switched on or off, added or removed. The lists already follow the servers that are on
-     * (they are limited to those servers' rows), so this only has to bring a newly shown server's rows up to date. It
-     * sets the warm values itself, ahead of the DataStore mirror, because the refresh below reads them and would
-     * otherwise still see the servers as they were a moment ago.
-     */
-    fun serversChanged(activeServerId: String?, enabledServerIds: Set<String>) {
-        AppServerPrefs.activeServerId.set(activeServerId)
-        AppServerPrefs.enabledServerIds.set(enabledServerIds)
-        instance?.listRefresher?.refreshAll()
-    }
 
     // Every AppSettingsRepository flow that just needs to keep a process-lifetime
     // WarmedFlow (AppLogger, AppDisplayPrefs, AppQualityPrefs, ...) in sync follows
@@ -123,6 +107,8 @@ object AppGraph {
         mirrorInto(serverSyncStatus.lastSynced, AppServerPrefs.lastSyncedAt::set)
         mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs.scrobblingEnabled::set)
         val apiHolder = ApiHolder(serverConfigRepository)
+        // What runs for one server (a refresh, a capability probe) runs under it, so removing the server can stop it: see ServerWork.
+        val serverWork = ServerWork()
         val reachability = ServerReachability(appScope, apiHolder)
         apiHolder.reachability = reachability
         // Existing rows and files predate server-scoped ids. They belong to whichever server is active now,
@@ -136,7 +122,7 @@ object AppGraph {
         val connectivity = lightContext.connectivity
         // What each server can do (favorites, scrobbling, lyrics, playlists), found out with harmless requests when a
         // server is added or turned on and after every app update, and corrected by real use. See CapabilityRegistry.
-        val capabilityRegistry = CapabilityRegistry(lightContext.dataStore, appScope, apiHolder, connectivity, build = "${BuildConfig.VERSION_NAME}#$CAPABILITY_PROBE_REVISION")
+        val capabilityRegistry = CapabilityRegistry(lightContext.dataStore, appScope, apiHolder, connectivity, build = "${BuildConfig.VERSION_NAME}#$CAPABILITY_PROBE_REVISION", work = serverWork)
         apiHolder.learner = capabilityRegistry
         mirrorInto(capabilityRegistry.all, AppServerPrefs.capabilities::set)
         val streamCache = StreamCache(File(lightContext.filesDir, "streamcache"))
@@ -150,6 +136,14 @@ object AppGraph {
             downloadDao = database.downloadDao(),
             trackDao = database.trackDao(),
         )
+        // One refresh runner for the library and the playlists, so a server that is removed is stopped in both at once.
+        val serverRefresh = ServerRefresh(
+            isConnected = { connectivity.currentStatus.isConnected },
+            apis = apiHolder,
+            shownServerIds = serverConfigRepository.shownServerIds,
+            onRefreshed = { serverSyncStatus.refreshed(it) },
+            work = serverWork,
+        )
         val libraryRepository = LibraryRepository(
             apiHolder = apiHolder,
             artistDao = database.artistDao(),
@@ -159,18 +153,16 @@ object AppGraph {
             connectivity = connectivity,
             downloadRepository = downloadRepository,
             shownServerIds = serverConfigRepository.shownServerIds,
-            serverSyncStatus = serverSyncStatus,
+            serverRefresh = serverRefresh,
         )
         // The phone's own copy of the library, as far as a write is concerned (see LocalFirstWrites).
         val localCopy = RoomLocalCopy(database.artistDao(), database.albumDao(), database.trackDao(), database.playlistDao())
         val playlistRepository = PlaylistRepository(
-            apiHolder = apiHolder,
             playlistDao = database.playlistDao(),
             trackDao = database.trackDao(),
-            connectivity = connectivity,
             downloadRepository = downloadRepository,
             shownServerIds = serverConfigRepository.shownServerIds,
-            serverSyncStatus = serverSyncStatus,
+            serverRefresh = serverRefresh,
             localCopy = localCopy,
             localStars = { LocalStars(database.pendingMutationDao().pendingFavoriteIds()) },
         )
@@ -323,23 +315,37 @@ object AppGraph {
         }
         capabilityRegistry.watch(serverConfigRepository.enabledServers)
 
-        val serverRemoval = ServerRemoval(
+        val serverLogin = ServerLogin(
+            jellyfinDeviceId = appSettingsRepository::jellyfinDeviceId,
+            appVersion = BuildConfig.VERSION_NAME,
+        )
+        val serverLifecycle = ServerLifecycle(
             scope = appScope,
-            lightContext = lightContext,
-            serverConfigRepository = serverConfigRepository,
-            serverSyncStatus = serverSyncStatus,
-            capabilityRegistry = capabilityRegistry,
-            reachability = reachability,
-            apiHolder = apiHolder,
-            playbackStateRepository = playbackStateRepository,
-            downloadRepository = downloadRepository,
-            serverCleanupDao = database.serverCleanupDao(),
-            downloadDao = database.downloadDao(),
-            pendingMutationDao = database.pendingMutationDao(),
-            queueDao = database.queueDao(),
-            filesDir = lightContext.filesDir,
-            streamCache = streamCache,
-            albumArtRepository = albumArtRepository,
+            registry = serverConfigRepository,
+            login = serverLogin,
+            work = serverWork,
+            // Everything that holds state per server. A new holder is added here once, and forgetting a server reaches it.
+            holders = listOf(apiHolder, serverSyncStatus, capabilityRegistry, reachability),
+            leftovers = PhoneLeftovers(
+                lightContext = lightContext,
+                playbackStateRepository = playbackStateRepository,
+                downloadRepository = downloadRepository,
+                serverCleanupDao = database.serverCleanupDao(),
+                downloadDao = database.downloadDao(),
+                pendingMutationDao = database.pendingMutationDao(),
+                queueDao = database.queueDao(),
+                filesDir = lightContext.filesDir,
+                streamCache = streamCache,
+                albumArtRepository = albumArtRepository,
+            ),
+            // Set ahead of the DataStore mirror, because the list refresh that follows reads these and would otherwise still see the servers
+            // as they were a moment ago (the lists themselves already follow the servers that are on; this brings a newly shown one up to date).
+            announce = { saved ->
+                AppServerPrefs.servers.set(saved.servers)
+                AppServerPrefs.activeServerId.set(saved.activeId)
+                AppServerPrefs.enabledServerIds.set(saved.enabledIds)
+                listRefresher.refreshAll()
+            },
         )
 
         return Graph(
@@ -356,7 +362,8 @@ object AppGraph {
             lyricsRepository = lyricsRepository,
             syncQueueRepository = syncQueueRepository,
             localDataRepository = localDataRepository,
-            serverRemoval = serverRemoval,
+            serverLifecycle = serverLifecycle,
+            serverLogin = serverLogin,
             connectivity = connectivity,
             streamCache = streamCache,
         )

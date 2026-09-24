@@ -1,6 +1,9 @@
 package com.musicplus.app.data
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
@@ -17,6 +20,7 @@ class ServerRefreshTest {
     private val refreshed = CopyOnWriteArrayList<String>()
     private var connected = true
     private var saved = setOf("one", "two")
+    private val work = ServerWork()
 
     private fun refresh(shown: List<String> = listOf("one", "two"), apis: Map<String, MusicApi> = mapOf("one" to one, "two" to two)) =
         ServerRefresh(
@@ -24,6 +28,7 @@ class ServerRefreshTest {
             apis = FakeApiLookup(apis),
             shownServerIds = flowOf(shown),
             onRefreshed = { refreshed += it },
+            work = work,
             savedServerIds = { saved },
         )
 
@@ -71,5 +76,28 @@ class ServerRefreshTest {
         saved = setOf("two")
         assertFalse(runner.live(one))
         assertTrue(runner.live(two))
+    }
+
+    @Test
+    fun aRefreshStillRunningWhenItsServerIsStoppedWritesNothingMoreAndIsNotCountedAsDone() = runBlocking<Unit> {
+        val started = CompletableDeferred<Unit>()
+        val wrote = CopyOnWriteArrayList<String>()
+        val runner = refresh()
+        val running = launch {
+            runner.run("lists") { api ->
+                if (api.serverId == "one") {
+                    started.complete(Unit)
+                    delay(60_000)
+                    wrote += "one late write"
+                } else {
+                    wrote += "two"
+                }
+            }
+        }
+        started.await()
+        work.stop("one")
+        running.join()
+        assertEquals(listOf("two"), wrote.toList(), "only the server that was not stopped finished")
+        assertEquals(listOf("two"), refreshed.toList(), "the stopped one is not marked as refreshed either")
     }
 }

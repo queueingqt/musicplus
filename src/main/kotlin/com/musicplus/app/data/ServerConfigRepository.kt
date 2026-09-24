@@ -36,7 +36,7 @@ data class RemovedServer(val id: String, val name: String, val baseUrl: String, 
  * fails, so an install that already has a server saved from before this
  * change doesn't lose it — the next [addOrUpdate] re-writes it encrypted.
  */
-class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : ServerProfiles {
+class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : ServerProfiles, ServerRegistry {
 
     private object Keys {
         val SERVERS_JSON = stringPreferencesKey("server_profiles_json")
@@ -195,11 +195,18 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : Se
         }
     }
 
+    override suspend fun saved(): SavedServers {
+        val prefs = dataStore.data.first()
+        val all = parseServers(prefs)
+        val on = enabledIds(prefs, all)
+        return SavedServers(all, all.firstOrNull { it.id in on }?.id, on)
+    }
+
     /**
      * Adds a new profile (switched on), or replaces the one with the same [ServerProfile.id]. A profile that takes
      * over the id of a [RemovedServer] (see [findRemoved]) picks that server's kept downloads back up.
      */
-    suspend fun addOrUpdate(profile: ServerProfile) {
+    override suspend fun addOrUpdate(profile: ServerProfile) {
         dataStore.edit { prefs ->
             val current = parseServers(prefs).toMutableList()
             val enabled = enabledIds(prefs, current).toMutableSet()
@@ -221,7 +228,7 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : Se
     }
 
     /** Switches a server on or off. Off hides its content everywhere and stops refreshing it; nothing else about it changes. */
-    suspend fun setEnabled(id: String, on: Boolean) {
+    override suspend fun setEnabled(id: String, on: Boolean) {
         dataStore.edit { prefs ->
             val all = parseServers(prefs)
             val enabled = enabledIds(prefs, all).toMutableSet()
@@ -235,7 +242,7 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : Se
      * Forgets a server's login. [keptDownloadsAs] is set when its downloaded songs stay on the phone: they stay listed
      * under that record until they are deleted or a server with the same address and username is added again.
      */
-    suspend fun remove(id: String, keptDownloadsAs: RemovedServer? = null) {
+    override suspend fun remove(id: String, keptDownloadsAs: RemovedServer?) {
         dataStore.edit { prefs ->
             val all = parseServers(prefs)
             val remaining = all.filterNot { it.id == id }
@@ -252,7 +259,7 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : Se
     }
 
     /** Drops the record of a removed server (its kept downloads were deleted). */
-    suspend fun forgetRemoved(id: String) {
+    override suspend fun forgetRemoved(id: String) {
         dataStore.edit { prefs ->
             val gone = parseRemoved(prefs)
             if (gone.none { it.id == id }) return@edit
@@ -261,7 +268,7 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : Se
     }
 
     /** The removed server a new login for [baseUrl] and [username] would re-attach to, if any. */
-    suspend fun findRemoved(baseUrl: String, username: String): RemovedServer? {
+    override suspend fun findRemoved(baseUrl: String, username: String): RemovedServer? {
         val address = baseUrl.trimEnd('/')
         return parseRemoved(dataStore.data.first()).find { it.baseUrl.trimEnd('/').equals(address, ignoreCase = true) && it.username == username }
     }

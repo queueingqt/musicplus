@@ -9,17 +9,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.DownloadSummary
-import com.musicplus.app.data.JellyfinApiException
-import com.musicplus.app.data.ServerConfig
+import com.musicplus.app.data.LoginResult
+import com.musicplus.app.data.SaveOutcome
 import com.musicplus.app.data.ServerConfigRepository
+import com.musicplus.app.data.ServerDraft
 import com.musicplus.app.data.ServerKind
+import com.musicplus.app.data.ServerLifecycle
+import com.musicplus.app.data.ServerLogin
 import com.musicplus.app.data.ServerProfile
-import com.musicplus.app.data.ServerRemoval
-import com.musicplus.app.data.SubsonicApiException
-import com.musicplus.app.data.SubsonicClient
-import com.musicplus.app.data.authenticateJellyfin
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -42,7 +40,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 /**
  * Add or edit one [ServerProfile] (multi-server support). [serverId] null means
@@ -55,8 +52,8 @@ import java.util.UUID
  */
 class ServerEditScreenViewModel(
     private val serverConfigRepository: ServerConfigRepository,
-    private val serverRemoval: ServerRemoval,
-    private val appSettingsRepository: AppSettingsRepository,
+    private val serverLifecycle: ServerLifecycle,
+    private val serverLogin: ServerLogin,
     private val serverId: String?,
 ) : LightViewModel<Unit>() {
 
@@ -107,83 +104,44 @@ class ServerEditScreenViewModel(
         _testResult.value = null
     }
 
+    private fun draft() = ServerDraft(_kind.value, _name.value, _baseUrl.value, _username.value, _password.value)
+
     fun testConnection() {
         viewModelScope.launch {
             _testResult.value = "Testing..."
-            _testResult.value = when (_kind.value) {
-                ServerKind.SUBSONIC -> {
-                    // checkLogin, not ping: ping says OK to a wrong password on some servers (Bandcamp's).
-                    val result = SubsonicClient(ServerConfig(_baseUrl.value, _username.value, _password.value)).checkLogin()
-                    result.fold(
-                        onSuccess = { "Connected, login OK" },
-                        onFailure = { if (it is SubsonicApiException) "Login rejected: ${it.message}" else "Failed: ${it::class.simpleName}: ${it.message}" },
-                    )
-                }
-                ServerKind.JELLYFIN -> {
-                    val result = authenticateJellyfin(_baseUrl.value, _username.value, _password.value, appSettingsRepository.jellyfinDeviceId(), BuildConfig.VERSION_NAME)
-                    result.fold(
-                        onSuccess = { "Connected, login OK" },
-                        onFailure = { if (it is JellyfinApiException) "Login rejected: ${it.message}" else "Failed: ${it::class.simpleName}: ${it.message}" },
-                    )
-                }
+            _testResult.value = when (val result = serverLogin.test(draft())) {
+                is LoginResult.Accepted -> "Connected, login OK"
+                is LoginResult.Rejected -> "Login rejected: ${result.reason}"
+                is LoginResult.Failed -> "Failed: ${result.error::class.simpleName}: ${result.error.message}"
             }
         }
     }
 
     fun save(onSaved: () -> Unit) {
         viewModelScope.launch {
-            val baseUrl = _baseUrl.value.trimEnd('/')
-            // A new login for a server that was removed with its downloads kept takes that server's id, so those
-            // downloads come back with it instead of sitting beside a second copy.
-            val reattach = if (serverId == null) serverConfigRepository.findRemoved(baseUrl, _username.value) else null
-            val id = serverId ?: reattach?.id ?: UUID.randomUUID().toString()
-            val profile = when (_kind.value) {
-                ServerKind.SUBSONIC -> ServerProfile(
-                    id = id,
-                    name = _name.value.ifBlank { _baseUrl.value },
-                    baseUrl = baseUrl,
-                    username = _username.value,
-                    password = _password.value,
-                    kind = ServerKind.SUBSONIC,
-                )
-                // Jellyfin's own access token is obtained here, not read back from testConnection() — a person can
-                // hit Save without ever tapping Test connection first, and a saved Jellyfin profile without a token
-                // is not something the rest of the app can do anything with (see ApiHolder.apiFor).
-                ServerKind.JELLYFIN -> {
-                    val auth = authenticateJellyfin(baseUrl, _username.value, _password.value, appSettingsRepository.jellyfinDeviceId(), BuildConfig.VERSION_NAME)
-                        .getOrElse {
-                            _saveMessage.value = if (it is JellyfinApiException) "Login rejected: ${it.message}" else "Couldn't save: ${it.message}"
-                            return@launch
-                        }
-                    ServerProfile(
-                        id = id,
-                        name = _name.value.ifBlank { _baseUrl.value },
-                        baseUrl = baseUrl,
-                        username = _username.value,
-                        password = _password.value,
-                        kind = ServerKind.JELLYFIN,
-                        jellyfinAccessToken = auth.AccessToken,
-                        jellyfinUserId = auth.User?.Id,
-                    )
+            when (val outcome = serverLifecycle.save(serverId, draft())) {
+                SaveOutcome.Saved -> {
+                    _saveMessage.value = "Saved"
+                    onSaved()
+                }
+                is SaveOutcome.Refused -> _saveMessage.value = when (val login = outcome.login) {
+                    is LoginResult.Rejected -> "Login rejected: ${login.reason}"
+                    is LoginResult.Failed -> "Couldn't save: ${login.error.message}"
+                    is LoginResult.Accepted -> "Couldn't save"
                 }
             }
-            serverConfigRepository.addOrUpdate(profile)
-            AppGraph.invalidateApi()
-            AppGraph.serversChanged(serverConfigRepository.activeServerId.first(), serverConfigRepository.enabledServerIds.first())
-            _saveMessage.value = "Saved"
-            onSaved()
         }
     }
 
     /** What this server has downloaded, for the delete choice. */
     val downloadSummary: StateFlow<DownloadSummary?> =
-        serverRemoval.downloadSummaries.map { summaries -> serverId?.let { summaries[it] } }
+        serverLifecycle.downloadSummaries.map { summaries -> serverId?.let { summaries[it] } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    // On the app's own scope (see ServerRemoval), not this screen's.
+    // On the app's own scope (see ServerLifecycle), not this screen's.
     fun remove(keepDownloads: Boolean) {
         val id = serverId ?: return
-        serverRemoval.remove(id, keepDownloads)
+        serverLifecycle.remove(id, keepDownloads)
     }
 }
 
@@ -193,7 +151,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
     override val viewModelClass = ServerEditScreenViewModel::class.java
 
     override fun createViewModel() =
-        AppGraph.from(lightContext).let { ServerEditScreenViewModel(it.serverConfigRepository, it.serverRemoval, it.appSettingsRepository, serverId) }
+        AppGraph.from(lightContext).let { ServerEditScreenViewModel(it.serverConfigRepository, it.serverLifecycle, it.serverLogin, serverId) }
 
     @Composable
     override fun Content() {

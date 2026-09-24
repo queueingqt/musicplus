@@ -19,7 +19,7 @@ import kotlinx.coroutines.launch
 class ServerReachability(
     private val scope: CoroutineScope,
     private val apiHolder: ApiLookup,
-) {
+) : PerServerState {
     private val down = MutableStateFlow<Set<String>>(emptySet())
     private var recheckJob: Job? = null
 
@@ -37,7 +37,7 @@ class ServerReachability(
         scope.launch { for (id in down.value.toList()) recheck(id) }
     }
 
-    fun forget(serverId: String) {
+    override suspend fun forget(serverId: String) {
         report(serverId, reachable = true)
     }
 

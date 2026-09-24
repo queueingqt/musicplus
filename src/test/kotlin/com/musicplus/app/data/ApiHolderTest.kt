@@ -69,14 +69,16 @@ class ApiHolderTest {
     }
 
     @Test
-    fun forgettingOrInvalidatingMakesTheNextUseBuildAgain() = runBlocking<Unit> {
+    fun forgettingOrEditingAServerMakesTheNextUseBuildItAgainAndLeavesTheOthers() = runBlocking<Unit> {
         val apis = holder("one", "two")
         val before = apis.forServer("two")
+        val other = apis.forServer("one")
         apis.forget("two")
         assertNotSame(before, apis.forServer("two"))
-        val second = apis.forServer("one")
-        apis.invalidate()
-        assertNotSame(second, apis.forServer("one"))
+        val edited = apis.forServer("two")
+        apis.edited("two")
+        assertNotSame(edited, apis.forServer("two"))
+        assertSame(other, apis.forServer("one"), "an edit of one server does not rebuild the others")
     }
 
     @Test

@@ -16,8 +16,7 @@ import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.DownloadSummary
 import com.musicplus.app.data.RemovedServer
-import com.musicplus.app.data.ServerRemoval
-import com.musicplus.app.data.ServerConfigRepository
+import com.musicplus.app.data.ServerLifecycle
 import com.musicplus.app.data.ServerProfile
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -35,7 +34,6 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -50,8 +48,7 @@ import kotlinx.coroutines.launch
  * that is off; the line under the name says which, or when it last synced.
  */
 class ServerSettingsScreenViewModel(
-    private val serverConfigRepository: ServerConfigRepository,
-    private val serverRemoval: ServerRemoval,
+    private val serverLifecycle: ServerLifecycle,
 ) : LightViewModel<Unit>() {
 
     // AppServerPrefs, not serverConfigRepository directly — this screen gets
@@ -71,28 +68,22 @@ class ServerSettingsScreenViewModel(
     val removedServers: StateFlow<List<RemovedServer>> = AppServerPrefs.removedServers.value
 
     val downloadSummaries: StateFlow<Map<String, DownloadSummary>> =
-        serverRemoval.downloadSummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+        serverLifecycle.downloadSummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {}
 
     fun setEnabled(id: String, on: Boolean) {
-        viewModelScope.launch {
-            serverConfigRepository.setEnabled(id, on)
-            serversChanged()
-        }
+        viewModelScope.launch { serverLifecycle.setEnabled(id, on) }
     }
 
-    // On the app's own scope (see ServerRemoval), not this screen's: leaving the screen must not stop it half way.
+    // On the app's own scope (see ServerLifecycle), not this screen's: leaving the screen must not stop it half way.
     fun remove(id: String, keepDownloads: Boolean) {
-        serverRemoval.remove(id, keepDownloads)
+        serverLifecycle.remove(id, keepDownloads)
     }
 
     fun deleteKeptDownloads(id: String) {
-        serverRemoval.deleteKeptDownloads(id)
+        serverLifecycle.deleteKeptDownloads(id)
     }
-
-    private suspend fun serversChanged() =
-        AppGraph.serversChanged(serverConfigRepository.activeServerId.first(), serverConfigRepository.enabledServerIds.first())
 }
 
 class ServerSettingsScreen(activity: SealedLightActivity) :
@@ -101,7 +92,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
     override val viewModelClass = ServerSettingsScreenViewModel::class.java
 
     override fun createViewModel() =
-        AppGraph.from(lightContext).let { ServerSettingsScreenViewModel(it.serverConfigRepository, it.serverRemoval) }
+        AppGraph.from(lightContext).let { ServerSettingsScreenViewModel(it.serverLifecycle) }
 
     @Composable
     override fun Content() {

@@ -23,6 +23,8 @@ class ServerRefresh(
     private val shownServerIds: Flow<List<String>>,
     /** Told when a server's refresh worked: see [ServerSyncStatus.refreshed]. */
     private val onRefreshed: suspend (serverId: String) -> Unit,
+    /** Each refresh runs under its server, so removing the server stops it before it can write anything more. */
+    private val work: ServerWork,
     /** The ids of the servers that are still saved. */
     private val savedServerIds: () -> Set<String> = { AppServerPrefs.servers.value.value.mapTo(HashSet()) { it.id } },
 ) {
@@ -44,14 +46,16 @@ class ServerRefresh(
     }
 
     private suspend fun runOne(label: String, api: MusicApi, action: suspend (MusicApi) -> Unit) {
-        try {
-            action(api)
-            onRefreshed(api.serverId)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // Cache left as-is deliberately.
-            AppLogger.e("ServerRefresh", "$label failed (server ${api.serverId})", e)
+        work.run(api.serverId) {
+            try {
+                action(api)
+                onRefreshed(api.serverId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Cache left as-is deliberately.
+                AppLogger.e("ServerRefresh", "$label failed (server ${api.serverId})", e)
+            }
         }
     }
 

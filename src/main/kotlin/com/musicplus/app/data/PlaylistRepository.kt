@@ -6,7 +6,6 @@ import com.musicplus.app.Playlist
 import com.musicplus.app.Track
 import com.musicplus.app.WriteOutcome
 import com.musicplus.app.data.ServerLabels.labelledBy
-import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.coroutineScope
@@ -32,14 +31,13 @@ import java.util.UUID
  * reason, 2026-09-18 architecture review + this session's own /grilling pass).
  */
 class PlaylistRepository(
-    private val apiHolder: ApiLookup,
     private val playlistDao: PlaylistDao,
     private val trackDao: TrackDao,
-    private val connectivity: LightConnectivity,
     private val downloadRepository: DownloadRepository,
     /** See [LibraryRepository]'s parameter of the same name. */
     private val shownServerIds: Flow<List<String>>,
-    private val serverSyncStatus: ServerSyncStatus,
+    /** Runs every refresh below; shared with [LibraryRepository]. */
+    private val serverRefresh: ServerRefresh,
     /** The phone's own copy of a playlist's songs and lengths: where the local half of every playlist write lives (see [LocalFirstWrites]). */
     private val localCopy: RoomLocalCopy,
     /** When the phone's own heart wins over the server's answer, read fresh for each refresh: see [LocalStars]. */
@@ -87,13 +85,6 @@ class PlaylistRepository(
             val byId = downloads.associateBy { it.songId }
             entities.map { it.toTrack(byId[it.id]) }
         }
-
-    private val serverRefresh = ServerRefresh(
-        isConnected = { connectivity.currentStatus.isConnected },
-        apis = apiHolder,
-        shownServerIds = shownServerIds,
-        onRefreshed = { serverSyncStatus.refreshed(it) },
-    )
 
     /** See [ServerRefresh.run], shared with [LibraryRepository]. */
     private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (MusicApi) -> Unit) = serverRefresh.run(label, ownerId, action)

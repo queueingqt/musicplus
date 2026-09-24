@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
  * DataStore so it survives a restart, and mirrored into [AppServerPrefs.lastSyncedAt] so a screen has it on its first
  * frame. Any of a server's lists finishing counts: there is no single "the sync".
  */
-class ServerSyncStatus(private val dataStore: DataStore<Preferences>) {
+class ServerSyncStatus(private val dataStore: DataStore<Preferences>) : PerServerState {
     private val key = stringPreferencesKey("server_last_synced_json")
     private val serializer = MapSerializer(String.serializer(), Long.serializer())
 
@@ -28,7 +28,7 @@ class ServerSyncStatus(private val dataStore: DataStore<Preferences>) {
     }
 
     /** Forgets a removed server. */
-    suspend fun forget(serverId: String) {
+    override suspend fun forget(serverId: String) {
         dataStore.edit { prefs ->
             val current = decode(prefs[key])
             if (serverId in current) prefs[key] = Json.encodeToString(serializer, current - serverId)

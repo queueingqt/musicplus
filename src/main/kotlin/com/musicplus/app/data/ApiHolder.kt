@@ -42,7 +42,7 @@ class ApiHolder(
     private val profiles: ServerProfiles,
     private val adapterFor: (ServerProfile, onReachable: (Boolean) -> Unit, learner: CapabilityLearner?) -> MusicApi = ::defaultAdapter,
     private val activeServerId: () -> String? = { AppServerPrefs.activeServerId.value.value },
-) : ApiLookup {
+) : ApiLookup, PerServerState {
     private val apis = ConcurrentHashMap<String, MusicApi>()
 
     /** Set once by [AppGraph] before any api is built: every client reports whether its server could be reached, and every api what its server can do. */
@@ -81,13 +81,13 @@ class ApiHolder(
     override fun peekFor(id: String): MusicApi? = (ServerScope.serverOf(id) ?: activeServerId())?.let { apis[it] }
 
     /** Drops one server's api (it was removed). */
-    fun forget(serverId: String) {
+    override suspend fun forget(serverId: String) {
         apis.remove(serverId)
     }
 
-    /** Drops every built api, so the next use picks up a server's edited address or credentials. */
-    fun invalidate() {
-        apis.clear()
+    /** Drops a server's api, so the next use picks up its edited address or credentials. */
+    override fun edited(serverId: String) {
+        apis.remove(serverId)
     }
 }
 

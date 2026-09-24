@@ -99,7 +99,9 @@ class CapabilityRegistry(
     private val connectivity: LightConnectivity,
     /** Identifies this build of the app; a different one probes again. */
     private val build: String,
-) : CapabilityLearner {
+    /** Probes and the saves that follow real requests run under their server, so removing it stops them before its capabilities are forgotten. */
+    private val work: ServerWork,
+) : CapabilityLearner, PerServerState {
     private val key = stringPreferencesKey("server_capabilities_json")
     private val serializer = MapSerializer(String.serializer(), ServerCapabilities.serializer())
 
@@ -134,7 +136,7 @@ class CapabilityRegistry(
         if (!probing.add(serverId)) return
         scope.launch {
             try {
-                probe(serverId)
+                work.run(serverId) { probe(serverId) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -168,7 +170,7 @@ class CapabilityRegistry(
 
     override fun worked(serverId: String, capability: Capability) {
         if (AppServerPrefs.capabilities.value.value[serverId]?.get(capability) == true) return
-        scope.launch { save(serverId) { it.with(capability, true) } }
+        scope.launch { work.run(serverId) { save(serverId) { it.with(capability, true) } } }
         AppLogger.d("Capabilities", "${describe(serverId)}: ${capability.name.lowercase()} worked, marking it as offered")
     }
 
@@ -183,7 +185,7 @@ class CapabilityRegistry(
     }
 
     /** Forgets a removed server. */
-    suspend fun forget(serverId: String) {
+    override suspend fun forget(serverId: String) {
         dataStore.edit { prefs ->
             val current = decode(prefs[key])
             if (serverId in current) prefs[key] = Json.encodeToString(serializer, current - serverId)

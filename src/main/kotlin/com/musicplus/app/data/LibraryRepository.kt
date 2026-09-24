@@ -60,7 +60,8 @@ class LibraryRepository(
     private val downloadRepository: DownloadRepository,
     /** The servers whose content is shown — every list below follows it, so switching servers switches the lists. See [ServerConfigRepository.shownServerIds]. */
     private val shownServerIds: Flow<List<String>>,
-    private val serverSyncStatus: ServerSyncStatus,
+    /** Runs every refresh below; shared with [PlaylistRepository]. */
+    private val serverRefresh: ServerRefresh,
 ) {
     fun observeArtists(): Flow<List<Artist>> =
         shownServerIds.flatMapLatest { artistDao.observeAll(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::artists)
@@ -106,13 +107,6 @@ class LibraryRepository(
         val byId = downloadRepository.observeAll().first().associateBy { it.songId }
         return trackDao.getByIds(ids).map { it.toTrack(byId[it.id]) }
     }
-
-    private val serverRefresh = ServerRefresh(
-        isConnected = { connectivity.currentStatus.isConnected },
-        apis = apiHolder,
-        shownServerIds = shownServerIds,
-        onRefreshed = { serverSyncStatus.refreshed(it) },
-    )
 
     /** See [ServerRefresh.run]: shared by every `refresh*` function below, each just names itself (for the failure log) and does its own fetch-then-upsert as [action]. */
     private suspend fun refresh(label: String, ownerId: String? = null, action: suspend (MusicApi) -> Unit) = serverRefresh.run(label, ownerId, action)
