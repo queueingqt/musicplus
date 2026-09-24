@@ -20,8 +20,8 @@ const val SERVER_NOT_REACHABLE_NOTE = "Server not reachable"
 fun rememberTrackUnavailable(track: Track): Boolean {
     val unreachable by AppServerPrefs.unreachableServerIds.value.collectAsState()
     val on by AppServerPrefs.enabledServerIds.value.collectAsState()
-    val serverId = ServerScope.serverOf(track.id)
-    val serverOut = serverId != null && AppServerPrefs.servers.value.value.isNotEmpty() && (serverId !in on || serverId in unreachable)
+    val servers by AppServerPrefs.servers.value.collectAsState()
+    val serverOut = !TrackAvailability.serverUsable(ServerScope.serverOf(track.id), servers.isNotEmpty(), on, unreachable)
     return remember(track.id, track.downloadStatus, track.localFilePath, serverOut) {
         serverOut && !TrackAvailability.hasAudioOnPhone(track)
     }

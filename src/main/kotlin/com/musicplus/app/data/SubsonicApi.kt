@@ -19,9 +19,6 @@ class SubsonicApi(
     private val learner: CapabilityLearner? = null,
 ) : MusicApi {
 
-    override val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
-    override val playerCanFetchDirectly: Boolean get() = client.playerCanFetchDirectly
-
     private fun scopeId(id: String) = ServerScope.scope(serverId, id)
 
     /**
@@ -221,7 +218,6 @@ class SubsonicApi(
         learning(Capability.PLAYLIST_WRITE) { client.call("deletePlaylist.view", listOf("id" to native(id))) }
     }
 
-    /** Direct playback URL — hand straight to `LightAudioSource.UrlSource(...)`. Only safe to use when [playerCanFetchDirectly] — see PlaybackRepository.toAudioItem. */
     override fun streamUrl(songId: String, maxBitRateKbps: Int?): String {
         val params = buildList {
             add("id" to native(songId))

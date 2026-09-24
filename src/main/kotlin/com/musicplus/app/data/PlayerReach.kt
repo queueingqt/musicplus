@@ -3,7 +3,7 @@ package com.musicplus.app.data
 import android.security.NetworkSecurityPolicy
 
 /**
- * Whether the SDK's player can fetch [baseUrl] itself, so a track can be handed to it as a
+ * Whether the SDK's player can fetch [url] itself, so a track can be handed to it as a
  * `UrlSource` and start playing while it downloads.
  *
  * media3 inside `LightAudioPlayer` goes through `HttpURLConnection`, which refuses plain `http://`
@@ -14,10 +14,10 @@ import android.security.NetworkSecurityPolicy
  * gets `false` for an `http://` server and falls back to download-then-play. Asked of the platform
  * rather than assumed, so it stays right whichever way a given build was made.
  */
-internal fun playerCanFetch(baseUrl: String): Boolean {
-    if (baseUrl.startsWith("https://", ignoreCase = true)) return true
+internal fun playerCanFetch(url: String): Boolean {
+    if (url.startsWith("https://", ignoreCase = true)) return true
     val host = try {
-        java.net.URI(baseUrl).host
+        java.net.URI(url).host
     } catch (e: java.net.URISyntaxException) {
         null
     } ?: return false

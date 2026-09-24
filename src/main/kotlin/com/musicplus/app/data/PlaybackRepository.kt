@@ -14,9 +14,11 @@ import com.musicplus.app.data.playback.Recovery
 import com.musicplus.app.data.playback.ScrobbleSink
 import com.musicplus.app.data.playback.SkipMove
 import com.musicplus.app.data.playback.SleepTimer
+import com.musicplus.app.data.playback.SongSource
 import com.musicplus.app.data.playback.StreamCache
 import com.musicplus.app.data.playback.TrackEnd
 import com.musicplus.app.data.playback.TrackEndAction
+import com.musicplus.app.data.playback.TrackSources
 import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
@@ -76,7 +78,7 @@ class PlaybackRepository(
     // 2026-09-17: playAsync()'s launch crashed on exactly this
     // ("MediaController method is called from a wrong thread") the first
     // time anything actually ran on this scope with Dispatchers.Default.
-    // Suspend calls that do real network I/O (toAudioItem/StreamCache.fetch)
+    // Suspend calls that do real network I/O (TrackSources/StreamCache.fetch)
     // stay non-blocking regardless — Ktor's CIO engine dispatches its own
     // socket I/O internally rather than blocking the caller's dispatcher.
     //
@@ -202,9 +204,19 @@ class PlaybackRepository(
     // downloading a whole queue behind the new one (issue #47).
     private var extendJob: Job? = null
 
+    /** Decides, for every song the player is given, whether it plays from a file or streams, and whether it can seek (#59). */
+    private val sources = TrackSources(
+        cache = streamCache,
+        apiFor = { apiHolder.forId(it.id) },
+        serverUsable = { TrackAvailability.serverUsable(it) },
+        priorityOf = { priorityForSong(it) },
+        streamKbps = { currentStreamMaxBitRateKbps() },
+        onWifi = { connectivity.currentStatus.isWifi },
+    )
+
     /**
-     * The songs the player currently holds as a transcoded stream rather than a file — the ones it cannot seek in (see
-     * [PlaybackState.canSeek]). Set by [noteStreams] wherever the player is given a queue.
+     * The songs the player currently holds as a stream it cannot seek in (see [PlaybackState.canSeek]): a transcode has no length.
+     * Set by [noteStreams] wherever the player is given a queue.
      */
     private val streamingIds = MutableStateFlow<Set<String>>(emptySet())
 
@@ -520,8 +532,8 @@ class PlaybackRepository(
      * there's no lazy/per-item resolution in the confirmed `LightAudioPlayer`
      * API — so resolving the *whole* queue before this call, as an earlier
      * version of `play()` did, meant a multi-track "play album" tap on a
-     * cleartext (http://) server (see `toAudioItem`: a full download per
-     * track) blocked audibly starting on downloading the entire album first,
+     * server whose songs are fetched whole before they play (see
+     * [TrackSources]: a full download per uncached track) blocked audibly starting on downloading the entire album first,
      * not just the track that was about to play. Loads just the starting
      * track first instead — one file, so near-instant regardless of server
      * scheme — and hands the rest of the queue to [extendToFullQueue] to fill
@@ -536,16 +548,13 @@ class PlaybackRepository(
         beginPlay(tracks, startIndex, albumArtUrl)
         val myGeneration = playGeneration
         val startTrack = tracks[startIndex]
-        // Set when the starting song streams from a plain-http server, whose file is then fetched in the background — see toAudioItem.
-        var streamingApi: MusicApi? = null
+        // Set when the starting song streams: its file is then fetched in the background and the song swapped onto it (see TrackSources).
+        var streaming = false
         isActivelyLoading.value = true
         try {
             AppLogger.d("PlaybackRepository", "play(): resolving starting track (index=$startIndex of ${tracks.size})")
-            val startItem = try {
-                val startApi = apiFor(startTrack)
-                startTrack.toAudioItem(startApi, streamIfUncached = true) { FetchGate.Priority.NOW_PLAYING }.also {
-                    if (startApi != null && !startApi.baseUrlIsHttps && it.source is LightAudioSource.UrlSource) streamingApi = startApi
-                }
+            val startSource = try {
+                sources.resolveStart(startTrack)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -557,8 +566,9 @@ class PlaybackRepository(
                 return
             }
             AppLogger.d("PlaybackRepository", "play(): starting track resolved, calling setMediaQueue")
-            noteStreams(listOf(startTrack), listOf(startItem))
-            player.setMediaQueue(listOf(startItem), 0)
+            streaming = startSource is SongSource.Streamed
+            noteStreams(listOf(startTrack), listOf(startSource))
+            player.setMediaQueue(listOf(startTrack.toItem(startSource)), 0)
             // Only the starting track is in the player for now, unless it is the
             // whole queue — extendToFullQueue flips this once the full queue lands.
             // Set before playerQueueLoaded so there is no moment where the player's
@@ -583,12 +593,12 @@ class PlaybackRepository(
 
         // A lone song that is streaming goes through the same hand-over: it is swapped onto its file when that lands,
         // which is what makes it seekable (a stream started without a declared length is not) and keeps it in the cache.
-        if (tracks.size > 1 || streamingApi != null) {
+        if (tracks.size > 1 || streaming) {
             extendJob = scope.launch {
                 try {
                     // A song that is streaming has the connection to itself until audio is flowing: fetching the
                     // queue's files at the same time starved it for 95 s on a weak cellular link (2026-09-23).
-                    if (streamingApi != null) awaitAudioStarted()
+                    if (streaming) awaitAudioStarted()
                     extendToFullQueue(tracks, startIndex, myGeneration)
                 } catch (e: CancellationException) {
                     throw e
@@ -600,6 +610,39 @@ class PlaybackRepository(
                     if (tracks.size > 1 && playGeneration == myGeneration) loadError.value = "Couldn't load the rest of the queue: ${loadFailureReason(e)}"
                 }
             }
+        }
+    }
+
+    /**
+     * How urgently [songId] is wanted right now: the playing song, one of the next
+     * few, elsewhere in the queue, or null when it isn't in the queue at all. Read
+     * by [FetchGate] as it schedules, so a download of the song that is playing (or
+     * about to) is served ahead of the rest of the backlog.
+     */
+    fun priorityForSong(songId: String): FetchGate.Priority? {
+        val queued = queue.value
+        val index = queued.indexOfFirst { it.id == songId }
+        if (index < 0) return null
+        val current = if (playerQueueLoaded.value) playerQueueIndex() else pendingIndex.value
+        return when {
+            index == current -> FetchGate.Priority.NOW_PLAYING
+            index > current && index <= current + TrackSources.UP_NEXT_COUNT -> FetchGate.Priority.UP_NEXT
+            else -> FetchGate.Priority.QUEUE
+        }
+    }
+
+    /**
+     * Records which of [tracks] are about to be handed to the player as [resolved] sources it cannot seek in (see
+     * [SongSource.seekable]). Call it just before `setMediaQueue`.
+     */
+    private fun noteStreams(tracks: List<Track>, resolved: List<SongSource>) {
+        streamingIds.value = tracks.filterIndexed { i, _ -> !resolved[i].seekable }.map { it.id }.toSet()
+    }
+
+    /** Suspends until the player reports audio playing or an error, or [STREAM_START_WAIT_MS] passes. */
+    private suspend fun awaitAudioStarted() {
+        withTimeoutOrNull(STREAM_START_WAIT_MS) {
+            combine(player.isPlaying, player.error) { playing, error -> playing || error != null }.first { it }
         }
     }
 
@@ -621,91 +664,6 @@ class PlaybackRepository(
      * while this was still resolving tracks doesn't get clobbered by a
      * now-stale extension landing after it.
      */
-    /**
-     * Turns every track into a player item, fetching whatever isn't on the phone yet
-     * concurrently (see [FetchGate] for the order and the limit). Returns null if
-     * [stillWanted] turned false, i.e. a newer play superseded this one. Any track
-     * failing fails the whole call, as it did when this ran one track at a time.
-     */
-    /**
-     * The api for the server that owns [track]. A queue can hold songs from more than one server (one saved
-     * before a server switch keeps playing from the server it came from), so this is per track, not per queue.
-     * Null when that server was removed: its downloaded songs still play, from their files, and only a song that
-     * has to be streamed needs the api (see [toAudioItem]).
-     */
-    private suspend fun apiFor(track: Track): MusicApi? = apiHolder.forId(track.id)
-
-    private suspend fun resolveAll(
-        tracks: List<Track>,
-        fetchRange: IntRange = tracks.indices,
-        stillWanted: () -> Boolean = { true },
-    ): List<LightAudioItem>? {
-        val items = arrayOfNulls<LightAudioItem>(tracks.size)
-        coroutineScope {
-            for (index in tracks.indices) {
-                launch {
-                    if (!stillWanted()) return@launch
-                    val track = tracks[index]
-                    // Outside [fetchRange] a song that is not cached is handed over to stream rather than waited for.
-                    items[index] = track.toAudioItem(apiFor(track), streamIfUncached = index !in fetchRange) {
-                        priorityForSong(track.id) ?: FetchGate.Priority.QUEUE
-                    }
-                }
-            }
-        }
-        if (!stillWanted()) return null
-        return items.map { it!! }
-    }
-
-    /**
-     * How urgently [songId] is wanted right now: the playing song, one of the next
-     * few, elsewhere in the queue, or null when it isn't in the queue at all. Read
-     * by [FetchGate] as it schedules, so a download of the song that is playing (or
-     * about to) is served ahead of the rest of the backlog.
-     */
-    fun priorityForSong(songId: String): FetchGate.Priority? {
-        val queued = queue.value
-        val index = queued.indexOfFirst { it.id == songId }
-        if (index < 0) return null
-        val current = if (playerQueueLoaded.value) playerQueueIndex() else pendingIndex.value
-        return when {
-            index == current -> FetchGate.Priority.NOW_PLAYING
-            index > current && index <= current + UP_NEXT_COUNT -> FetchGate.Priority.UP_NEXT
-            else -> FetchGate.Priority.QUEUE
-        }
-    }
-
-    /**
-     * Records which of [tracks] are about to be handed to the player as [items] that it cannot seek in: a stream, when
-     * it is a transcode (an original file is served whole, with a length). Call it just before `setMediaQueue`.
-     */
-    private suspend fun noteStreams(tracks: List<Track>, items: List<LightAudioItem>) {
-        val transcoded = currentStreamMaxBitRateKbps() != null
-        streamingIds.value =
-            if (!transcoded) emptySet()
-            else tracks.filterIndexed { i, _ -> items[i].source is LightAudioSource.UrlSource }.map { it.id }.toSet()
-    }
-
-    /** Suspends until the player reports audio playing or an error, or [STREAM_START_WAIT_MS] passes. */
-    private suspend fun awaitAudioStarted() {
-        withTimeoutOrNull(STREAM_START_WAIT_MS) {
-            combine(player.isPlaying, player.error) { playing, error -> playing || error != null }.first { it }
-        }
-    }
-
-    /**
-     * Which songs are fetched into the stream cache before the queue is handed to the
-     * player, given the one playing at [current]. On Wi-Fi every one, as it always was.
-     * Off Wi-Fi only the playing song and the next [UP_NEXT_COUNT]: a whole queue is far
-     * more than a cellular link can fetch in the time the playing song lasts (about 160 s
-     * for seven songs at 0.22 MB/s on the phone, so the player had nothing after the first
-     * one), and fetches running beside a streaming song starve it. The rest are handed over
-     * to stream when they are reached, or as their file where one is already on the phone
-     * (see [toAudioItem]); where the build cannot stream they are still fetched first.
-     */
-    private fun prefetchRange(current: Int, size: Int): IntRange =
-        if (connectivity.currentStatus.isWifi) 0 until size else current..(current + UP_NEXT_COUNT)
-
     private suspend fun extendToFullQueue(tracks: List<Track>, startIndex: Int, generation: Int) {
         // Every track that isn't cached yet is a full download. They run together
         // but in the order FetchGate serves them — the next few songs first, then
@@ -713,15 +671,15 @@ class PlaybackRepository(
         // take. A run that a later tap has superseded (issue #47: a 35-track queue
         // was ~100 s of pointless downloading) stops starting new fetches, and
         // beginPlay() also cancels extendJob outright.
-        val items = resolveAll(tracks, prefetchRange(startIndex, tracks.size)) { playGeneration == generation }
+        val resolved = sources.resolveQueue(tracks, startIndex) { playGeneration == generation }
             ?: return // superseded while resolving — nothing to extend anymore
         val savedPositionMs = player.positionMs.value
         val wasPlaying = player.isPlaying.value
         queue.value = tracks
         pendingIndex.value = startIndex
         holdingPlayIcon(wasPlaying) {
-            noteStreams(tracks, items)
-            player.setMediaQueue(items, startIndex)
+            noteStreams(tracks, resolved)
+            player.setMediaQueue(tracks.toItems(resolved), startIndex)
             // The player now holds the whole queue. Flip only once its own index has
             // caught up to startIndex, so the switch from pendingIndex to the player's
             // index changes nothing on screen (issue #47).
@@ -748,7 +706,7 @@ class PlaybackRepository(
      * tapping a track showed no feedback at all — not even a screen change —
      * until playback was already fully loaded and ready, since navigation
      * only happened after the whole (potentially multi-second, see
-     * toAudioItem) call completed. Calling this first means PlayerScreen's
+     * [TrackSources]) call completed. Calling this first means PlayerScreen's
      * own `LaunchedEffect(track) { if (track == null) goBack() }` never sees
      * a null track to bounce off of, even for the very first play() of a
      * session — before this split, that gap (however brief) existed for real.
@@ -778,8 +736,8 @@ class PlaybackRepository(
         currentAlbumArtUrl.value = albumArtUrl
         // Pause whatever was already playing the instant the UI switches to the
         // new track's title/art (just above) — setMediaQueue below can take a
-        // real, visible amount of time to resolve (see toAudioItem: a cleartext
-        // server downloads the whole file first), and leaving the old item
+        // real, visible amount of time to resolve (see TrackSources: a song that
+        // is not cached may be downloaded whole first), and leaving the old item
         // running until then meant the previous song kept audibly playing under
         // the new song's displayed info. Reported live. The "pending" state
         // already shows 0:00/paused rather than the old track's real position —
@@ -972,8 +930,8 @@ class PlaybackRepository(
         val previousPending = pendingIndex.value
         queue.value = newQueue
         pendingIndex.value = currentIndex
-        val items = try {
-            resolveAll(newQueue, prefetchRange(currentIndex, newQueue.size))!!
+        val resolved = try {
+            sources.resolveQueue(newQueue, currentIndex)!!
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -986,8 +944,8 @@ class PlaybackRepository(
             return
         }
         holdingPlayIcon(wasPlaying) {
-            noteStreams(newQueue, items)
-            player.setMediaQueue(items, currentIndex)
+            noteStreams(newQueue, resolved)
+            player.setMediaQueue(newQueue.toItems(resolved), currentIndex)
             withTimeoutOrNull(REBUILD_DURATION_WAIT_MS) {
                 player.durationMs.first { it > 0L }
             }
@@ -1104,7 +1062,7 @@ class PlaybackRepository(
      * tapping an arbitrary row in QueueScreen, not just skip±1 via the
      * transport controls (issue #28). LightAudioPlayer's confirmed public
      * surface has no incremental "jump to queue position N" primitive (see
-     * [toAudioItem]'s doc / the tracked light-sdk#217 gap) — setMediaQueue
+     * the tracked light-sdk#217 gap) — setMediaQueue
      * always re-resolves and replaces the whole queue, so this is really just
      * [play] again with the same track list and a new startIndex, starting
      * that track fresh from 0:00 rather than resuming any old position.
@@ -1230,68 +1188,21 @@ class PlaybackRepository(
         sleepTimer.cancel()
     }
 
-    /**
-     * media3/ExoPlayer inside the SDK's own `LightAudioPlayer` enforces Android's
-     * cleartext-traffic block independently of SubsonicClient's engine choice —
-     * confirmed on-device via `LightAudioError.diagnostic` =
-     * "ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED" when handing it a `UrlSource` for an
-     * http:// stream (2026-09-17). There's no exposed way to give LightAudioPlayer
-     * a custom data source, so for a plain-http server this downloads the track
-     * (via the same Ktor/CIO client SubsonicApi already uses) into a cache file and
-     * plays that instead of streaming. An https:// server streams directly.
-     *
-     * A build whose manifest overlay sets `usesCleartextTraffic` (see [playerCanFetch])
-     * can stream a plain-http server too, but the cache stays what it was: a song with a
-     * copy already on the phone plays from it, and songs are still fetched into the cache
-     * ahead of time (see [prefetchRange]). Only [streamIfUncached] streams, and only a
-     * song that is not cached yet: the one [play] is starting, so audio begins at once
-     * instead of after the whole file (its file is fetched meanwhile, and the queue
-     * hand-over swaps the playing song onto it), and songs past [prefetchRange] off Wi-Fi.
-     *
-     * Both branches request [currentStreamMaxBitRateKbps] rather than always
-     * the original file — see its doc for why (issue #7, a huge lossless
-     * source file turning "just the starting track" back into a
-     * multi-second block).
-     */
-    private suspend fun Track.toAudioItem(
-        api: MusicApi?,
-        streamIfUncached: Boolean = false,
-        rank: () -> FetchGate.Priority = { FetchGate.Priority.QUEUE },
-    ): LightAudioItem {
-        val maxBitRateKbps = currentStreamMaxBitRateKbps()
-        // The queue keeps the Track it was built (or restored) with, so a download
-        // removed afterwards leaves localFilePath pointing at a file that is gone —
-        // jumping back to that song then failed with ERROR_CODE_IO_FILE_NOT_FOUND
-        // (seen on the phone, 2026-09-19, after removing a download from Now
-        // Playing). Trust the path only while the file is really there; otherwise
-        // play it the way an undownloaded song is played.
-        val downloadedFile = localFilePath?.let { File(it) }?.takeIf { it.isFile }
-        val source = when {
-            downloadedFile != null -> LightAudioSource.FileSource(downloadedFile)
-            // Its server is off or cannot be reached and the phone has no copy: fetching would only stall the whole queue
-            // build. It stays in the queue as an item that will not play, and playback skips it (see skipUnavailable).
-            !TrackAvailability.serverUsable(ServerScope.serverOf(id)) ->
-                streamCache.anyCopy(id)?.let { LightAudioSource.FileSource(it) }
-                    ?: LightAudioSource.FileSource(streamCache.placeholder(id))
-            api == null -> throw java.io.IOException("the server for \"$title\" is not set up")
-            api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
-            api.playerCanFetchDirectly && streamIfUncached && !streamCache.has(id, maxBitRateKbps) -> {
-                AppLogger.d("PlaybackRepository", "toAudioItem($id): not cached, streaming it")
-                LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
-            }
-            else -> LightAudioSource.FileSource(streamCache.fetch(id, maxBitRateKbps, rank) { part, lease -> api.streamToFile(id, part, maxBitRateKbps, lease) })
-        }
-        AppLogger.d("PlaybackRepository", "toAudioItem($id): ${source::class.simpleName} ${(source as? LightAudioSource.FileSource)?.file?.name ?: ""} (downloaded=${downloadedFile != null}, serverUsable=${TrackAvailability.serverUsable(ServerScope.serverOf(id))})")
-        return LightAudioItem(
-            source = source,
-            metadata = LightMediaMetadata(
-                title = title,
-                artist = artistName,
-                album = albumName,
-                durationMs = durationSec * 1000L,
-            ),
-        )
-    }
+    /** What the player is given for [this]: the [source] [TrackSources] chose, with the song's own details for the lock screen and notifications. */
+    private fun Track.toItem(source: SongSource): LightAudioItem = LightAudioItem(
+        source = when (source) {
+            is SongSource.OnPhone -> LightAudioSource.FileSource(source.file)
+            is SongSource.Streamed -> LightAudioSource.UrlSource(source.url)
+        },
+        metadata = LightMediaMetadata(
+            title = title,
+            artist = artistName,
+            album = albumName,
+            durationMs = durationSec * 1000L,
+        ),
+    )
+
+    private fun List<Track>.toItems(resolved: List<SongSource>): List<LightAudioItem> = mapIndexed { i, track -> track.toItem(resolved[i]) }
 
     /**
      * Picks Wi-Fi or cellular quality based on the connection actually in use
@@ -1302,6 +1213,9 @@ class PlaybackRepository(
      * ACCESS_NETWORK_STATE, already granted (this SDK's own
      * `observeNetworkStatus()` — see AppGraph's reconnect observer — needs
      * the same permission and is already relied on elsewhere).
+     *
+     * Songs are asked for at this cap rather than always as the original file (issue #7: a huge lossless source turned "just the
+     * starting track" back into a multi-second block).
      */
     private suspend fun currentStreamMaxBitRateKbps(): Int? =
         if (connectivity.currentStatus.isWifi) {
@@ -1311,9 +1225,6 @@ class PlaybackRepository(
         }
 
     private companion object {
-        /** How many songs after the playing one count as "up next" for [FetchGate]. */
-        const val UP_NEXT_COUNT = 3
-
         /** See the wait at the end of [play] — the longest the loading icon stays up waiting for audio to start. */
         const val START_PLAYBACK_WAIT_MS = 3_000L
 

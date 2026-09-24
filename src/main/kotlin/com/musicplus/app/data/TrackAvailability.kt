@@ -18,12 +18,23 @@ object TrackAvailability {
         this.cache = cache
     }
 
-    /** True when [serverId] is on and was reachable the last time it was asked. */
-    fun serverUsable(serverId: String?): Boolean =
+    /**
+     * True when [serverId] is on and was reachable the last time it was asked. The one rule for "the server is out": the composable
+     * form ([rememberTrackUnavailable]) passes state it collected, so a row greys out as soon as a server drops, and the playback
+     * side reads the current values through the overload below.
+     */
+    fun serverUsable(serverId: String?, anyServerKnown: Boolean, enabled: Set<String>, unreachable: Set<String>): Boolean =
         serverId == null ||
             // Nothing is known about any server yet (the saved list has not been read): assume it is fine rather than grey everything out.
-            AppServerPrefs.servers.value.value.isEmpty() ||
-            (serverId in AppServerPrefs.enabledServerIds.value.value && serverId !in AppServerPrefs.unreachableServerIds.value.value)
+            !anyServerKnown ||
+            (serverId in enabled && serverId !in unreachable)
+
+    fun serverUsable(serverId: String?): Boolean = serverUsable(
+        serverId,
+        anyServerKnown = AppServerPrefs.servers.value.value.isNotEmpty(),
+        enabled = AppServerPrefs.enabledServerIds.value.value,
+        unreachable = AppServerPrefs.unreachableServerIds.value.value,
+    )
 
     /** True when the phone holds the song's audio: a finished download whose file is there, or a streamed copy kept in the cache. */
     fun hasAudioOnPhone(track: Track): Boolean = hasDownload(track) || streamCopy(track.id) != null

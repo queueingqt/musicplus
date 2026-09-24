@@ -89,7 +89,7 @@ private fun seekButton(enabled: Boolean, icon: LightIconConfiguration, descripti
     val drawable = painterResource(icon.drawableResource)
     val faint = LightThemeTokens.colors.content.copy(alpha = UNAVAILABLE_ALPHA)
     val painter = remember(drawable, faint) { TintedPainter(drawable, faint) }
-    return LightBarButton.Icon(painter, onClick = null, contentDescription = "$description, available once the song has loaded")
+    return LightBarButton.Icon(painter, onClick = null, contentDescription = "$description, unavailable while this song streams")
 }
 
 /**

@@ -22,9 +22,6 @@ class JellyfinApi(
     private val client: JellyfinClient,
 ) : MusicApi {
 
-    override val baseUrlIsHttps: Boolean get() = client.baseUrlIsHttps
-    override val playerCanFetchDirectly: Boolean get() = client.playerCanFetchDirectly
-
     private fun scopeId(id: String) = ServerScope.scope(serverId, id)
 
     /** The id as this server knows it. An id that was never scoped is passed through and logged — see [SubsonicApi.native]'s identical doc. */
