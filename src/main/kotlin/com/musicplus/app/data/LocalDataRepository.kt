@@ -25,6 +25,7 @@ class LocalDataRepository(
     private val playbackStateRepository: PlaybackStateRepository,
     private val filesDir: File,
     private val streamCache: StreamCache,
+    private val albumArtRepository: AlbumArtRepository,
 ) {
     suspend fun clearAll() {
         database.artistDao().deleteAll()
@@ -38,7 +39,8 @@ class LocalDataRepository(
         playbackStateRepository.clear()
 
         streamCache.clear()
-        for (dirName in listOf("downloads", "lyrics", "albumart")) {
+        albumArtRepository.clear()
+        for (dirName in listOf("downloads", "lyrics")) {
             File(filesDir, dirName).deleteRecursively()
         }
 

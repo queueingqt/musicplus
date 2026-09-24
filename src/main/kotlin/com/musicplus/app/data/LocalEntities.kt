@@ -5,8 +5,9 @@ import androidx.room.PrimaryKey
 
 /**
  * Local cache of the server's ID3 library (artists/albums/tracks), plus what's
- * favorited, downloaded, and queued. IDs are the server's own Subsonic ids, so
- * cache rows can be upserted directly from API responses without id translation.
+ * favorited, downloaded, and queued. IDs are scoped (`<serverId>:<the server's own id>`, see
+ * [ServerScope]), which is what the [MusicApi] adapters hand back, so cache rows can be upserted
+ * directly from API responses without id translation.
  */
 
 @Entity(tableName = "artists")

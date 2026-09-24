@@ -13,7 +13,7 @@ class ListenTrackerTest {
 
     private fun track(id: String) = Track(
         id = id, title = id, albumId = null, albumName = null, artistId = null, artistName = null, trackNumber = null,
-        durationSec = 200, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = null,
+        durationSec = 200, coverArtId = null, isFavorite = false, downloadStatus = null, localFilePath = null,
     )
 
     private fun state(

@@ -196,7 +196,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                     FavoriteRowWithArt(
                         lightContext = lightContext,
                         label = album.nameLine,
-                        coverArtUrl = album.coverArtUrl,
+                        coverArtId = album.coverArtId,
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
                         onOpenActions = {
                             navigateTo({ a ->
@@ -322,7 +322,7 @@ private fun FavoriteRow(label: String, onClick: () -> Unit, onOpenActions: () ->
 private fun FavoriteRowWithArt(
     lightContext: SealedLightContext,
     label: String,
-    coverArtUrl: String?,
+    coverArtId: String?,
     onClick: () -> Unit,
     onOpenActions: () -> Unit,
 ) {
@@ -338,7 +338,7 @@ private fun FavoriteRowWithArt(
     ) {
         AlbumArt(
             lightContext = lightContext,
-            url = coverArtUrl,
+            coverArtId = coverArtId,
             size = 2.5f.gridUnitsAsDp(),
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )

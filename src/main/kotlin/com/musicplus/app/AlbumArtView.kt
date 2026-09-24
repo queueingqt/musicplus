@@ -27,7 +27,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 
 /**
  * Cover art for a track/album/artist, with a placeholder for a genuine no-art
- * state: no [url], or the fetch/decode failed. [AlbumArtRepository] does the
+ * state: no [coverArtId], or the fetch/decode failed. [AlbumArtRepository] does the
  * actual fetch+decode+cache; this composable's job is just to ask it for a
  * bitmap and render whatever comes back (or the placeholder) at [size].
  *
@@ -42,7 +42,7 @@ import com.thelightphone.sdk.ui.LightThemeTokens
 @Composable
 fun AlbumArt(
     lightContext: SealedLightContext,
-    url: String?,
+    coverArtId: String?,
     size: Dp,
     modifier: Modifier = Modifier,
     placeholderIconSize: Float = 2f,
@@ -60,23 +60,23 @@ fun AlbumArt(
     // (e.g. scrolled out of view and back) shows its art on the very first frame
     // instead of flashing back to the placeholder while getBitmap() re-confirms a
     // cache hit it's going to return instantly anyway.
-    var bitmap by remember(url) { mutableStateOf(url?.let { graph.albumArtRepository.peekCached(it) }) }
-    var loadFailed by remember(url) { mutableStateOf(false) }
+    var bitmap by remember(coverArtId) { mutableStateOf(coverArtId?.let { graph.albumArtRepository.peekCached(it) }) }
+    var loadFailed by remember(coverArtId) { mutableStateOf(false) }
 
-    LaunchedEffect(url) {
-        if (url == null) {
+    LaunchedEffect(coverArtId) {
+        if (coverArtId == null) {
             bitmap = null
             loadFailed = false
             return@LaunchedEffect
         }
-        val cached = graph.albumArtRepository.peekCached(url)
+        val cached = graph.albumArtRepository.peekCached(coverArtId)
         if (cached != null) {
             bitmap = cached
             return@LaunchedEffect
         }
         bitmap = null
         loadFailed = false
-        val result = graph.albumArtRepository.getBitmap(url)
+        val result = graph.albumArtRepository.getBitmap(coverArtId)
         bitmap = result
         loadFailed = result == null
     }
@@ -97,7 +97,7 @@ fun AlbumArt(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
-            // Covers the null-url, setting-off, still-loading, and failed states alike —
+            // Covers the no-art, setting-off, still-loading, and failed states alike —
             // deliberately one placeholder, not four different ones, since none of them
             // are actionable by the person looking at it.
             LightIcon(

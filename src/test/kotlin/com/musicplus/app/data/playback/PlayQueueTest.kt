@@ -57,7 +57,7 @@ class PlayQueueTest {
 
     private fun track(n: Int, id: String = "a:$n", title: String = "t$n", albumId: String? = null) = Track(
         id = id, title = title, albumId = albumId, albumName = null, artistId = null, artistName = null, trackNumber = null,
-        durationSec = 200, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = null,
+        durationSec = 200, coverArtId = null, isFavorite = false, downloadStatus = null, localFilePath = null,
     )
 
     private fun tracks(count: Int) = List(count) { track(it) }
@@ -519,25 +519,25 @@ class PlayQueueTest {
     @Test
     fun aHintAppliesToSongsOfItsAlbumAndNoOther() {
         val hint = AlbumArtHint("http://art/alb1", albumId = "alb1")
-        assertEquals("http://art/alb1", hint.urlFor(track(0, albumId = "alb1")))
-        assertNull(hint.urlFor(track(2, albumId = "alb2")))
-        assertNull(hint.urlFor(null))
-        assertNull(AlbumArtHint("http://art/x", albumId = null).urlFor(track(0, albumId = null)), "a hint for no album applies to nothing")
+        assertEquals("http://art/alb1", hint.coverArtIdFor(track(0, albumId = "alb1")))
+        assertNull(hint.coverArtIdFor(track(2, albumId = "alb2")))
+        assertNull(hint.coverArtIdFor(null))
+        assertNull(AlbumArtHint("http://art/x", albumId = null).coverArtIdFor(track(0, albumId = null)), "a hint for no album applies to nothing")
     }
 
     @Test
     fun theHintGivenToAPlayIsForTheAlbumOfTheSongItStarts() = run {
-        queue.play(mixed(), 0, albumArtUrl = "http://art/alb1")
+        queue.play(mixed(), 0, albumArtId = "http://art/alb1")
         assertEquals(AlbumArtHint("http://art/alb1", "alb1"), queue.albumArtHint.value)
     }
 
     @Test
     fun aReplayInTheSameAlbumKeepsTheHintAndOneInAnotherAlbumDropsIt() = run {
-        queue.play(mixed(), 0, albumArtUrl = "http://art/alb1")
+        queue.play(mixed(), 0, albumArtId = "http://art/alb1")
         settled(3)
         queue.jumpToAsync(1)
         delay(80)
-        assertEquals("http://art/alb1", queue.albumArtHint.value?.url, "same album: the flash-free art is still right")
+        assertEquals("http://art/alb1", queue.albumArtHint.value?.coverArtId, "same album: the flash-free art is still right")
         queue.jumpToAsync(2)
         delay(80)
         assertNull(queue.albumArtHint.value, "another album: the hint would show the wrong art")
@@ -545,8 +545,8 @@ class PlayQueueTest {
 
     @Test
     fun aNewExplicitHintReplacesTheOldOne() = run {
-        queue.play(mixed(), 0, albumArtUrl = "http://art/alb1")
-        queue.play(mixed(), 2, albumArtUrl = "http://art/alb2")
+        queue.play(mixed(), 0, albumArtId = "http://art/alb1")
+        queue.play(mixed(), 2, albumArtId = "http://art/alb2")
         assertEquals(AlbumArtHint("http://art/alb2", "alb2"), queue.albumArtHint.value)
     }
 

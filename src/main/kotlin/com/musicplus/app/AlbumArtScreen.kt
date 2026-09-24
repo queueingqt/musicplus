@@ -34,7 +34,7 @@ class AlbumArtScreenViewModel(
     val state: StateFlow<PlaybackState> =
         playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
 
-    // Tracks the *current* track's art live via the same resolveAlbumArtUrl
+    // Tracks the *current* track's art live via the same resolveAlbumArtId
     // priority order PlayerScreenViewModel uses, rather than freezing on
     // whatever was playing the moment this screen opened — skipping/advancing
     // while the full-screen view is up should update it in place, the same
@@ -44,14 +44,14 @@ class AlbumArtScreenViewModel(
     // first frame had no URL at all, so the placeholder showed until the live albums flow below emitted
     // (about 450 ms measured). The album is the same one Now Playing is showing, so its art is already
     // in memory (issue #54).
-    val albumArtUrl: StateFlow<String?> = combine(
+    val albumArtId: StateFlow<String?> = combine(
         state, libraryRepository.observeAlbums(), playback.albumArtHint,
     ) { s, albums, hint ->
-        resolveAlbumArtUrl(s.currentTrack, albums, hint)
+        resolveAlbumArtId(s.currentTrack, albums, hint)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
+        resolveAlbumArtId(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
     )
 }
 
@@ -76,7 +76,7 @@ class AlbumArtScreen(private val sealedActivity: SealedLightActivity) :
 
     @Composable
     override fun Content() {
-        val albumArtUrl by viewModel.albumArtUrl.collectAsState()
+        val albumArtId by viewModel.albumArtId.collectAsState()
         val state by viewModel.state.collectAsState()
         val track = state.currentTrack
 
@@ -109,7 +109,7 @@ class AlbumArtScreen(private val sealedActivity: SealedLightActivity) :
             ) {
                 AlbumArt(
                     lightContext = lightContext,
-                    url = albumArtUrl,
+                    coverArtId = albumArtId,
                     // 25 of the device's 27-grid-unit screen width (LightGrid.WIDTH)
                     // — as large as it can be while still leaving a small margin,
                     // matching every other screen's own horizontal padding rather

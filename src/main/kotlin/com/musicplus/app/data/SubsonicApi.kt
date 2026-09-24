@@ -248,17 +248,10 @@ class SubsonicApi(
         client.downloadToFile("download.view", destination, listOf("id" to native(songId)), lease)
 
     /**
-     * [coverArtId] is any item's `coverArt` field (not the item's own id). The URL keeps the server's own id in
-     * `id`, so it stays a valid request, and adds [COVER_ART_SERVER_PARAM] so [AlbumArtRepository], which reads
-     * the id and size back out of it, knows which server the art belongs to.
+     * [coverArtId] is any item's `coverArt` field (not the item's own id), scoped. Fetched through Ktor/CIO like every other call, so it
+     * is not subject to Android's cleartext-traffic block the way an image loader built on HttpURLConnection would be (an http://
+     * server's art still loads).
      */
-    override fun coverArtUrl(coverArtId: String, size: Int): String =
-        client.endpointUrl(
-            "getCoverArt.view",
-            listOf("id" to native(coverArtId), "size" to size.toString(), COVER_ART_SERVER_PARAM to serverId),
-        )
-
-    /** Same content as [coverArtUrl], fetched through Ktor/CIO — for the same reason (cleartext http:// servers). */
     override suspend fun coverArtBytes(coverArtId: String, size: Int): ByteArray =
         client.getBytes("getCoverArt.view", listOf("id" to native(coverArtId), "size" to size.toString()))
 

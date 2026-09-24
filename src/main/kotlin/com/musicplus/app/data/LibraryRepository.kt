@@ -40,7 +40,7 @@ private const val ALBUM_LIST_PAGE_SIZE = 500
  * upsert, so screens stay responsive (and usable offline) between refreshes.
  *
  * Track.downloadStatus/localFilePath are joined against [downloadRepository]
- * at read time (see every `toTrack(apiHolder, ...)` call below, and
+ * at read time (see every `toTrack(...)` call below, and
  * TrackMapping.kt's [toTrack] doc) — previously always false/null coming out
  * of this repository, before it took a real dependency on the download queue
  * instead of leaving every caller to separately combine the two Flows
@@ -71,13 +71,10 @@ class LibraryRepository(
     fun observeAlbumsByArtist(artistId: String): Flow<List<Album>> =
         albumDao.observeByArtist(artistId).map { it.map { entity -> entity.toDomain() } }
 
-    // includeCoverArt = false — AlbumDetailScreen shows the album's own art
-    // once at the top, never per track row; see toTrack's doc for why this
-    // matters (a real, measured cost, not a theoretical one).
     fun observeTracksByAlbum(albumId: String): Flow<List<Track>> =
         combine(trackDao.observeByAlbum(albumId).retryOnTransientDbError(), downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
-            entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
+            entities.map { it.toTrack(byId[it.id]) }
         }
 
     fun observeFavoriteArtists(): Flow<List<Artist>> =
@@ -86,13 +83,10 @@ class LibraryRepository(
     fun observeFavoriteAlbums(): Flow<List<Album>> =
         shownServerIds.flatMapLatest { albumDao.observeFavorites(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::favoriteAlbums)
 
-    // includeCoverArt = false — Favorites' Tracks section shows no per-row
-    // art (showFavorite = false is TrackRow's only override there); see
-    // toTrack's doc.
     fun observeFavoriteTracks(): Flow<List<Track>> =
         combine(shownServerIds.flatMapLatest { trackDao.observeFavorites(it).retryOnTransientDbError() }, downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
-            entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
+            entities.map { it.toTrack(byId[it.id]) }
         }.labelledBy(ServerLabels::favoriteTracks)
 
     /**
@@ -101,20 +95,16 @@ class LibraryRepository(
      * to have actually run at least once for the flat "Songs" list to be
      * complete rather than just whatever happened to already be cached.
      */
-    // includeCoverArt = false — the flat Songs list shows no per-row art;
-    // see toTrack's doc. This is the screen that made the cost visible in
-    // the first place (several thousand tracks vs. Albums'/Artists' low
-    // hundreds), confirmed live 2026-09-18.
     fun observeAllTracks(): Flow<List<Track>> =
         combine(shownServerIds.flatMapLatest { trackDao.observeAll(it).retryOnTransientDbError() }, downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
-            entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
+            entities.map { it.toTrack(byId[it.id]) }
         }.labelledBy(ServerLabels::tracks)
 
     /** Batch lookup by id, e.g. restoring a persisted queue (issue #27) — order isn't preserved, callers reorder against their own id list. Silently drops any id no longer in the local cache. */
     suspend fun getTracksByIds(ids: List<String>): List<Track> {
         val byId = downloadRepository.observeAll().first().associateBy { it.songId }
-        return trackDao.getByIds(ids).map { it.toTrack(apiHolder, byId[it.id]) }
+        return trackDao.getByIds(ids).map { it.toTrack(byId[it.id]) }
     }
 
     /**
@@ -350,7 +340,7 @@ class LibraryRepository(
                         live[id] = SearchResults(
                             artistDao.keepingPhoneStars(result.artists.map { it.toEntity() }).map { it.toDomain() },
                             albumDao.keepingPhoneStars(result.albums.map { it.toEntity() }).map { it.toDomain() },
-                            trackDao.keepingPhoneStars(result.songs.map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id]) },
+                            trackDao.keepingPhoneStars(result.songs.map { it.toTrackEntity() }).map { it.toTrack(downloadsById[it.id]) },
                         )
                         send(merged())
                     }
@@ -374,7 +364,7 @@ class LibraryRepository(
         return SearchResults(
             artistDao.search(query, servers).map { it.toDomain() },
             albumDao.search(query, servers).map { it.toDomain() },
-            trackDao.search(query, servers).map { it.toTrack(apiHolder, downloadsById[it.id]) },
+            trackDao.search(query, servers).map { it.toTrack(downloadsById[it.id]) },
         )
     }
 
@@ -400,13 +390,13 @@ class LibraryRepository(
         }
     }
 
-    /** ArtistDetailScreen's "Top songs" section — same on-demand, not-Room-cached shape as [getSimilarArtists] above. [artistName] (not an id) — see [SubsonicApi.getTopSongs]'s doc for why. includeCoverArt = false — TopSongRow shows no per-row art; see toTrack's doc. */
+    /** ArtistDetailScreen's "Top songs" section — same on-demand, not-Room-cached shape as [getSimilarArtists] above. [artistName] (not an id) — see [SubsonicApi.getTopSongs]'s doc for why. */
     suspend fun getTopSongs(artistId: String, artistName: String): List<Track> {
         // The artist's own server: with several servers on, "the active one" is meaningless, and another server has never heard of them.
         val api = apiHolder.forId(artistId) ?: return emptyList()
         return try {
             val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
-            trackDao.keepingPhoneStars(api.getTopSongs(artistId, artistName).map { it.toTrackEntity() }).map { it.toTrack(apiHolder, downloadsById[it.id], includeCoverArt = false) }
+            trackDao.keepingPhoneStars(api.getTopSongs(artistId, artistName).map { it.toTrackEntity() }).map { it.toTrack(downloadsById[it.id]) }
         } catch (e: Exception) {
             AppLogger.e("LibraryRepository", "getTopSongs(\"$artistName\") failed", e)
             emptyList()
@@ -456,10 +446,7 @@ class LibraryRepository(
     private fun ApiArtist.toEntity() = ArtistEntity(id, name, coverArtId, albumCount, starred)
     private fun ApiAlbum.toEntity() = AlbumEntity(id, name, artistId, artist, coverArtId, songCount, durationSec, year, genre, starred)
 
-    // `apiHolder.peek()` — best-effort: returns null (no cover art URL yet) until a
-    // suspend refresh has run at least once and resolved the client. Acceptable for
-    // a stub; screens should trigger a refresh on first show (see HomeScreen).
-    private fun ArtistEntity.toDomain() = Artist(id, name, coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) }, albumCount, starred)
-    private fun AlbumEntity.toDomain() = Album(id, name, artistId, artistName, coverArtId?.let { apiHolder.peekFor(it)?.coverArtUrl(it) }, songCount, durationSec, year, starred)
+    private fun ArtistEntity.toDomain() = Artist(id, name, coverArtId, albumCount, starred)
+    private fun AlbumEntity.toDomain() = Album(id, name, artistId, artistName, coverArtId, songCount, durationSec, year, starred)
     // ApiSong.toTrackEntity() / TrackEntity.toTrack() — see TrackMapping.kt.
 }

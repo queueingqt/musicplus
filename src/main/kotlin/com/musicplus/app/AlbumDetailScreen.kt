@@ -164,7 +164,7 @@ class AlbumDetailScreen(
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 AlbumArt(
                     lightContext = lightContext,
-                    url = album?.coverArtUrl,
+                    coverArtId = album?.coverArtId,
                     size = 9f.gridUnitsAsDp(),
                     placeholderIconSize = 4f,
                     modifier = Modifier
@@ -236,7 +236,7 @@ class AlbumDetailScreen(
                             // so navigating away immediately after is safe — see
                             // PlaybackRepository.playAsync's doc.
                             val playback = playbackRepository(activity, lightContext)
-                            playback.playAsync(tracks, index, albumArtUrl = album?.coverArtUrl)
+                            playback.playAsync(tracks, index, albumArtId = album?.coverArtId)
                             navigateTo(::PlayerScreen)
                         },
                         onOpenActions = {

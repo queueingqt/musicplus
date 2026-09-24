@@ -215,7 +215,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 }
                 item { SectionHeader("Albums") }
                 items(albums, key = { "album-${it.id}" }) { album ->
-                    ResultRowWithArt(lightContext, album.nameLine, album.coverArtUrl) {
+                    ResultRowWithArt(lightContext, album.nameLine, album.coverArtId) {
                         navigateTo({ a -> AlbumDetailScreen(a, album.id, album) })
                     }
                 }
@@ -228,7 +228,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
                         leading = {
                             AlbumArt(
                                 lightContext = lightContext,
-                                url = track.coverArtUrl,
+                                coverArtId = track.coverArtId,
                                 size = 2.5f.gridUnitsAsDp(),
                                 modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
                             )
@@ -310,7 +310,7 @@ private fun ResultRow(label: String, onClick: () -> Unit) {
 
 /** Album/track results — the ones with cover art (see issue #9 scope; artist results stay [ResultRow]). */
 @Composable
-private fun ResultRowWithArt(lightContext: SealedLightContext, label: String, coverArtUrl: String?, onClick: () -> Unit) {
+private fun ResultRowWithArt(lightContext: SealedLightContext, label: String, coverArtId: String?, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -323,7 +323,7 @@ private fun ResultRowWithArt(lightContext: SealedLightContext, label: String, co
     ) {
         AlbumArt(
             lightContext = lightContext,
-            url = coverArtUrl,
+            coverArtId = coverArtId,
             size = 2.5f.gridUnitsAsDp(),
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )

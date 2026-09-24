@@ -287,7 +287,7 @@ private fun AlbumRow(
     ) {
         AlbumArt(
             lightContext = lightContext,
-            url = album.coverArtUrl,
+            coverArtId = album.coverArtId,
             size = 2.5f.gridUnitsAsDp(),
             modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
         )

@@ -115,13 +115,10 @@ class PlaylistRepository(
     fun observePlaylist(playlistId: String): Flow<Playlist?> =
         playlistDao.observeById(playlistId).map { it?.toDomain() }
 
-    // includeCoverArt = false — PlaylistDetailScreen's rows show no art;
-    // leading is reorder icons only when reorderMode is on. See
-    // TrackMapping.kt's toTrack doc.
     fun observeTracks(playlistId: String): Flow<List<Track>> =
         combine(playlistDao.observeTracks(playlistId).retryOnTransientDbError(), downloadRepository.observeAll()) { entities, downloads ->
             val byId = downloads.associateBy { it.songId }
-            entities.map { it.toTrack(apiHolder, byId[it.id], includeCoverArt = false) }
+            entities.map { it.toTrack(byId[it.id]) }
         }
 
     /**

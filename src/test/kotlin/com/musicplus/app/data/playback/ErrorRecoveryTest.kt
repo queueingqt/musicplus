@@ -14,7 +14,7 @@ class ErrorRecoveryTest {
 
     private fun track(id: String) = Track(
         id = id, title = id, albumId = null, albumName = null, artistId = null, artistName = null, trackNumber = null,
-        durationSec = 100, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = null,
+        durationSec = 100, coverArtId = null, isFavorite = false, downloadStatus = null, localFilePath = null,
     )
 
     private fun state(ids: List<String>, index: Int, positionMs: Long = 0) =

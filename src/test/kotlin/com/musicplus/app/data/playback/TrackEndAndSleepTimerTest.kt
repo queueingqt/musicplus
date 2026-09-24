@@ -19,7 +19,7 @@ class TrackEndTest {
 
     private fun track(id: String) = Track(
         id = id, title = id, albumId = null, albumName = null, artistId = null, artistName = null, trackNumber = null,
-        durationSec = 100, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = null,
+        durationSec = 100, coverArtId = null, isFavorite = false, downloadStatus = null, localFilePath = null,
     )
 
     private fun at(positionMs: Long, index: Int = 0, queueSize: Int = 1, durationMs: Long = 100_000, playing: Boolean = true) =

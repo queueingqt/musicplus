@@ -7,7 +7,8 @@ import com.musicplus.app.data.DownloadStatus
 data class Artist(
     val id: String,
     val name: String,
-    val coverArtUrl: String?,
+    /** The scoped cover-art reference; the picture is fetched by it (see [com.musicplus.app.data.CoverArtStore]). */
+    val coverArtId: String?,
     val albumCount: Int,
     val isFavorite: Boolean,    /** The server's name, set only where it tells this row apart from the same one on another server (always for a playlist). See [com.musicplus.app.data.ServerLabels]. */
     val serverLabel: String? = null,
@@ -18,7 +19,7 @@ data class Album(
     val name: String,
     val artistId: String?,
     val artistName: String?,
-    val coverArtUrl: String?,
+    val coverArtId: String?,
     val songCount: Int,
     val durationSec: Int,
     val year: Int?,
@@ -35,7 +36,7 @@ data class Track(
     val artistName: String?,
     val trackNumber: Int?,
     val durationSec: Int,
-    val coverArtUrl: String?,
+    val coverArtId: String?,
     val isFavorite: Boolean,
     /**
      * Live — reflects [com.musicplus.app.data.DownloadRepository]'s own

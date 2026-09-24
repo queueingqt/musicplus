@@ -288,12 +288,6 @@ class JellyfinApi(
         client.downloadToFile("/Audio/${native(songId)}/stream", destination, listOf("static" to "true"), lease)
     }
 
-    override fun coverArtUrl(coverArtId: String, size: Int): String =
-        client.endpointUrl(
-            "/Items/${native(coverArtId)}/Images/Primary",
-            listOf("maxWidth" to size.toString(), "maxHeight" to size.toString(), COVER_ART_SERVER_PARAM to serverId),
-        )
-
     override suspend fun coverArtBytes(coverArtId: String, size: Int): ByteArray =
         client.getBytes("/Items/${native(coverArtId)}/Images/Primary", listOf("maxWidth" to size.toString(), "maxHeight" to size.toString()))
 

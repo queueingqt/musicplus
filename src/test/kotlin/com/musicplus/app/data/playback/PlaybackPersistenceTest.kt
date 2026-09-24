@@ -10,7 +10,7 @@ import kotlin.test.assertNull
 class PlaybackPersistenceTest {
     private fun track(id: String) = Track(
         id = id, title = id, albumId = null, albumName = null, artistId = null, artistName = null, trackNumber = null,
-        durationSec = 100, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = null,
+        durationSec = 100, coverArtId = null, isFavorite = false, downloadStatus = null, localFilePath = null,
     )
 
     private fun saved(index: Int = 0, shuffle: Boolean = false, repeat: RepeatMode = RepeatMode.OFF) =

@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
 class PlaybackProjectionTest {
     private fun track(n: Int, durationSec: Int = 200) = Track(
         id = "a:$n", title = "t$n", albumId = null, albumName = null, artistId = null, artistName = null, trackNumber = null,
-        durationSec = durationSec, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = null,
+        durationSec = durationSec, coverArtId = null, isFavorite = false, downloadStatus = null, localFilePath = null,
     )
 
     private val queue = List(5) { track(it) }

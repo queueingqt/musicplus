@@ -45,9 +45,9 @@ internal fun loadFailureReason(e: Throwable): String = when {
  * uncached art first (2026-09-18). It applies only to songs of that album: it used to be kept for the whole queue, so a song from
  * another album showed the first album's art (#77).
  */
-data class AlbumArtHint(val url: String, val albumId: String?) {
-    /** The hint's art if [track] is a song of its album, else null: the caller falls through to looking the album up. */
-    fun urlFor(track: Track?): String? = url.takeIf { albumId != null && albumId == track?.albumId }
+data class AlbumArtHint(val coverArtId: String, val albumId: String?) {
+    /** The hint's cover-art id if [track] is a song of its album, else null: the caller falls through to looking the album up. */
+    fun coverArtIdFor(track: Track?): String? = coverArtId.takeIf { albumId != null && albumId == track?.albumId }
 }
 
 /** What the player has been given for the current queue. It decides which index the screen shows and whether the queue can be edited without touching the player. */
@@ -290,8 +290,8 @@ class PlayQueue(
      * resolving the whole queue first meant a multi-track "play album" tap blocked audibly starting on downloading the entire album.
      * The starting song is loaded alone, and [handOver] fills in around it once audio is flowing.
      */
-    suspend fun play(tracks: List<Track>, requestedIndex: Int, albumArtUrl: String? = null) {
-        launchPlay(tracks, requestedIndex, albumArtUrl)?.join()
+    suspend fun play(tracks: List<Track>, requestedIndex: Int, albumArtId: String? = null) {
+        launchPlay(tracks, requestedIndex, albumArtId)?.join()
     }
 
     /**
@@ -301,11 +301,11 @@ class PlayQueue(
      * current song from, has already run when this returns, so a caller can navigate to Now Playing at once instead of after the
      * whole (potentially multi-second) load.
      */
-    fun playAsync(tracks: List<Track>, requestedIndex: Int, albumArtUrl: String? = null) {
-        launchPlay(tracks, requestedIndex, albumArtUrl)
+    fun playAsync(tracks: List<Track>, requestedIndex: Int, albumArtId: String? = null) {
+        launchPlay(tracks, requestedIndex, albumArtId)
     }
 
-    private fun launchPlay(tracks: List<Track>, requestedIndex: Int, albumArtUrl: String?): Job? {
+    private fun launchPlay(tracks: List<Track>, requestedIndex: Int, albumArtId: String?): Job? {
         if (tracks.isEmpty()) return null
         val requested = requestedIndex.coerceIn(0, tracks.lastIndex)
         // A song that cannot be played (its server is off or unreachable, nothing on the phone) is not started: the first one after
@@ -322,7 +322,7 @@ class PlayQueue(
         // A hint the caller gives is for the album of the song it starts; one already held is kept for a replay in the same album (a tap
         // on a queue row, a retry) and dropped for a song of another.
         val startAlbumId = tracks[startIndex].albumId
-        art.value = albumArtUrl?.let { AlbumArtHint(it, startAlbumId) } ?: art.value?.takeIf { it.albumId != null && it.albumId == startAlbumId }
+        art.value = albumArtId?.let { AlbumArtHint(it, startAlbumId) } ?: art.value?.takeIf { it.albumId != null && it.albumId == startAlbumId }
         // Pause whatever was playing the instant the screen switches to the new song: loading can take a real, visible amount of
         // time, and leaving the old song running meant it kept audibly playing under the new song's title (reported live).
         player.pause()

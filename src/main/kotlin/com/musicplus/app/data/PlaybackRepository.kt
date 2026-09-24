@@ -206,10 +206,10 @@ class PlaybackRepository(
     // ---- what screens call ----
 
     /** See [PlayQueue.play]. */
-    suspend fun play(tracks: List<Track>, requestedIndex: Int, albumArtUrl: String? = null) = playQueue.play(tracks, requestedIndex, albumArtUrl)
+    suspend fun play(tracks: List<Track>, requestedIndex: Int, albumArtId: String? = null) = playQueue.play(tracks, requestedIndex, albumArtId)
 
     /** See [PlayQueue.playAsync]: what screens call, never their own scope. */
-    fun playAsync(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) = playQueue.playAsync(tracks, startIndex, albumArtUrl)
+    fun playAsync(tracks: List<Track>, startIndex: Int, albumArtId: String? = null) = playQueue.playAsync(tracks, startIndex, albumArtId)
 
     suspend fun addToQueue(tracks: List<Track>) = playQueue.addToQueue(tracks)
     fun addToQueueAsync(tracks: List<Track>, onDone: () -> Unit = {}) = playQueue.addToQueueAsync(tracks, onDone)

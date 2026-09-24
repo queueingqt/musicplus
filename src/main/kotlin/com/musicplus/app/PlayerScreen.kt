@@ -115,8 +115,8 @@ private fun seekButton(enabled: Boolean, icon: LightIconConfiguration, descripti
  * resolve even when the answer is already known synchronously at
  * play()-time.
  */
-fun resolveAlbumArtUrl(track: Track?, albums: List<Album>, hint: AlbumArtHint?): String? =
-    hint?.urlFor(track) ?: albums.find { it.id == track?.albumId }?.coverArtUrl ?: track?.coverArtUrl
+fun resolveAlbumArtId(track: Track?, albums: List<Album>, hint: AlbumArtHint?): String? =
+    hint?.coverArtIdFor(track) ?: albums.find { it.id == track?.albumId }?.coverArtId ?: track?.coverArtId
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PlayerScreenViewModel(
@@ -132,7 +132,7 @@ class PlayerScreenViewModel(
     /** Ephemeral, in-memory-only sleep timer — see [com.musicplus.app.data.playback.SleepTimer.state]'s doc. */
     val sleepTimerState: StateFlow<SleepTimerState?> = playback.sleepTimer.state
 
-    // Seeded from the same synchronous values [resolveAlbumArtUrl] would
+    // Seeded from the same synchronous values [resolveAlbumArtId] would
     // eventually settle on, not null — every navigation to PlayerScreen (even
     // replaying the identical track) creates a fresh ViewModel, and this
     // StateFlow's initial value otherwise has nothing to do with whether the
@@ -143,14 +143,14 @@ class PlayerScreenViewModel(
     // albums list, so a song that was started without a hint (from a list, a
     // playlist, or restored at launch) has its art on the first frame too;
     // the live albums flow below only confirms it (issue #54).
-    val albumArtUrl: StateFlow<String?> = combine(
+    val albumArtId: StateFlow<String?> = combine(
         state, libraryRepository.observeAlbums(), playback.albumArtHint,
     ) { s, albums, hint ->
-        resolveAlbumArtUrl(s.currentTrack, albums, hint)
+        resolveAlbumArtId(s.currentTrack, albums, hint)
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        resolveAlbumArtUrl(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
+        resolveAlbumArtId(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
     )
 
     /** True while the current track's favorite state is still waiting to reach the server (issue #24) — the star's own filled/outline state already reflects the optimistic local value, so this drives a separate "still syncing" indicator rather than a third icon state. */
@@ -245,7 +245,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
     @Composable
     override fun Content() {
         val state by viewModel.state.collectAsState()
-        val albumArtUrl by viewModel.albumArtUrl.collectAsState()
+        val albumArtId by viewModel.albumArtId.collectAsState()
         val isFavoritePending by viewModel.isFavoritePending.collectAsState()
         val downloadStatus by viewModel.downloadStatus.collectAsState()
         val sleepTimerState by viewModel.sleepTimerState.collectAsState()
@@ -340,12 +340,12 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                 // full-screen view with nothing to look at.
                 AlbumArt(
                     lightContext = lightContext,
-                    url = albumArtUrl,
+                    coverArtId = albumArtId,
                     size = 9f.gridUnitsAsDp(),
                     placeholderIconSize = 4f,
                     modifier = Modifier
                         .let { m ->
-                            if (showArtwork && albumArtUrl != null) {
+                            if (showArtwork && albumArtId != null) {
                                 m.lightClickable { navigateTo(::AlbumArtScreen) }
                             } else {
                                 m

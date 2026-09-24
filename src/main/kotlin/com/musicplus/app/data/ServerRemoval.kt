@@ -42,6 +42,7 @@ class ServerRemoval(
     private val queueDao: QueueDao,
     private val filesDir: File,
     private val streamCache: StreamCache,
+    private val albumArtRepository: AlbumArtRepository,
 ) {
     /** Finished downloads per server, live. Sizes come off the disk, so this runs off the main thread. */
     val downloadSummaries: Flow<Map<String, DownloadSummary>> = downloadDao.observeAll().map { rows ->
@@ -111,12 +112,13 @@ class ServerRemoval(
         }
     }
 
-    /** A server's files are named after the scoped id, so they are the ones starting with its (file-safe) scope; the stream cache knows its own. */
+    /** A server's files are named after the scoped id, so they are the ones starting with its (file-safe) scope; the stream cache and the art store know their own. */
     private suspend fun deleteCachedFiles(serverId: String, includingArtAndLyrics: Boolean) = withContext(Dispatchers.IO) {
         streamCache.deleteForServer(serverId)
         if (includingArtAndLyrics) {
+            albumArtRepository.deleteForServer(serverId)
             val prefix = ServerScope.fileKey(ServerScope.scope(serverId, ""))
-            for (dir in listOf("albumart", "lyrics")) File(filesDir, dir).listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
+            File(filesDir, "lyrics").listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
         }
     }
 

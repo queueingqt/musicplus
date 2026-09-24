@@ -4,9 +4,9 @@ package com.musicplus.app.data
  * The one place that knows what an id in this app looks like.
  *
  * A server hands out ids like `xE8hToLxKMfMu3Q0ldOtAW`, and two servers can hand out the same one. So every
- * id the app stores or passes around is *scoped*: `<serverId>:<id the server gave>`. [SubsonicApi] is the only
- * code that sees a server's own ids: it scopes what comes in and unscopes what goes out, so nothing else can
- * mix the two up, and the same song on two servers is two rows, two files and two queue entries.
+ * id the app stores or passes around is *scoped*: `<serverId>:<id the server gave>`. The adapters ([SubsonicApi],
+ * [JellyfinApi]) are the only code that sees a server's own ids: they scope what comes in and unscope what goes
+ * out, so nothing else can mix the two up, and the same song on two servers is two rows, two files and two queue entries.
  *
  * A server id is a UUID (or "legacy" for a pre-multi-server install) and never contains ':', so the first ':'
  * always ends it, whatever the rest holds. A playlist made while offline is `<serverId>:pending:<uuid>`.

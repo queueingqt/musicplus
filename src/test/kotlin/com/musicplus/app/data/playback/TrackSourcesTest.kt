@@ -55,7 +55,7 @@ class TrackSourcesTest {
 
     private fun track(id: String, localFilePath: String? = null) = Track(
         id = "srv:$id", title = id, albumId = null, albumName = null, artistId = null, artistName = null, trackNumber = null,
-        durationSec = 100, coverArtUrl = null, isFavorite = false, downloadStatus = null, localFilePath = localFilePath,
+        durationSec = 100, coverArtId = null, isFavorite = false, downloadStatus = null, localFilePath = localFilePath,
     )
 
     private val fetched get() = (api as FakeStreams).fetched.toList()

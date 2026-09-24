@@ -245,6 +245,7 @@ object AppGraph {
             playbackStateRepository = playbackStateRepository,
             filesDir = lightContext.filesDir,
             streamCache = streamCache,
+            albumArtRepository = albumArtRepository,
         )
 
         // Periodic backstop (WorkManager's own 15-minute floor — see
@@ -325,6 +326,7 @@ object AppGraph {
             queueDao = database.queueDao(),
             filesDir = lightContext.filesDir,
             streamCache = streamCache,
+            albumArtRepository = albumArtRepository,
         )
 
         return Graph(

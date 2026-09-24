@@ -67,7 +67,7 @@ internal object IdScopeMigration {
 
                 verify(db, prefix, before)
 
-                renameCached(File(filesDir, "albumart"), ART_FILE, coverArtIds, prefix, renames)
+                renameCached(File(filesDir, CoverArtStore.DIR_NAME), ART_FILE, coverArtIds, prefix, renames)
                 renameCached(File(filesDir, "lyrics"), LYRICS_FILE, trackIds, prefix, renames)
 
                 db.version = newVersion

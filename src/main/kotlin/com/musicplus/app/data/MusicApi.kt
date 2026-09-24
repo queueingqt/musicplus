@@ -9,9 +9,6 @@ enum class ServerKind {
     JELLYFIN,
 }
 
-/** Extra query parameter a cover-art URL carries, naming which server it's for — see [AlbumArtRepository]. Servers ignore parameters they don't know. */
-const val COVER_ART_SERVER_PARAM = "musicplusServer"
-
 /**
  * What any music server backend can do, in the app's own vocabulary rather than either wire protocol's — everything
  * [LibraryRepository], [PlaylistRepository], [AlbumArtRepository], [LyricsRepository], [DownloadRepository],
@@ -29,7 +26,7 @@ const val COVER_ART_SERVER_PARAM = "musicplusServer"
  * would either wrongly gate Jellyfin's resume tracking behind a "scrobbling" toggle, or wrongly make Subsonic's opt-in
  * relay unconditional. [PlaybackRepository] calls each backend's own method directly instead.
  */
-interface MusicApi : SongStreams {
+interface MusicApi : SongStreams, CoverArtSource {
     val serverId: String
 
     /** An ordinary, signed-in question — the control that says a "no" from a capability probe means something. */
@@ -77,9 +74,8 @@ interface MusicApi : SongStreams {
     /** The original file, streamed to [destination] through the app's own HTTP client — never transcoded. */
     suspend fun downloadToFile(songId: String, destination: File, lease: FetchGate.Lease? = null)
 
-    /** [coverArtId] is any item's own cover-art reference (not necessarily the item's own id) — see [AlbumArtRepository]. */
-    fun coverArtUrl(coverArtId: String, size: Int = 300): String
-    suspend fun coverArtBytes(coverArtId: String, size: Int = 300): ByteArray
+    // coverArtBytes comes from CoverArtSource: a scoped cover-art id and a size in, the picture's bytes out; how the adapter asks its
+    // server is its own business (there is no URL for the rest of the app to build or parse).
 
     /** Empty when the track genuinely has no lyrics — never throws for that case, only for a real request failure. */
     suspend fun getLyrics(songId: String): List<ApiLyricEntry>
