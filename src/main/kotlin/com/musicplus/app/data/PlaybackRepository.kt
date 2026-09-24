@@ -1174,14 +1174,18 @@ class PlaybackRepository(
         // Whatever full-queue rebuild the previous play() left running is now
         // superseded — stop it instead of letting it keep downloading (issue #47).
         extendJob?.cancel()
-        queue.value = tracks
-        pendingIndex.value = startIndex
-        currentAlbumArtUrl.value = albumArtUrl
         // A new queue/position is about to load — whatever the player was
         // previously loaded with (if anything) no longer matches `queue`, so
         // `resolvedIndex` must fall back to `pendingIndex` again until `play()`
-        // finishes and sets this back to true.
+        // finishes and sets this back to true. First, before `queue` changes:
+        // this scope is Main.immediate, so a collector runs at every assignment,
+        // and with `queue` set first there was one emission pairing the new
+        // song with the previous song's playing flag and position, which
+        // scrobbled a song that had not started (2026-09-23).
         playerQueueLoaded.value = false
+        queue.value = tracks
+        pendingIndex.value = startIndex
+        currentAlbumArtUrl.value = albumArtUrl
         // Pause whatever was already playing the instant the UI switches to the
         // new track's title/art (just above) — setMediaQueue below can take a
         // real, visible amount of time to resolve (see toAudioItem: a cleartext
