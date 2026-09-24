@@ -4,9 +4,18 @@ import com.musicplus.app.NoteModal
 import com.musicplus.app.PlaybackState
 import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
+import com.musicplus.app.data.playback.ErrorRecovery
 import com.musicplus.app.data.playback.JellyfinPlayReportSink
 import com.musicplus.app.data.playback.ListenReporting
+import com.musicplus.app.data.playback.PlaybackPersistence
+import com.musicplus.app.data.playback.PlayerFault
+import com.musicplus.app.data.playback.RETRY_DELAY_MS
+import com.musicplus.app.data.playback.Recovery
 import com.musicplus.app.data.playback.ScrobbleSink
+import com.musicplus.app.data.playback.SkipMove
+import com.musicplus.app.data.playback.SleepTimer
+import com.musicplus.app.data.playback.TrackEnd
+import com.musicplus.app.data.playback.TrackEndAction
 import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
@@ -37,46 +46,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-
-/**
- * Sleep timer state — ephemeral, in-memory only, by design (see
- * [PlaybackRepository]'s sleep-timer section): resets to `null` on every
- * app restart, nothing here is persisted.
- *
- * [Countdown.totalMs] is the duration originally selected, carried
- * alongside [Countdown.remainingMs] (which ticks down every second)
- * specifically so SleepTimerPickerScreen can tell which preset/custom row
- * is currently active — comparing against [remainingMs] directly would
- * only ever match for the first second, since it decays continuously after
- * that.
- */
-sealed class SleepTimerState {
-    data class Countdown(val remainingMs: Long, val totalMs: Long) : SleepTimerState()
-    data object EndOfTrack : SleepTimerState()
-}
-
-/**
- * Fires [action] at most once per distinct [index] — the shared shape
- * behind [PlaybackRepository]'s four edge-detectors
- * (lastHandledCompletionIndex/lastHandledSleepTimerIndex in
- * [PlaybackRepository.nearEndCompletionWatcher], lastNowPlayingIndex/
- * lastScrobbledIndex in [PlaybackRepository.scrobbleWatcher]): each
- * previously hand-rolled an identical `if (lastHandledX != index) {
- * lastHandledX = index; action() }` pattern, already called "edge-detector"
- * in this file's own comments even before being pulled out — confirmed
- * live, 2026-09-18 architecture review.
- */
-private class EdgeDetector {
-    private var lastFiredIndex = -1
-    fun reset() {
-        lastFiredIndex = -1
-    }
-    suspend fun fireOnce(index: Int, action: suspend () -> Unit) {
-        if (lastFiredIndex == index) return
-        lastFiredIndex = index
-        action()
-    }
-}
 
 /**
  * Wraps one [LightAudio]-provided player for the whole tool session. Built as
@@ -180,7 +149,7 @@ class PlaybackRepository(
     // True once `player.setMediaQueue(...)` has actually been called for the
     // *current* `queue`/`pendingIndex` pair — reset to false at the start of
     // every `beginPlay()`, set true at the end of `play()`. Restoring a
-    // persisted queue on process start (see [restoreFromDisk]) populates
+    // persisted queue on process start (see [PlaybackPersistence.restore]) populates
     // `queue`/`pendingIndex` directly without ever touching the real player,
     // so `player.currentMediaItemIndex.value` (very plausibly still its
     // default, 0) can coincidentally fall inside the restored queue's bounds
@@ -209,14 +178,14 @@ class PlaybackRepository(
     // every restore instead of a plain paused/ready state.
     private val isActivelyLoading = MutableStateFlow(false)
 
-    // Set once by restoreFromDisk() from the last persisted position, consumed
+    // Set once by PlaybackPersistence.restore() from the last persisted position, consumed
     // (and cleared) the first time togglePlayPause() actually resumes a
     // restored queue — see its doc. Zero once consumed or if nothing was
     // ever restored, same as a track legitimately starting from 0:00.
     private var restoredPositionMs = 0L
 
     // Set synchronously at the very top of beginPlay(), i.e. before any real
-    // play() has done a single suspend — see restoreFromDisk()'s doc for why
+    // play() has done a single suspend — see PlaybackPersistence.restore()'s doc for why
     // this exists. Never cleared: once a real play has ever been started this
     // process, restoring old state to overwrite it is never correct again.
     private var hasStartedRealPlay = false
@@ -246,7 +215,7 @@ class PlaybackRepository(
      */
     private val streamingIds = MutableStateFlow<Set<String>>(emptySet())
 
-    // Completed once restoreFromDisk() has finished or been skipped — see
+    // Completed once PlaybackPersistence.restore() has finished or been skipped — see
     // awaitQueueRestored().
     private val restoreDone = CompletableDeferred<Unit>()
 
@@ -381,70 +350,28 @@ class PlaybackRepository(
     /** The explicit album-art hint passed to the current [play] call, if any — see [currentAlbumArtUrl]'s doc. */
     val albumArtUrlHint: StateFlow<String?> = currentAlbumArtUrl.asStateFlow()
 
-    // Declared before the watchers below (rather than trailing them, as the
-    // plain -1 Int fields they replaced could get away with) — a StateFlow
-    // collector can start delivering emissions synchronously as part of the
-    // scope.launch call that creates it, so a real object referenced by a
-    // watcher's lambda has to already exist by then, not just be scheduled
-    // to exist later in constructor order.
-    private val completionEdge = EdgeDetector()
-
-    // Position-polling workaround for REPEAT_TRACK/REPEAT_QUEUE, since
-    // LightAudioPlayer's confirmed public surface has no track-completion or
-    // end-of-queue signal to react to instead — filed upstream as
-    // lightphone/light-sdk#218 ("LightAudioPlayer doesn't expose events").
-    // If/when that lands, replace this whole watcher with reacting to the
-    // real event directly, instead of estimating "about to end" from
-    // positionMs/durationMs. Position updates every 250ms (confirmed in the
-    // SDK's own LightAudioPlayer source, POSITION_POLL_MS), so a 500ms
-    // "near end" window gives a couple of ticks of margin to act before the
-    // track would actually finish and (for a multi-track queue) ExoPlayer's
-    // own default auto-advance-to-next-item takes over on its own — the
-    // trade-off is losing the last ~0.5s of a REPEAT_TRACK loop, which reads
-    // as far less jarring than the alternative (letting it actually advance
-    // to the next track first, then snapping back).
-    //
-    // REPEAT_TRACK/REPEAT_QUEUE only — the sleep timer's own "end of current
-    // track" mode used to be handled inside this same collect block (it needs
-    // the identical near-end technique, for the identical reason: no real
-    // completion event to react to), which meant one watcher owned
-    // edge-detection for two entirely unrelated features. Split into its own
-    // sleepTimerWatcher (see the Sleep timer section below) — confirmed live,
-    // 2026-09-18 architecture review.
-    private val nearEndCompletionWatcher = scope.launch {
+    // The sleep timer, and the "the track is about to end" decision that both it (its end-of-track mode) and repeat mode act on.
+    val sleepTimer = SleepTimer(scope, onSleep = { pauseForSleepTimer() })
+    private val trackEnd = TrackEnd()
+    private val trackEndWatcher = scope.launch {
         state.collect { s ->
-            if (!s.isPlaying || s.durationMs <= 0L) return@collect
-            val remainingMs = s.durationMs - s.positionMs
-            val nearEnd = remainingMs in 0..NEAR_END_THRESHOLD_MS
-            if (!nearEnd) {
-                // Cleared the instant we're not near-end — for a freshly
-                // restarted/wrapped track this won't be true again until it's
-                // played nearly all the way through once more, so this is
-                // never a same-position re-arm race.
-                completionEdge.reset()
-                return@collect
-            }
-
-            val mode = repeatMode.value
-            if (mode == RepeatMode.OFF) return@collect
-            // Edge-detector: without this, every emission still inside the
-            // near-end window would refire the action (repeated seekTo(0)
-            // calls, or repeatedly restarting the queue wrap).
-            when (mode) {
-                RepeatMode.REPEAT_TRACK -> completionEdge.fireOnce(s.currentIndex) {
+            when (trackEnd.observe(s, repeatMode.value, sleepTimer.endOfTrackArmed)) {
+                TrackEndAction.RESTART_TRACK -> {
                     player.seekTo(0)
                     if (!player.isPlaying.value) player.play()
                 }
-                RepeatMode.REPEAT_QUEUE -> {
-                    // Mid-queue, nothing to do — ExoPlayer already auto-advances
-                    // to the next item on its own; this only needs to step in at
-                    // the wrap-around point that behavior doesn't cover.
-                    if (s.currentIndex == s.queue.lastIndex) {
-                        completionEdge.fireOnce(s.currentIndex) { play(s.queue, 0) }
-                    }
-                }
-                RepeatMode.OFF -> {}
+                TrackEndAction.WRAP_QUEUE -> play(s.queue, 0)
+                TrackEndAction.SLEEP -> sleepTimer.fire()
+                null -> {}
             }
+        }
+    }
+
+    /** The sleep timer's only effect: pause, and only if actually playing, so a timer firing after a manual pause stays paused. */
+    private fun pauseForSleepTimer() {
+        if (player.isPlaying.value) {
+            player.pause()
+            scope.launch { persistScalarStateIfLoaded() }
         }
     }
 
@@ -458,17 +385,8 @@ class PlaybackRepository(
         ),
     ).also { it.start(state) }
 
-    // Playback errors (issues #47/#50). The SDK's LightAudioError only ever
-    // reached the screen as Now Playing's "Playback error: ..." line — nothing
-    // recorded it, so an ERROR_CODE_IO_UNSPECIFIED that hit right as a track
-    // started left no trace anywhere and its cause could not be worked out
-    // afterward. Logs every distinct error with the track and queue position it
-    // hit and, because a Source (I/O) failure at the very start of a track has
-    // been seen to clear on a fresh attempt, retries the current track once —
-    // at most once per AUTO_RETRY_COOLDOWN_MS per track, and only within the
-    // first AUTO_RETRY_MAX_POSITION_MS of it, so a failure mid-song never yanks
-    // the listener back to 0:00.
-    private val lastAutoRetryAtMs = HashMap<String, Long>()
+    // Player errors (issues #47/#50): what to retry and what to skip is ErrorRecovery's policy; this carries it out.
+    private val errorRecovery = ErrorRecovery()
     private val playerErrorWatcher = scope.launch {
         player.error.collect { err ->
             if (err == null) return@collect
@@ -479,280 +397,80 @@ class PlaybackRepository(
                 "player error ${err.kind}: ${err.diagnostic} (item ${err.itemIndex}); track=${track?.id} " +
                     "\"${track?.title}\" queueIndex=${s.currentIndex} of ${s.queue.size} position=${s.positionMs}ms",
             )
-            if (err.kind != LightAudioErrorKind.Source || track == null) return@collect
-            // A network failure at the start of a song tells us its server cannot be reached, even before a request of
-            // ours has noticed.
-            if (err.diagnostic.contains("NETWORK_CONNECTION") || err.diagnostic.contains("TIMEOUT")) {
+            val fault = PlayerFault(isSourceError = err.kind == LightAudioErrorKind.Source, diagnostic = err.diagnostic)
+            if (track != null && errorRecovery.indicatesUnreachableServer(fault)) {
                 ServerScope.serverOf(track.id)?.let { apiHolder.reachability?.report(it, false) }
             }
-            if (!TrackAvailability.isPlayable(track)) {
-                skipUnavailable(s)
-                return@collect
-            }
-            // A file that is gone (its download was removed while the song sat in the
-            // queue) is not a flaky start, and `s.positionMs` says nothing about it: the
-            // player can still be reporting the previous item's position, which is what
-            // stopped the retry on the phone (2026-09-19) and left playback stalled in
-            // an error until play was pressed. Re-resolving the track fetches it instead.
-            val fileGone = err.diagnostic.contains("FILE_NOT_FOUND")
-            if (!fileGone && s.positionMs > AUTO_RETRY_MAX_POSITION_MS) return@collect
-            val now = System.currentTimeMillis()
-            val last = lastAutoRetryAtMs[track.id]
-            if (last != null && now - last < AUTO_RETRY_COOLDOWN_MS) return@collect
-            lastAutoRetryAtMs[track.id] = now
-            AppLogger.d("PlaybackRepository", "auto-retrying ${track.id} once after ${err.diagnostic}")
-            delay(AUTO_RETRY_DELAY_MS)
-            if (s.currentIndex in s.queue.indices) playAsync(s.queue, s.currentIndex, currentAlbumArtUrl.value)
-        }
-    }
-
-    /** How many songs in a row were skipped because they could not be played; a queue with nothing playable stops instead of looping. */
-    private var unavailableSkipStreak = 0
-    private val skipStreakReset = scope.launch { player.isPlaying.collect { if (it) unavailableSkipStreak = 0 } }
-
-    /**
-     * The song that just failed cannot be played (its server is off or unreachable and the phone has no copy). Say so
-     * briefly and move on to the next one; when the queue has nothing left that plays, stop and say so.
-     */
-    private fun skipUnavailable(s: PlaybackState) {
-        val track = s.currentTrack ?: return
-        unavailableSkipStreak++
-        val next = s.queue.indices.firstOrNull { it > s.currentIndex && TrackAvailability.isPlayable(s.queue[it]) }
-        val wraps = next == null && repeatMode.value == RepeatMode.REPEAT_QUEUE && s.queue.any { TrackAvailability.isPlayable(it) }
-        if ((next == null && !wraps) || unavailableSkipStreak > s.queue.size) {
-            AppLogger.d("PlaybackRepository", "nothing left to play in the queue, stopping")
-            player.pause()
-            unavailableSkipStreak = 0
-            NoteModal.show("Server not reachable")
-            return
-        }
-        AppLogger.d("PlaybackRepository", "skipping \"${track.title}\" (${track.id}): its server is not reachable")
-        NoteModal.show("Skipped \"${track.title}\": server not reachable")
-        if (next != null) jumpToAsync(next) else scope.launch { play(s.queue, s.queue.indexOfFirst { TrackAvailability.isPlayable(it) }) }
-    }
-
-    // --- Sleep timer — ephemeral, in-memory only, by design (see
-    // [SleepTimerState]'s doc): resets to null on every app restart, nothing
-    // here is persisted. Lives here, on this repository's own [scope],
-    // rather than any one screen's viewModelScope for the same reason
-    // [scope] itself does (see this class's header doc): PlaybackRepository
-    // is a process-lifetime singleton tied to the same
-    // LightAudioPlayback.Detached foreground service that already keeps
-    // playback alive across backgrounding, so a timer counting down here
-    // keeps counting down exactly as reliably as playback itself does — no
-    // WorkManager/AlarmManager needed.
-    //
-    // One feature, two genuinely different mechanisms, kept together here
-    // rather than scattered across the class the way they previously were.
-    // [SleepTimerState.Countdown] has a fixed duration to count down, so
-    // [startSleepTimer] runs its own tick loop on [sleepTimerJob].
-    // [SleepTimerState.EndOfTrack] has no fixed duration — there's nothing
-    // to tick — so [startSleepTimerAtEndOfTrack] instead arms
-    // [sleepTimerWatcher] below, which polls playback position the same way
-    // [nearEndCompletionWatcher] does for REPEAT_TRACK/REPEAT_QUEUE (no
-    // track-completion event exists to react to instead — see that
-    // watcher's own doc). That's a real, deliberate difference in how the
-    // two modes work, not an oversight: collapsing it further into one
-    // wall-clock-driven mechanism would mean a countdown started while
-    // paused either doesn't count down (wrong for "sleep in 30 minutes,
-    // playing or not") or an end-of-track timer fires based on elapsed real
-    // time instead of actual playback progress (wrong the other way —
-    // pausing to answer the door shouldn't burn down the timer). What WAS
-    // wrong: EndOfTrack's polling used to live inside
-    // nearEndCompletionWatcher's own collect block, which meant one watcher
-    // owned edge-detection for two entirely unrelated features (repeat-mode
-    // wrap-around and the sleep timer). Split apart here instead — confirmed
-    // live, 2026-09-18 architecture review.
-    private val _sleepTimerState = MutableStateFlow<SleepTimerState?>(null)
-    val sleepTimerState: StateFlow<SleepTimerState?> = _sleepTimerState.asStateFlow()
-
-    // The running countdown coroutine, if any — null in EndOfTrack mode (see
-    // class doc above; that mode is driven by [sleepTimerWatcher] instead,
-    // which has no job of its own since it just observes [state]).
-    private var sleepTimerJob: Job? = null
-
-    private val sleepTimerEdge = EdgeDetector()
-
-    // Only acts while [_sleepTimerState] is [SleepTimerState.EndOfTrack] — a
-    // no-op collector otherwise. See the Sleep timer section doc above for
-    // why this needs its own near-end poll rather than a fixed duration to
-    // count down, and why it's a separate watcher from
-    // [nearEndCompletionWatcher] rather than sharing its collect block.
-    private val sleepTimerWatcher = scope.launch {
-        state.collect { s ->
-            if (_sleepTimerState.value !is SleepTimerState.EndOfTrack) return@collect
-            if (!s.isPlaying || s.durationMs <= 0L) return@collect
-            val remainingMs = s.durationMs - s.positionMs
-            val nearEnd = remainingMs in 0..NEAR_END_THRESHOLD_MS
-            if (!nearEnd) {
-                sleepTimerEdge.reset()
-                return@collect
-            }
-            sleepTimerEdge.fireOnce(s.currentIndex) {
-                pauseForSleepTimer()
-                _sleepTimerState.value = null
+            when (val recovery = errorRecovery.decide(fault, s, repeatMode.value, { TrackAvailability.isPlayable(it) }, System.currentTimeMillis())) {
+                Recovery.None -> {}
+                is Recovery.Skip -> skipUnavailable(recovery, s)
+                Recovery.Retry -> {
+                    AppLogger.d("PlaybackRepository", "auto-retrying ${track?.id} once after ${err.diagnostic}")
+                    delay(RETRY_DELAY_MS)
+                    if (s.currentIndex in s.queue.indices) playAsync(s.queue, s.currentIndex, currentAlbumArtUrl.value)
+                }
             }
         }
     }
 
-    /**
-     * Starts (or restarts, replacing whatever was already running/set) a
-     * plain countdown sleep timer — pauses playback once [minutes] has
-     * elapsed. See [SleepTimerState.Countdown.totalMs]'s doc for why the
-     * originally-selected duration is kept alongside the live, ticking-down
-     * remaining time.
-     */
-    fun startSleepTimer(minutes: Int) {
-        require(minutes > 0) { "minutes must be positive" }
-        val totalMs = minutes * 60_000L
-        sleepTimerJob?.cancel()
-        _sleepTimerState.value = SleepTimerState.Countdown(remainingMs = totalMs, totalMs = totalMs)
-        sleepTimerJob = scope.launch {
-            var remaining = totalMs
-            while (remaining > 0) {
-                val tick = SLEEP_TIMER_TICK_MS.coerceAtMost(remaining)
-                delay(tick)
-                remaining -= tick
-                _sleepTimerState.value = SleepTimerState.Countdown(remainingMs = remaining, totalMs = totalMs)
+    private val skipStreakReset = scope.launch { player.isPlaying.collect { if (it) errorRecovery.onPlaying() } }
+
+    /** The song that just failed cannot be played (its server is off or unreachable and the phone has no copy): say so briefly and carry out the move. */
+    private fun skipUnavailable(skip: Recovery.Skip, s: PlaybackState) {
+        when (val move = skip.move) {
+            SkipMove.Stop -> {
+                AppLogger.d("PlaybackRepository", "nothing left to play in the queue, stopping")
+                player.pause()
+                NoteModal.show("Server not reachable")
             }
-            pauseForSleepTimer()
-            _sleepTimerState.value = null
-            sleepTimerJob = null
+            is SkipMove.To, is SkipMove.WrapTo -> {
+                AppLogger.d("PlaybackRepository", "skipping \"${skip.track.title}\" (${skip.track.id}): its server is not reachable")
+                NoteModal.show("Skipped \"${skip.track.title}\": server not reachable")
+                if (move is SkipMove.To) jumpToAsync(move.index) else scope.launch { play(s.queue, (move as SkipMove.WrapTo).index) }
+            }
         }
     }
 
-    /** "End of current track" — see the Sleep timer section doc above for why this arms [sleepTimerWatcher] instead of running a tick loop. */
-    fun startSleepTimerAtEndOfTrack() {
-        sleepTimerJob?.cancel()
-        sleepTimerJob = null
-        _sleepTimerState.value = SleepTimerState.EndOfTrack
-    }
+    // Saving and restoring the queue and playback state across a restart is PlaybackPersistence's; this only applies what it restored.
+    // Restore must finish before the queue writer starts (see its doc), and both run in this one coroutine, in that order.
+    private val persistence = PlaybackPersistence(queueDao, playbackStateRepository) { libraryRepository.getTracksByIds(it) }
 
-    /** Cancels a running sleep timer outright (either kind) — playback itself is untouched either way. */
-    fun cancelSleepTimer() {
-        sleepTimerJob?.cancel()
-        sleepTimerJob = null
-        _sleepTimerState.value = null
-    }
-
-    /**
-     * The sleep timer's only effect — pause, and only if actually playing
-     * right now; nothing else (no stop, no clearQueue: [queue]/[pendingIndex]
-     * stay exactly as they were). Guarded on [player.isPlaying] rather than
-     * calling [togglePlayPause] unconditionally — a timer that fires after
-     * the person already paused by hand must stay paused, not toggle
-     * straight back into play.
-     */
-    private fun pauseForSleepTimer() {
-        if (player.isPlaying.value) {
-            player.pause()
-            scope.launch { persistScalarStateIfLoaded() }
-        }
-    }
-
-    // Restore must finish (including its Room/DataStore reads) before the
-    // queue-persistence collector below starts — both run in one coroutine,
-    // sequentially, specifically so the collector's first emission is never
-    // the class's own empty initial `queue` value racing ahead of
-    // restoreFromDisk() and overwriting the very row it's about to read. See
-    // restoreFromDisk's doc for the restore itself.
     init {
         scope.launch {
             try {
-                restoreFromDisk()
+                persistence.restore(stillWanted = { !hasStartedRealPlay })?.let { restored ->
+                    queue.value = restored.tracks
+                    pendingIndex.value = restored.index
+                    shuffle.value = restored.shuffle
+                    repeatMode.value = restored.repeatMode
+                    currentAlbumArtUrl.value = restored.albumArtUrl
+                    restoredPositionMs = restored.positionMs
+                }
             } finally {
                 restoreDone.complete(Unit)
             }
-            queue.collect { tracks -> queueDao.replaceQueue(tracks.map { it.id }) }
+            persistence.keepQueueSaved(queue)
         }
     }
 
-    // Coarse periodic snapshot, not a full `state` collector — position
-    // updates every ~250ms (see nearEndCompletionWatcher's doc) and a
-    // DataStore write is real disk I/O; issue #27 only needs "close enough"
-    // position to resume from, not per-tick accuracy. Also triggered
-    // immediately at a few specific moments (end of play(), pause, shuffle/
-    // repeat changes) so those don't wait out the interval.
-    private val statePersistenceWatcher = scope.launch {
-        while (true) {
-            delay(STATE_PERSIST_INTERVAL_MS)
-            persistScalarStateIfLoaded()
-        }
-    }
+    private val statePersistenceWatcher = persistence.savePeriodically(scope) { snapshotToSave() }
 
-    /**
-     * Issue #27 — restores the persisted queue (song ids, in order, from
-     * [queueDao]) and the scalar state that goes with it ([playbackStateRepository])
-     * on process start, so the queue survives an app restart instead of
-     * starting empty every time.
-     *
-     * Deliberately does NOT touch [player] at all — no `setMediaQueue`, no
-     * network fetch — just populates [queue]/[pendingIndex]/[shuffle]/
-     * [repeatMode]/[currentAlbumArtUrl] directly, the same synchronous fields
-     * [beginPlay] sets, so every screen's title/art/mode indicators show the
-     * restored state immediately without forcing a cold-start network fetch
-     * nobody asked for yet. The real player only loads it once the user
-     * actually presses play — see [togglePlayPause]'s resume branch, which is
-     * what [restoredPositionMs] is for.
-     *
-     * Any persisted song id no longer in the local Room cache (e.g. app data
-     * was cleared, or it was never fetched into the local library at all) is
-     * silently dropped rather than failing the whole restore — see
-     * [LibraryRepository.getTracksByIds]'s doc.
-     *
-     * Checks [hasStartedRealPlay] both before starting and right before
-     * applying its result — reproduced live, 2026-09-18: force-close the app,
-     * relaunch, and tap a track to play as close to immediately as possible.
-     * This function's own DB reads below are genuine suspend I/O (the very
-     * first Room query of the process, including a cold SQLite open plus the
-     * hand-rolled migration checks in `MusicPlusDatabase.create()`), which on
-     * a fresh process can easily take longer than resolving an already-cached
-     * track's stream URL in [play]. Both this function and a fresh play() are
-     * launched on the same [scope] with no ordering guarantee between them —
-     * whichever finishes last wins the write to [queue]/[pendingIndex], and
-     * without this check that was reliably the stale restore, silently
-     * overwriting the track the person had just tapped with whatever was
-     * playing last session.
-     */
-    private suspend fun restoreFromDisk() {
-        if (hasStartedRealPlay) return // a real play already started before this function even began — nothing to restore over
-        val songIds = queueDao.observeQueue().first().map { it.songId }
-        if (songIds.isEmpty()) return
-        val tracksById = libraryRepository.getTracksByIds(songIds).associateBy { it.id }
-        val tracks = songIds.mapNotNull { tracksById[it] }
-        if (tracks.isEmpty()) return // none of the persisted tracks are in the local cache anymore
-        val saved = playbackStateRepository.read()
-        if (hasStartedRealPlay) return // a real play started while these reads were in flight — don't clobber it
-        queue.value = tracks
-        pendingIndex.value = saved.currentIndex.coerceIn(0, tracks.lastIndex)
-        // Guards against resurrecting an invalid combo saved before shuffle/
-        // REPEAT_TRACK became mutually exclusive (see setShuffle/setRepeatMode) —
-        // shuffle wins, same as if the two were toggled in that order live.
-        shuffle.value = saved.shuffle
-        repeatMode.value = if (saved.shuffle && saved.repeatMode == RepeatMode.REPEAT_TRACK) RepeatMode.OFF else saved.repeatMode
-        currentAlbumArtUrl.value = saved.albumArtUrl
-        restoredPositionMs = saved.positionMs
-        AppLogger.d(
-            "PlaybackRepository",
-            "restoreFromDisk(): restored ${tracks.size}/${songIds.size} track(s), index=${pendingIndex.value}, positionMs=${saved.positionMs}",
-        )
-    }
-
-    /** No-ops until [playerQueueLoaded] — nothing new to persist while still restoring/mid-load, and [player]'s own index/position aren't trustworthy yet either (see [resolvedIndex]). */
-    private suspend fun persistScalarStateIfLoaded() {
-        if (!playerQueueLoaded.value) return
+    /** What to save right now, or null while restoring or mid-load: nothing new to persist, and the player's own index and position are not trustworthy yet either (see [resolvedIndex]). */
+    private fun snapshotToSave(): PlaybackStateRepository.Saved? {
+        if (!playerQueueLoaded.value) return null
         val tracks = queue.value
-        if (tracks.isEmpty()) return
-        val index = playerQueueIndex().coerceIn(0, tracks.lastIndex)
-        playbackStateRepository.save(
-            PlaybackStateRepository.Saved(
-                currentIndex = index,
-                positionMs = player.positionMs.value,
-                shuffle = shuffle.value,
-                repeatMode = repeatMode.value,
-                albumArtUrl = currentAlbumArtUrl.value,
-            ),
+        if (tracks.isEmpty()) return null
+        return PlaybackStateRepository.Saved(
+            currentIndex = playerQueueIndex().coerceIn(0, tracks.lastIndex),
+            positionMs = player.positionMs.value,
+            shuffle = shuffle.value,
+            repeatMode = repeatMode.value,
+            albumArtUrl = currentAlbumArtUrl.value,
         )
+    }
+
+    private suspend fun persistScalarStateIfLoaded() {
+        snapshotToSave()?.let { persistence.save(it) }
     }
 
     /**
@@ -1044,7 +762,7 @@ class PlaybackRepository(
      */
     fun beginPlay(tracks: List<Track>, startIndex: Int, albumArtUrl: String? = null) {
         // Set first, synchronously, before anything else here — see
-        // restoreFromDisk()'s doc. This has to win any race against it, not
+        // PlaybackPersistence.restore()'s doc. This has to win any race against it, not
         // just the `queue.value =` write two lines down.
         hasStartedRealPlay = true
         listens.beginPlay()
@@ -1307,7 +1025,7 @@ class PlaybackRepository(
 
     /**
      * Ordinary pause/play toggle, except right after a restore (issue #27):
-     * [restoreFromDisk] populates [queue]/[pendingIndex] without ever loading
+     * [PlaybackPersistence.restore] populates [queue]/[pendingIndex] without ever loading
      * the real player (see its doc), so the first press needs to actually
      * call [play] — with [restoredPositionMs] applied afterward — rather than
      * pause/play-ing a player that has nothing loaded. [playerQueueLoaded]
@@ -1516,7 +1234,7 @@ class PlaybackRepository(
         playerQueueLoaded.value = false
         playerHoldsFullQueue.value = true
         restoredPositionMs = 0L
-        cancelSleepTimer()
+        sleepTimer.cancel()
     }
 
     /**
@@ -1570,6 +1288,7 @@ class PlaybackRepository(
             }
             else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps, rank))
         }
+        AppLogger.d("PlaybackRepository", "toAudioItem($id): ${source::class.simpleName} ${(source as? LightAudioSource.FileSource)?.file?.name ?: ""} (downloaded=${downloadedFile != null}, serverUsable=${TrackAvailability.serverUsable(ServerScope.serverOf(id))})")
         return LightAudioItem(
             source = source,
             metadata = LightMediaMetadata(
@@ -1678,8 +1397,6 @@ class PlaybackRepository(
         /** See [rebuildQueue]'s doc — caps how long a queue edit waits for the rebuilt player to resolve a real duration before seeking. */
         const val REBUILD_DURATION_WAIT_MS = 5_000L
 
-        /** See [nearEndCompletionWatcher]'s doc — how close to the end counts as "finished" for the REPEAT_TRACK/REPEAT_QUEUE workaround. */
-        const val NEAR_END_THRESHOLD_MS = 500L
 
         /** See [awaitQueueRestored] — the longest anything waits for the saved queue to be restored. */
         const val RESTORE_WAIT_MS = 3_000L
@@ -1687,20 +1404,10 @@ class PlaybackRepository(
         /** See [extendToFullQueue] — the longest it waits for the player's own index to reach the start index after the full queue is swapped in. */
         const val FULL_QUEUE_SWAP_WAIT_MS = 2_000L
 
-        /** See [playerErrorWatcher]'s doc — only an error this early in a track is retried automatically. */
-        const val AUTO_RETRY_MAX_POSITION_MS = 3_000L
 
-        /** See [playerErrorWatcher]'s doc — the same track is auto-retried at most once per this long. */
-        const val AUTO_RETRY_COOLDOWN_MS = 30_000L
 
-        /** See [playerErrorWatcher]'s doc — a beat before retrying, so the player has settled after the error. */
-        const val AUTO_RETRY_DELAY_MS = 750L
 
-        /** See [statePersistenceWatcher]'s doc — how often the resume position is checkpointed to disk during ordinary playback. */
-        const val STATE_PERSIST_INTERVAL_MS = 5_000L
 
-        /** See [startSleepTimer]'s doc — how often the live countdown's [SleepTimerState.Countdown.remainingMs] ticks. */
-        const val SLEEP_TIMER_TICK_MS = 1_000L
 
 
 

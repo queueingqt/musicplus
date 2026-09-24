@@ -7,7 +7,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.musicplus.app.data.PlaybackRepository
-import com.musicplus.app.data.SleepTimerState
+import com.musicplus.app.data.playback.SleepTimerState
 import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -36,11 +36,11 @@ private val SLEEP_TIMER_PRESET_MINUTES = listOf(15, 30, 45, 60)
  * caller owns).
  */
 class SleepTimerPickerScreenViewModel(private val playback: PlaybackRepository) : LightViewModel<Unit>() {
-    val sleepTimerState: StateFlow<SleepTimerState?> = playback.sleepTimerState
+    val sleepTimerState: StateFlow<SleepTimerState?> = playback.sleepTimer.state
 
-    fun startCountdown(minutes: Int) = playback.startSleepTimer(minutes)
-    fun startEndOfTrack() = playback.startSleepTimerAtEndOfTrack()
-    fun cancel() = playback.cancelSleepTimer()
+    fun startCountdown(minutes: Int) = playback.sleepTimer.start(minutes)
+    fun startEndOfTrack() = playback.sleepTimer.startAtEndOfTrack()
+    fun cancel() = playback.sleepTimer.cancel()
 }
 
 class SleepTimerPickerScreen(private val sealedActivity: SealedLightActivity) :

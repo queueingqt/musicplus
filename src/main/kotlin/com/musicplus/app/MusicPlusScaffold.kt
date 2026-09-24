@@ -154,7 +154,7 @@ private fun MiniPlayerBar(onClick: () -> Unit, onSleepTimerClick: () -> Unit) {
         // the rest of the bar), same nested-clickable-region pattern the
         // Next/Play-Pause icons below already use. Icon only, no live
         // countdown badge — tried, reported live as not wanted.
-        val sleepTimerState by playback.sleepTimerState.collectAsState()
+        val sleepTimerState by playback.sleepTimer.state.collectAsState()
         if (sleepTimerState != null) {
             // Sized/centered the same as the Next and Play/Pause boxes below
             // — a bare LightIcon here has no internal padding of its own, so

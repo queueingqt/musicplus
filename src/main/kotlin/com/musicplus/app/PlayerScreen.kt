@@ -38,7 +38,7 @@ import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
-import com.musicplus.app.data.SleepTimerState
+import com.musicplus.app.data.playback.SleepTimerState
 import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -127,8 +127,8 @@ class PlayerScreenViewModel(
     val state: StateFlow<PlaybackState> =
         playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
 
-    /** Ephemeral, in-memory-only sleep timer — see [PlaybackRepository.sleepTimerState]'s doc. */
-    val sleepTimerState: StateFlow<SleepTimerState?> = playback.sleepTimerState
+    /** Ephemeral, in-memory-only sleep timer — see [com.musicplus.app.data.playback.SleepTimer.state]'s doc. */
+    val sleepTimerState: StateFlow<SleepTimerState?> = playback.sleepTimer.state
 
     // Seeded from the same synchronous values [resolveAlbumArtUrl] would
     // eventually settle on, not null — every navigation to PlayerScreen (even
