@@ -131,25 +131,44 @@ class ListScreensTest {
     private fun track(id: String) = Track(id, id, null, null, null, null, null, 100, null, false, null, null)
 
     @Test
-    fun aFilteredListIsSplitByWhatCanBePlayedAndFollowsTheServersComingAndGoing() = runBlocking<Unit> {
+    fun theWarmedSplitFollowsTheServersComingAndGoing() = runBlocking<Unit> {
         val songs = listOf(track("up:1"), track("down:1"), track("up:2"), track("down:2"))
         AppAvailability.now.set(availability(down = setOf("down")))
-        val filter = ListFilter(scope)
-        val split = filter.narrowAndSplit(flowOf(songs), { t, q -> t.title.containsIgnoringCase(q) }, ListAvailability::songs)
-
-        suspend fun next(ok: (AvailableSplit<Track>) -> Boolean) = withTimeout(5_000) { split.first(ok) }
-        val down = next { it.unavailable.size == 2 }
+        val split = AppAvailability.split(MutableStateFlow(songs), ListAvailability::songs)
+        val down = withTimeout(5_000) { split.first { it.unavailable.size == 2 } }
         assertEquals(listOf("up:1", "up:2"), down.playable.map { it.id })
         assertEquals(listOf("down:1", "down:2"), down.unavailable.map { it.id })
 
-        filter.set("2")
-        val narrowed = next { it.playable.size + it.unavailable.size == 2 }
-        assertEquals(listOf("up:2"), narrowed.playable.map { it.id })
-        assertEquals(listOf("down:2"), narrowed.unavailable.map { it.id })
-
         AppAvailability.now.set(availability(down = emptySet()))
+        val back = withTimeout(5_000) { split.first { it.unavailable.isEmpty() } }
+        assertEquals(songs.map { it.id }, back.playable.map { it.id })
+    }
+
+    @Test
+    fun aSplitListStartsFromItsRowsNotFromNothing() {
+        // An empty first value is drawn as "No songs yet" until the real rows arrive a few frames later (100-280 ms on the phone).
+        val source = MutableStateFlow(AvailableSplit(listOf(track("up:1")), listOf(track("down:1"))))
+        val narrowed = ListFilter(scope).narrowSplit(source) { t, q -> t.title.containsIgnoringCase(q) }
+        assertEquals(source.value, narrowed.value, "the value read before anything collects the list")
+    }
+
+    @Test
+    fun aQueryNarrowsBothHalvesOfASplitListAndItFollowsItsSource() = runBlocking<Unit> {
+        val source = MutableStateFlow(AvailableSplit(listOf(track("up:1"), track("up:2")), listOf(track("down:1"), track("down:2"))))
+        val filter = ListFilter(scope)
+        val narrowed = filter.narrowSplit(source) { t, q -> t.title.containsIgnoringCase(q) }
+        suspend fun next(ok: (AvailableSplit<Track>) -> Boolean) = withTimeout(5_000) { narrowed.first(ok) }
+
+        filter.set("2")
+        val two = next { it.playable.size + it.unavailable.size == 2 }
+        assertEquals(listOf("up:2"), two.playable.map { it.id })
+        assertEquals(listOf("down:2"), two.unavailable.map { it.id })
+
+        source.value = AvailableSplit(listOf(track("up:2"), track("down:2")), emptyList())
         val back = next { it.unavailable.isEmpty() }
         assertEquals(listOf("up:2", "down:2"), back.playable.map { it.id })
+
+        filter.set("")
+        assertEquals(2, next { it.playable.size == 2 }.playable.size)
     }
 }
-

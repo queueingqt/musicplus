@@ -4,6 +4,7 @@ import com.musicplus.app.Album
 import com.musicplus.app.Artist
 import com.musicplus.app.Playlist
 import com.musicplus.app.Track
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 
 /** How the servers stand at one moment: what [TrackAvailability.serverUsable] needs, kept together so a list is judged against one consistent picture. */
@@ -76,6 +77,20 @@ object AppAvailability {
 
     /** Until the servers are known everything counts as usable, so nothing is put below the line on a guess. */
     val now = WarmedFlow(ListAvailability(OnPhoneIndex.EMPTY, ServersNow(anyKnown = false, enabled = emptySet(), unreachable = emptySet()), downloadedOnly = false))
+
+    // Every list's rows, already cut by [now] (see [ListAvailability]) and kept current off the main thread, for the same reason [now] is warmed: a
+    // list that opens from a default and then fills in shows its "No albums yet" note for the frames in between (measured on the phone: 100-280 ms).
+    val songs = WarmedFlow(AvailableSplit.empty<Track>())
+    val albums = WarmedFlow(AvailableSplit.empty<Album>())
+    val artists = WarmedFlow(AvailableSplit.empty<Artist>())
+    val playlists = WarmedFlow(AvailableSplit.empty<Playlist>())
+    val favoriteTracks = WarmedFlow(AvailableSplit.empty<Track>())
+    val favoriteAlbums = WarmedFlow(AvailableSplit.empty<Album>())
+    val favoriteArtists = WarmedFlow(AvailableSplit.empty<Artist>())
+
+    /** [rows] cut by [now]: what [AppGraph.build] mirrors into each of the lists above. [by] is one of [ListAvailability]'s functions. */
+    fun <T> split(rows: Flow<List<T>>, by: ListAvailability.(List<T>) -> AvailableSplit<T>): Flow<AvailableSplit<T>> =
+        combine(rows, now.value) { list, availability -> availability.by(list) }
 
     /** [now]'s inputs, joined: what [AppGraph.build] mirrors into it. */
     fun observe() = combine(

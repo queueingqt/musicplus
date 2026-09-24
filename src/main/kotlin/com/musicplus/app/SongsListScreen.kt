@@ -4,10 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppAvailability
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
@@ -26,9 +25,9 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
  */
 class SongsListScreenViewModel(listRefresher: ListRefresher) : CachedListViewModel(listRefresher, ListRefresher.Target.SONGS) {
     val filter = ListFilter(viewModelScope)
-    val tracks = filter.narrowAndSplit(AppLibraryCache.allTracks.value, { track, query ->
+    val tracks = filter.narrowSplit(AppAvailability.songs.value) { track, query ->
         track.title.containsIgnoringCase(query) || track.artistName.containsIgnoringCase(query)
-    }, ListAvailability::songs)
+    }
 }
 
 class SongsListScreen(private val activity: SealedLightActivity) :

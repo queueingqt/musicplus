@@ -11,11 +11,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppAvailability
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
@@ -40,7 +39,7 @@ class ArtistListScreenViewModel(
     // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observeArtists() on every
     // fresh per-visit ViewModel.
     val filter = ListFilter(viewModelScope)
-    val artists = filter.narrowAndSplit(AppLibraryCache.artists.value, { artist, query -> artist.name.containsIgnoringCase(query) }, ListAvailability::artists)
+    val artists = filter.narrowSplit(AppAvailability.artists.value) { artist, query -> artist.name.containsIgnoringCase(query) }
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
 

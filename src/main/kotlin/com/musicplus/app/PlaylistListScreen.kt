@@ -16,10 +16,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppAvailability
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
-import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.PlaylistHomes
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.ServerScope
@@ -44,7 +43,7 @@ class PlaylistListScreenViewModel(
     // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observePlaylists() on every
     // fresh per-visit ViewModel. A client-side filter: no server-side playlist name search worth a round trip for a realistically short list.
     val filter = ListFilter(viewModelScope)
-    val playlists = filter.narrowAndSplit(AppLibraryCache.playlists.value, { playlist, query -> playlist.name.containsIgnoringCase(query) }, ListAvailability::playlists)
+    val playlists = filter.narrowSplit(AppAvailability.playlists.value) { playlist, query -> playlist.name.containsIgnoringCase(query) }
 
     /**
      * Makes a playlist at [home] (a server id, or Phone Only) and gives its id to [onCreated] — real if it synced

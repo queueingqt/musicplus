@@ -6,7 +6,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.musicplus.app.data.AppAvailability
 import com.musicplus.app.data.AvailableSplit
-import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SimpleLightScreen
@@ -54,16 +53,14 @@ class ListFilter(private val scope: CoroutineScope) {
         filteredBy(source, _query, matches).screenState(scope, emptyList())
 
     /**
-     * [narrow], then cut by whether each row can be played right now ([split] is one of [ListAvailability]'s functions): the rows that
-     * can, then the rows that cannot. Follows the servers coming and going and "Downloaded only", so a row moves without the screen being reopened.
+     * A list already cut by whether each row can be played right now ([source], one of [AppAvailability]'s), narrowed by the current query
+     * within both halves. Starts from [source]'s current value, not from an empty list: an empty first value is drawn as "No albums yet" until the
+     * real rows arrive a few frames later. A row still moves without the screen being reopened, since [source] follows the servers and "Downloaded only".
      */
-    fun <T> narrowAndSplit(
-        source: Flow<List<T>>,
-        matches: (T, String) -> Boolean,
-        split: ListAvailability.(List<T>) -> AvailableSplit<T>,
-    ): StateFlow<AvailableSplit<T>> =
-        combine(filteredBy(source, _query, matches), AppAvailability.now.value) { rows, availability -> availability.split(rows) }
-            .screenState(scope, AvailableSplit.empty())
+    fun <T> narrowSplit(source: StateFlow<AvailableSplit<T>>, matches: (T, String) -> Boolean): StateFlow<AvailableSplit<T>> =
+        combine(source, _query) { split, query ->
+            if (query.isBlank()) split else AvailableSplit(split.playable.filter { matches(it, query) }, split.unavailable.filter { matches(it, query) })
+        }.screenState(scope, source.value)
 }
 
 /** Whether [this] contains [query], ignoring case: what every list's filter means by "matches". */

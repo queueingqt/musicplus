@@ -192,6 +192,14 @@ object AppGraph {
             AppAvailability.index::set,
         )
         mirrorInto(AppAvailability.observe(), AppAvailability.now::set)
+        // And each list's rows already split by it, so opening a list reads a finished answer (see AppAvailability).
+        mirrorInto(AppAvailability.split(AppLibraryCache.allTracks.value, ListAvailability::songs), AppAvailability.songs::set)
+        mirrorInto(AppAvailability.split(AppLibraryCache.albums.value, ListAvailability::albums), AppAvailability.albums::set)
+        mirrorInto(AppAvailability.split(AppLibraryCache.artists.value, ListAvailability::artists), AppAvailability.artists::set)
+        mirrorInto(AppAvailability.split(AppLibraryCache.playlists.value, ListAvailability::playlists), AppAvailability.playlists::set)
+        mirrorInto(AppAvailability.split(AppLibraryCache.favoriteTracks.value, ListAvailability::songs), AppAvailability.favoriteTracks::set)
+        mirrorInto(AppAvailability.split(AppLibraryCache.favoriteAlbums.value, ListAvailability::albums), AppAvailability.favoriteAlbums::set)
+        mirrorInto(AppAvailability.split(AppLibraryCache.favoriteArtists.value, ListAvailability::artists), AppAvailability.favoriteArtists::set)
         // Checked on every app open, but throttled to once per
         // VERSION_CHECK_INTERVAL_MS — an unauthenticated GitHub API call is
         // cheap, but someone opening/closing the app dozens of times a day

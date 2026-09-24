@@ -4,9 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppAvailability
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppLibraryCache
-import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
@@ -24,9 +23,9 @@ class FavoritesScreenViewModel(
     // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observeFavorite*() on every
     // fresh per-visit ViewModel. One filter narrows all three lists.
     val filter = ListFilter(viewModelScope)
-    val artists = filter.narrowAndSplit(AppLibraryCache.favoriteArtists.value, { artist, query -> artist.name.containsIgnoringCase(query) }, ListAvailability::artists)
-    val albums = filter.narrowAndSplit(AppLibraryCache.favoriteAlbums.value, { album, query -> album.name.containsIgnoringCase(query) }, ListAvailability::albums)
-    val tracks = filter.narrowAndSplit(AppLibraryCache.favoriteTracks.value, { track, query -> track.title.containsIgnoringCase(query) }, ListAvailability::songs)
+    val artists = filter.narrowSplit(AppAvailability.favoriteArtists.value) { artist, query -> artist.name.containsIgnoringCase(query) }
+    val albums = filter.narrowSplit(AppAvailability.favoriteAlbums.value) { album, query -> album.name.containsIgnoringCase(query) }
+    val tracks = filter.narrowSplit(AppAvailability.favoriteTracks.value) { track, query -> track.title.containsIgnoringCase(query) }
 
     // Unfavoriting here naturally drops the row from the lists above — each is derived from observeFavorite*(), which only ever includes
     // starred items — so there's no separate "remove from this list" step beyond the same favorite toggle every other screen uses.
