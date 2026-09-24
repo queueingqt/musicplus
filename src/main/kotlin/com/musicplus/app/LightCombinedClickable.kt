@@ -29,9 +29,9 @@ import com.thelightphone.sdk.ui.LocalHapticsEnabled
  * `androidContext` is `internal`). `LocalHapticFeedback` is a plain Compose
  * CompositionLocal (no Context needed) and `androidx.compose` is allowlisted as
  * a whole group, so it's available here. Still gated by [LocalHapticsEnabled] —
- * the same signal `lightClickable` reads, which [MusicPlusScaffold] already
- * overrides app-wide — so this respects the same on/off toggle, just through a
- * different underlying vibration call.
+ * the same signal `lightClickable` reads, which [MusicPlusTheme] supplies
+ * app-wide (via the temporary HapticsWorkaround.kt) — so this respects the same
+ * on/off value, just through a different underlying vibration call.
  */
 fun Modifier.lightCombinedClickable(
     onClick: () -> Unit,

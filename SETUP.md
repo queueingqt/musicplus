@@ -96,6 +96,15 @@ code — check the tracked-issues list for the current, authoritative set):
 - No hardware volume key control, no Bluetooth device picker, no lock-screen
   now-playing integration, no Data Saver Mode detection — all confirmed
   platform limitations, not app bugs.
+- **Haptics run on a temporary workaround (issue #21, kept open).** The SDK only
+  enables tap haptics once LightOS's SDK server hands over the user's Haptic
+  Feedback setting, and this app can't reach that server (its `serverPackage` is the
+  emulator's, and LightOS 582 refuses dev-signed callers). `HapticsWorkaround.kt`
+  asks LightOS itself, follows its answer when it gets one, and defaults to on when
+  it doesn't. Until official Light SDK support lands, a user who has turned Haptic
+  Feedback off in LightOS still gets haptics here. Delete the file, and the
+  one-line call in `MusicPlusTheme.kt`, once it does. Grep for
+  `WORKAROUND(lightsdk-haptics)`.
 - `LightProgressBar` (a real SDK component) isn't used yet — Now Playing shows
   position/duration as text instead.
 - No way to open a browser or trigger a package install from a tool — the SDK

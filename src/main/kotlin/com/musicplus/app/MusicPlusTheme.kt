@@ -18,9 +18,16 @@ import com.thelightphone.sdk.ui.LightThemeController
  * visible way to tell what's wrong (found via on-device testing, not compiling).
  *
  * Every screen's `Content()` must wrap its root composable in this.
+ *
+ * Because every screen goes through here, it is also where the temporary haptics
+ * workaround is applied — see HapticsWorkaround.kt (issue #21, waiting on official
+ * Light SDK support).
  */
 @Composable
 fun MusicPlusTheme(content: @Composable () -> Unit) {
     val colors by LightThemeController.colors.collectAsState()
-    LightTheme(colors = colors, content = content)
+    LightTheme(colors = colors) {
+        // WORKAROUND(lightsdk-haptics): delete this wrapper together with HapticsWorkaround.kt.
+        ProvideHapticsWorkaround(content)
+    }
 }

@@ -66,12 +66,10 @@ fun MusicPlusScaffold(
     bottomBar: @Composable () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    // No app-local haptics override anymore (removed the "Haptic feedback"
-    // Settings toggle, issue #21's fix, and AppHaptics entirely) — LightOS
-    // has its own system-wide Haptic Feedback setting already; this just
-    // lets whatever LocalHapticsEnabled value LightActivity's own root
-    // already provides (reflecting that real OS setting) flow through
-    // unchanged, rather than shadowing it with a second, app-specific one.
+    // Haptics: nothing to do here. LocalHapticsEnabled is supplied by MusicPlusTheme
+    // through a temporary workaround (HapticsWorkaround.kt, issue #21). The SDK's own
+    // value never resolves in this app, which stopped every tap haptic after e300f60
+    // removed the earlier override on the assumption that it did.
     MusicPlusTheme {
         Column(
             modifier = Modifier

@@ -62,7 +62,8 @@ Albums, Artists, Songs, Search, Favorites, and Playlists.
 - Now Playing opens by tapping the mini-player
 - Server connection is configurable in Settings, with support for saving more
   than one server
-- Preferences: show/hide album artwork, haptic feedback
+- Preferences: show/hide album artwork. Haptic feedback follows LightOS's own
+  setting (see the temporary workaround noted in `SETUP.md`).
 
 ## How it's built
 
