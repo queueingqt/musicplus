@@ -41,6 +41,15 @@ sealed interface SongSource {
     }
 }
 
+/** What the queue needs to know to hand songs to the player; [TrackSources] is the real one, a test supplies its own. */
+interface SongSources {
+    /** The song a play starts from. */
+    suspend fun resolveStart(track: Track): SongSource
+
+    /** Every song of [tracks] (one is playing at [current]), or null when [stillWanted] turned false. See [TrackSources.resolveQueue]. */
+    suspend fun resolveQueue(tracks: List<Track>, current: Int, stillWanted: () -> Boolean = { true }): List<SongSource>?
+}
+
 /**
  * Decides what the player is given for a song: the one place that knows the phone's copies, the server's state, the connection and
  * the quality being asked for, and therefore the only one that can say "file or stream, and can it seek".
@@ -52,7 +61,7 @@ sealed interface SongSource {
  * - a song already in the cache plays from it, so a replay starts at once and works offline;
  * - a song that is not cached is **streamed** when the player can fetch its URL and it is the one being started ([resolveStart]) or
  *   lies beyond the songs worth fetching ahead ([resolveQueue]), and otherwise **fetched** into the cache first.
- * A streamed song's file is still fetched by the caller's hand-over (see PlaybackRepository.extendToFullQueue), which is what makes
+ * A streamed song's file is still fetched by the caller's hand-over (see PlayQueue's hand-over), which is what makes
  * it seekable and keeps it for next time.
  *
  * The quality cap, the connection and [canStream] are each read once per call, so every song of one queue is decided against the same
@@ -75,9 +84,9 @@ class TrackSources(
     private val onWifi: () -> Boolean,
     /** Whether the player itself may fetch this URL. Asked of the platform (see [playerCanFetch]); a parameter so it can be answered in a test. */
     private val canStream: (url: String) -> Boolean = ::playerCanFetch,
-) {
+) : SongSources {
     /** The song a play starts from: fetched at the top priority, or streamed when it is not cached, so audio begins at once. */
-    suspend fun resolveStart(track: Track): SongSource =
+    override suspend fun resolveStart(track: Track): SongSource =
         resolve(track, streamKbps(), streamIfUncached = true) { FetchGate.Priority.NOW_PLAYING }
 
     /**
@@ -90,7 +99,7 @@ class TrackSources(
      * more than a cellular link can fetch in the time the playing song lasts (about 160 s for seven songs at 0.22 MB/s on the phone,
      * so the player had nothing after the first one), and fetches running beside a streaming song starve it.
      */
-    suspend fun resolveQueue(tracks: List<Track>, current: Int, stillWanted: () -> Boolean = { true }): List<SongSource>? {
+    override suspend fun resolveQueue(tracks: List<Track>, current: Int, stillWanted: () -> Boolean): List<SongSource>? {
         val kbps = streamKbps()
         val fetchAhead = if (onWifi()) tracks.indices else current..(current + UP_NEXT_COUNT)
         val sources = arrayOfNulls<SongSource>(tracks.size)
