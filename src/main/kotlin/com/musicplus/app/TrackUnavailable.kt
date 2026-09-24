@@ -22,7 +22,10 @@ fun rememberTrackUnavailable(track: Track): Boolean {
     val on by AppServerPrefs.enabledServerIds.value.collectAsState()
     val servers by AppServerPrefs.servers.value.collectAsState()
     val serverOut = !TrackAvailability.serverUsable(ServerScope.serverOf(track.id), servers.isNotEmpty(), on, unreachable)
-    return remember(track.id, track.downloadStatus, track.localFilePath, serverOut) {
+    // Only a song whose server is out looks for a copy, and only then does it follow the cache's listing: it may have answered "no
+    // copy" from a listing that had not been read yet (#76).
+    val copies = if (serverOut) TrackAvailability.streamCopies.collectAsState().value else 0
+    return remember(track.id, track.downloadStatus, track.localFilePath, serverOut, copies) {
         serverOut && !TrackAvailability.hasAudioOnPhone(track)
     }
 }

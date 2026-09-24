@@ -6,6 +6,9 @@ import com.musicplus.app.data.ServerScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,6 +57,19 @@ class StreamCache(
     @Volatile private var names: Set<String> = emptySet()
     @Volatile private var listedAtMs = 0L
     private val refreshing = AtomicBoolean(false)
+    private val _revision = MutableStateFlow(0)
+
+    /**
+     * Changes whenever the set of copies the listing knows of changes. Because the listing is read in the background, whoever asked
+     * [anyCopy] first may have been told "no copy" by a listing that had not been read yet (a song greyed out as unavailable while
+     * its copy sat in the cache, #76); it asks again when this changes.
+     */
+    val revision: StateFlow<Int> = _revision
+
+    init {
+        // Read now, not at the first question: the first row to ask used to be answered from an empty listing.
+        refreshListingInBackground()
+    }
 
     /** A finished copy of [songId] at any quality, or null. Never blocks on disk (see above); briefly stale by design. */
     fun anyCopy(songId: String): File? {
@@ -76,8 +92,12 @@ class StreamCache(
     }
 
     internal fun refreshListingNow() {
-        names = dir.list()?.toHashSet() ?: emptySet()
+        val listed = dir.list()?.toHashSet() ?: emptySet()
         listedAtMs = System.currentTimeMillis()
+        if (listed != names) {
+            names = listed
+            _revision.update { it + 1 }
+        }
     }
 
     /**
@@ -108,6 +128,10 @@ class StreamCache(
                 val fetched = FetchGate.run(FetchGate.Lane.PLAYBACK, songId, rank, transcoding = maxBitRateKbps != null) { lease -> download(part, lease) }
                 if (fetched == null) throw IOException("the connection is busy with other transfers")
                 if (!part.renameTo(cached)) throw IOException("could not move ${cached.name}.part into place")
+                // Told to the listing directly rather than re-read, since this may run on the main thread; a refresh that raced it and
+                // missed the file finds it on the next one.
+                names = names + cached.name
+                _revision.update { it + 1 }
                 AppLogger.d(TAG, "cachedStreamFile($songId): write complete")
             } catch (e: Exception) {
                 // A failed, interrupted or cancelled fetch only ever leaves its own .part, never something at the final path that
@@ -123,6 +147,8 @@ class StreamCache(
     fun deleteForServer(serverId: String) {
         val prefix = ServerScope.fileKey(ServerScope.scope(serverId, ""))
         dir.listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
+        names = names.filterNot { it.startsWith(prefix) }.toSet()
+        _revision.update { it + 1 }
         listedAtMs = 0L
     }
 
@@ -130,6 +156,7 @@ class StreamCache(
     fun clear() {
         dir.deleteRecursively()
         names = emptySet()
+        _revision.update { it + 1 }
         listedAtMs = 0L
     }
 

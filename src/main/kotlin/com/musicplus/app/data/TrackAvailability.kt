@@ -2,6 +2,8 @@ package com.musicplus.app.data
 
 import com.musicplus.app.Track
 import com.musicplus.app.data.playback.StreamCache
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
 /**
@@ -17,6 +19,11 @@ object TrackAvailability {
     fun init(cache: StreamCache) {
         this.cache = cache
     }
+
+    private val noCopies = MutableStateFlow(0)
+
+    /** Changes when the copies kept from streaming change, see [StreamCache.revision]. A row that says "unavailable" asks again on it. */
+    val streamCopies: StateFlow<Int> get() = cache?.revision ?: noCopies
 
     /**
      * True when [serverId] is on and was reachable the last time it was asked. The one rule for "the server is out": the composable

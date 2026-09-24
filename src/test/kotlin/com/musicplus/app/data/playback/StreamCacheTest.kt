@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -137,5 +138,46 @@ class StreamCacheTest {
         assertFalse(dir.exists())
         cache.refreshListingNow()
         assertNull(cache.anyCopy("srv:abc"))
+    }
+
+    // ---- #76: the first question must not be answered from a listing nobody has read yet ----
+
+    /**
+     * A cache made over a directory that already holds copies (every start of the app) reads it without anyone asking first, so the
+     * first question is answered from a listing that has been read. Nothing here calls anyCopy until the revision says it has.
+     */
+    @Test
+    fun copiesAlreadyOnDiskAreListedWithoutAnyoneAskingFirst() = runBlocking<Unit> {
+        val existing = File(dir.parentFile, "existing").apply { mkdirs() }
+        File(existing, "srv_abc-192.mp3").writeBytes(ByteArray(4))
+        val fresh = StreamCache(existing, listingTtlMs = 60_000)
+        withTimeout(3_000) { while (fresh.revision.value == 0) delay(5) }
+        assertEquals("srv_abc-192.mp3", fresh.anyCopy("srv:abc")?.name, "the very first question already sees it")
+    }
+
+    @Test
+    fun theRevisionChangesWhenACopyIsFetchedDeletedOrCleared() = runBlocking<Unit> {
+        val seen = mutableListOf(cache.revision.value)
+        fun changed(): Boolean = (cache.revision.value != seen.last()).also { seen += cache.revision.value }
+        cache.fetch("one:a", 192, rank, writing())
+        assertTrue(changed(), "fetched")
+        cache.deleteForServer("one")
+        assertTrue(changed(), "deleted")
+        cache.fetch("two:a", 192, rank, writing())
+        changed()
+        cache.clear()
+        assertTrue(changed(), "cleared")
+    }
+
+    @Test
+    fun aRefreshThatFindsSomethingNewChangesTheRevisionAndOneThatDoesNotLeavesItAlone() {
+        cache.refreshListingNow()
+        val before = cache.revision.value
+        cache.refreshListingNow()
+        assertEquals(before, cache.revision.value, "nothing new")
+        dir.mkdirs()
+        File(dir, "srv_abc-192.mp3").writeBytes(ByteArray(2))
+        cache.refreshListingNow()
+        assertTrue(cache.revision.value != before, "a copy appeared")
     }
 }
