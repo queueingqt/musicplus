@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +60,12 @@ class PlaylistDetailScreenViewModel(
     val reorderMode: StateFlow<Boolean> = _reorderMode.asStateFlow()
     fun setReorderMode(enabled: Boolean) { _reorderMode.value = enabled }
 
+    /**
+     * Set once this playlist has been deleted from its own menu. The screen leaves itself when it next shows (the menu is on top when
+     * the delete finishes, and `Content()` is disposed while it is, so an effect there could not see it): see [PlaylistDetailScreen].
+     */
+    var deleted = false
+
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
@@ -103,6 +111,11 @@ class PlaylistDetailScreen(
         val title = playlist?.name ?: "Playlist"
         val trackActions = rememberTrackActions(activity, lightContext)
         val playlistActions = rememberPlaylistActions(activity, lightContext, viewModel.viewModelScope)
+
+        // A deleted playlist has nothing to show: leave, without drawing its empty page first. Same shape as SearchScreen's leavingBlank.
+        val leaving = remember { viewModel.deleted }
+        LaunchedEffect(Unit) { if (leaving) goBack() }
+        if (leaving) return
 
         // Reorder handles are opt-in, entered via the title's long-press menu
         // ("Edit order") rather than always visible — reported live: previously
@@ -155,7 +168,11 @@ class PlaylistDetailScreen(
                                 title,
                                 // Flips reorder mode in place: the handles live on this screen's own track list.
                                 editOrder = { viewModel.setReorderMode(true) },
-                                onDeleted = { goBack() },
+                                // Pops the menu that is on top; the screen then leaves itself (see `leaving` above).
+                                onDeleted = {
+                                    viewModel.deleted = true
+                                    goBack()
+                                },
                             )
                         },
                     ),
