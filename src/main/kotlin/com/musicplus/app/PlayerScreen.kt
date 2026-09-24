@@ -59,14 +59,12 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** [inner] drawn in a single [tint], which is what [LightIcon] does to its drawable — used to draw an icon at a lower alpha. */
@@ -127,7 +125,7 @@ class PlayerScreenViewModel(
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
-        playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
+        playback.state.screenState(viewModelScope, playback.currentSnapshot())
 
     /** Ephemeral, in-memory-only sleep timer — see [com.musicplus.app.data.playback.SleepTimer.state]'s doc. */
     val sleepTimerState: StateFlow<SleepTimerState?> = playback.sleepTimer.state
@@ -147,9 +145,8 @@ class PlayerScreenViewModel(
         state, libraryRepository.observeAlbums(), playback.albumArtHint,
     ) { s, albums, hint ->
         resolveAlbumArtId(s.currentTrack, albums, hint)
-    }.stateIn(
+    }.screenState(
         viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
         resolveAlbumArtId(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
     )
 
@@ -158,7 +155,7 @@ class PlayerScreenViewModel(
         .map { it.currentTrack?.id }
         .distinctUntilChanged()
         .flatMapLatest { trackId -> trackId?.let { syncQueueRepository.isFavoritePending(it) } ?: flowOf(false) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .screenState(viewModelScope, false)
 
     /** The current track's download state, live — drives the download icon (issue #48). */
     val downloadStatus: StateFlow<DownloadStatus?> = state
@@ -167,7 +164,7 @@ class PlayerScreenViewModel(
         .flatMapLatest { trackId ->
             trackId?.let { downloadRepository.observeStatus(it).map { entity -> entity?.status } } ?: flowOf(null)
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .screenState(viewModelScope, null)
 
     /** Same tap as every list's per-track download row: see [tap]. */
     fun toggleDownloadCurrentTrack(lightContext: SealedLightContext) {

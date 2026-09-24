@@ -26,7 +26,6 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -45,7 +44,7 @@ class HomeScreenViewModel : LightViewModel<Unit>() {
     // itself decides whether newerVersion is non-null (a real newer release).
     val hasNewerVersion: StateFlow<Boolean> = VersionCheckRepository.newerVersion
         .map { it != null }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .screenState(viewModelScope, false)
 
     // Note: the old "Now playing: <title>" row that used to live here (via a
     // PlaybackRepositoryHolder.peek() StateFlow) was dropped — the persistent

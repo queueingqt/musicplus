@@ -35,14 +35,12 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -59,7 +57,7 @@ class LyricsScreenViewModel(
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
-        playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
+        playback.state.screenState(viewModelScope, playback.currentSnapshot())
 
     private val _lyrics = MutableStateFlow<LyricsState>(LyricsState.Loading)
     val lyrics: StateFlow<LyricsState> = _lyrics.asStateFlow()

@@ -11,47 +11,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.playbackRepository
-import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class AlbumDetailScreenViewModel(
-    private val libraryRepository: LibraryRepository,
-    private val downloadRepository: DownloadRepository,
-    private val syncQueueRepository: SyncQueueRepository,
+    libraryRepository: LibraryRepository,
     private val albumId: String,
     initialAlbum: Album?,
-) : LightViewModel<Unit>() {
+) : ListScreenViewModel() {
 
-    // See SelfLoadingTrackList.kt (shared with AlbumListScreen/ArtistDetailScreen's
-    // own album-level download rows, and PlaylistListScreen's playlist ones) —
-    // both [tracks] and [albumDownloadState]/[toggleAlbumDownload] below read
-    // through this one wrapper now, instead of [tracks] reading the raw
-    // Room-cache flow directly — this used to be the one call site that
-    // bypassed the refresh-then-read guarantee the wrapper exists to enforce.
+    // See SelfLoadingTrackList.kt: the tracks are read through the refresh-then-read guarantee it exists to enforce.
     private val selfLoadingTracks = SelfLoadingTrackList.forAlbum(libraryRepository, albumId)
 
-    val tracks: StateFlow<List<Track>> = selfLoadingTracks.observeTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val tracks: StateFlow<List<Track>> = selfLoadingTracks.observeTracks().screenState(viewModelScope, emptyList())
 
     // Seeded from whatever the caller already had in hand (e.g. the row a list
     // screen just tapped) rather than always starting at null. Room's Flow here
@@ -63,24 +47,11 @@ class AlbumDetailScreenViewModel(
     // Flow as soon as it emits, same as before.
     val album: StateFlow<Album?> = libraryRepository.observeAlbums()
         .map { albums -> albums.find { it.id == albumId } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialAlbum)
-
-    val albumDownloadState: StateFlow<TrackListDownloadState> =
-        selfLoadingTracks.observeDownloadState(downloadRepository)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrackListDownloadState.NONE)
+        .screenState(viewModelScope, initialAlbum)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
-
-    /** See SelfLoadingTrackList.kt's [SelfLoadingTrackList.toggleDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows, and PlaylistListScreen's playlist ones. */
-    suspend fun toggleAlbumDownload(lightContext: SealedLightContext): TrackListDownloadState =
-        selfLoadingTracks.toggleDownload(lightContext, downloadRepository)
-
-    suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
-
-    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    val scrollPosition = ScrollPosition()
 }
 
 /**
@@ -98,15 +69,15 @@ class AlbumDetailScreen(
 
     override fun createViewModel(): AlbumDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return AlbumDetailScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, albumId, initialAlbum)
+        return AlbumDetailScreenViewModel(graph.libraryRepository, albumId, initialAlbum)
     }
 
     @Composable
     override fun Content() {
         val tracks by viewModel.tracks.collectAsState()
         val album by viewModel.album.collectAsState()
-        val albumDownloadState by viewModel.albumDownloadState.collectAsState()
         val trackActions = rememberTrackActions(activity, lightContext)
+        val albumActions = rememberAlbumActions(activity, lightContext)
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
         // Reported live: favoriting an album showed no indication anywhere on
         // this screen. LightTopBarCenter only supports plain text (no
@@ -150,52 +121,12 @@ class AlbumDetailScreen(
                         // of its own before this change, and this doesn't add one.
                         .lightCombinedClickable(
                             onClick = {},
-                            onLongClick = {
-                                navigateTo({ a ->
-                                    val isFavorite = album?.isFavorite == true
-                                    val addAlbumToQueueItem = addToQueueActionItem("Add album to queue", playbackRepository(activity, lightContext)) {
-                                        tracks
-                                    }
-                                    ActionsMenuScreen(
-                                        activity = a,
-                                        subtitle = title,
-                                        items = listOf(
-                                            favoriteActionItem(isFavorite) { favorite ->
-                                                viewModel.setAlbumFavorite(albumId, favorite)
-                                            },
-                                            trackListDownloadActionItem("album", albumDownloadState) { viewModel.toggleAlbumDownload(lightContext) }.copy(
-                                                liveUpdates = viewModel.albumDownloadState.map { s ->
-                                                    trackListDownloadActionItem("album", s) { viewModel.toggleAlbumDownload(lightContext) }
-                                                },
-                                            ),
-                                            addAlbumToQueueItem,
-                                        ),
-                                    )
-                                })
-                            },
+                            onLongClick = { albumActions.openMenu(albumId, title, album?.isFavorite == true) },
                         ),
                 )
             }
 
-            // Inside, not the default Outside — Outside computes its gutter width
-            // from listState.layoutInfo, which isn't valid until after the first
-            // layout pass, so trailing per-row content (the favorite/download
-            // glyphs below) briefly rendered flush against the far edge and then
-            // visibly jumped left once the gutter appeared. Reported live.
-            // Inside's LazyColumn is always full-width (its scrollbar draws as an
-            // overlay, not a reserved gutter), so there's nothing to reflow — but
-            // its overlay track would then sit on top of trailing row content
-            // instead, which is exactly what got Inside reverted for QueueScreen's
-            // own trailing icon earlier. TrackRow below reserves that same width
-            // itself as fixed end padding, unconditionally, so there's no
-            // dynamically-appearing gutter to glitch *and* no overlap either.
-            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
-            LightLazyScrollView(
-                modifier = Modifier.fillMaxWidth(),
-                scrollBarPosition = LightScrollBarPosition.Inside,
-                listState = listState,
-                uniformItemHeightGridUnits = 3f,
-            ) {
+            ScreenList(viewModel.scrollPosition) {
                 itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
                     TrackRow(
                         track = track,

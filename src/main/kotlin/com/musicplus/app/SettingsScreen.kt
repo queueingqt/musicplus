@@ -35,7 +35,6 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -58,7 +57,7 @@ class SettingsScreenViewModel(
 
     /** Real count, not a toggle — see SyncQueueRepository (issue #24). Zero means either everything's synced or nothing's ever been queued; either way there's nothing to show. */
     val pendingSyncCount: StateFlow<Int> = syncQueueRepository.pendingCount
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+        .screenState(viewModelScope, 0)
 
     // AppDisplayPrefs/AppDebugPrefs, not appSettingsRepository directly — this
     // screen gets a fresh ViewModel (and a fresh `.stateIn(...)`) every time

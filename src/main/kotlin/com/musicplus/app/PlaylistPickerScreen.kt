@@ -20,9 +20,7 @@ import com.musicplus.app.data.ServerLabels
 import com.musicplus.app.data.ServerScope
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
@@ -34,10 +32,8 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.time.Duration.Companion.seconds
 
@@ -50,13 +46,9 @@ import kotlin.time.Duration.Companion.seconds
 class PlaylistPickerScreenViewModel(
     private val playlistRepository: PlaylistRepository,
     private val syncQueueRepository: SyncQueueRepository,
-    private val listRefresher: ListRefresher,
+    listRefresher: ListRefresher,
     private val songId: String,
-) : LightViewModel<Unit>() {
-
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        listRefresher.refreshOnOpen(ListRefresher.Target.PLAYLISTS)
-    }
+) : CachedListViewModel(listRefresher, ListRefresher.Target.PLAYLISTS) {
 
     /**
      * Every playlist, each with its home shown by its row. The ones that take this song as they are come first, so the common
@@ -66,7 +58,7 @@ class PlaylistPickerScreenViewModel(
         combine(AppLibraryCache.playlists.value, AppServerPrefs.capabilities.value, AppServerPrefs.enabledServerIds.value) { all, _, _ ->
             val (takesAsIs, needsCopy) = all.partition { PlaylistHomes.takesAsIs(it.id, songId) }
             takesAsIs + needsCopy
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        }.screenState(viewModelScope, emptyList())
 
     fun addToExisting(playlistId: String, onDone: () -> Unit) {
         viewModelScope.launch {

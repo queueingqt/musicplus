@@ -21,10 +21,8 @@ import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 
 class AlbumArtScreenViewModel(
     private val playback: PlaybackRepository,
@@ -32,7 +30,7 @@ class AlbumArtScreenViewModel(
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
-        playback.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), playback.currentSnapshot())
+        playback.state.screenState(viewModelScope, playback.currentSnapshot())
 
     // Tracks the *current* track's art live via the same resolveAlbumArtId
     // priority order PlayerScreenViewModel uses, rather than freezing on
@@ -48,9 +46,8 @@ class AlbumArtScreenViewModel(
         state, libraryRepository.observeAlbums(), playback.albumArtHint,
     ) { s, albums, hint ->
         resolveAlbumArtId(s.currentTrack, albums, hint)
-    }.stateIn(
+    }.screenState(
         viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
         resolveAlbumArtId(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
     )
 }

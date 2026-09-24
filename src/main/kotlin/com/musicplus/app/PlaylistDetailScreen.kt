@@ -11,56 +11,39 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class PlaylistDetailScreenViewModel(
-    private val playlistRepository: PlaylistRepository,
-    private val downloadRepository: DownloadRepository,
+    playlistRepository: PlaylistRepository,
     private val syncQueueRepository: SyncQueueRepository,
     private val playlistId: String,
     startInReorderMode: Boolean = false,
-) : LightViewModel<Unit>() {
+) : ListScreenViewModel() {
 
-    // See SelfLoadingTrackList.kt (shared with PlaylistListScreen's own
-    // playlist-level download row) — [tracks], [playlistDownloadState], and
-    // [toggleDownload] (playlist-level) all read through this one wrapper now,
-    // instead of [tracks] reading the raw Room-cache flow directly — this used
-    // to be the one call site that bypassed the refresh-then-read guarantee
-    // the wrapper exists to enforce.
+    // See SelfLoadingTrackList.kt: the tracks are read through the refresh-then-read guarantee it exists to enforce.
     private val selfLoadingTracks = SelfLoadingTrackList.forPlaylist(playlistRepository, playlistId)
 
-    val tracks: StateFlow<List<Track>> = selfLoadingTracks.observeTracks()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val tracks: StateFlow<List<Track>> = selfLoadingTracks.observeTracks().screenState(viewModelScope, emptyList())
 
-    val playlist: StateFlow<Playlist?> = playlistRepository.observePlaylist(playlistId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val playlist: StateFlow<Playlist?> = playlistRepository.observePlaylist(playlistId).screenState(viewModelScope, null)
 
     // A plain `remember` inside Content() doesn't survive this screen's own
     // navigate-away/goBack() round trip when "Edit order" pushes ActionsMenuScreen
@@ -75,18 +58,11 @@ class PlaylistDetailScreenViewModel(
     val reorderMode: StateFlow<Boolean> = _reorderMode.asStateFlow()
     fun setReorderMode(enabled: Boolean) { _reorderMode.value = enabled }
 
-    /** See TrackListDownload.kt / SelfLoadingTrackList.kt — shared with PlaylistListScreen's own playlist-level download row. */
-    fun playlistDownloadState(): Flow<TrackListDownloadState> =
-        selfLoadingTracks.observeDownloadState(downloadRepository)
-
-    suspend fun toggleDownload(lightContext: SealedLightContext): TrackListDownloadState =
-        selfLoadingTracks.toggleDownload(lightContext, downloadRepository)
-
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
 
-    /** [position] is the track's zero-based index in the currently-displayed (i.e. server) order. Suspend, same reasoning as [toggleDownload]. */
+    /** [position] is the track's zero-based index in the currently-displayed (i.e. server) order. Suspend, so the menu row that triggers it can drop itself once it is done. */
     suspend fun removeTrack(position: Int) {
         syncQueueRepository.removeTrack(playlistId, position)
     }
@@ -98,20 +74,6 @@ class PlaylistDetailScreenViewModel(
     fun moveDown(position: Int) {
         viewModelScope.launch { syncQueueRepository.moveTrackDown(playlistId, position) }
     }
-
-    fun rename(name: String) {
-        viewModelScope.launch { syncQueueRepository.renamePlaylist(playlistId, name) }
-    }
-
-    fun delete(onDeleted: () -> Unit) {
-        viewModelScope.launch {
-            syncQueueRepository.deletePlaylist(playlistId)
-            onDeleted()
-        }
-    }
-
-    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    val scrollPosition = ScrollPosition()
 }
 
 /**
@@ -131,7 +93,7 @@ class PlaylistDetailScreen(
 
     override fun createViewModel(): PlaylistDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.downloadRepository, graph.syncQueueRepository, playlistId, startInReorderMode)
+        return PlaylistDetailScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, playlistId, startInReorderMode)
     }
 
     @Composable
@@ -140,6 +102,7 @@ class PlaylistDetailScreen(
         val playlist by viewModel.playlist.collectAsState()
         val title = playlist?.name ?: "Playlist"
         val trackActions = rememberTrackActions(activity, lightContext)
+        val playlistActions = rememberPlaylistActions(activity, lightContext, viewModel.viewModelScope)
 
         // Reorder handles are opt-in, entered via the title's long-press menu
         // ("Edit order") rather than always visible — reported live: previously
@@ -187,65 +150,18 @@ class PlaylistDetailScreen(
                     .lightCombinedClickable(
                         onClick = {},
                         onLongClick = {
-                            navigateTo({ a ->
-                                val deleteItem = confirmActionItem(
-                                    icon = LightIcons.TRASH,
-                                    label = "Delete playlist",
-                                    confirmTitle = "Delete \"$title\"?",
-                                    confirmMessage = "This removes the playlist. The tracks themselves aren't affected.",
-                                    confirmContentDescription = "Delete playlist",
-                                    onConfirm = { viewModel.delete { goBack() } },
-                                )
-                                ActionsMenuScreen(
-                                    activity = a,
-                                    subtitle = title,
-                                    items = listOf(
-                                        ActionMenuItem(
-                                            icon = LightIcons.PENCIL,
-                                            label = "Rename playlist",
-                                            onSelect = ActionMenuSelection.Navigate {
-                                                navigateTo({ a2 -> TextEditScreen(a2, "Playlist name", title) }) { newName ->
-                                                    if (!newName.isNullOrBlank()) viewModel.rename(newName)
-                                                }
-                                            },
-                                        ),
-                                        ActionMenuItem(
-                                            icon = LightIcons.REVERSE_ORDER,
-                                            label = "Edit order",
-                                            // Navigate, not Perform — this needs to actually return to the
-                                            // track list (where the reorder handles live), not stay on this
-                                            // menu screen. close() pops back to PlaylistDetailScreen first,
-                                            // then this runs, so the flip is visible the instant it lands.
-                                            onSelect = ActionMenuSelection.Navigate { viewModel.setReorderMode(true) },
-                                        ),
-                                        // Same shape as PlaylistListScreen's own playlist-level download
-                                        // row — this screen didn't have a "download the whole playlist"
-                                        // option before, only per-track downloads.
-                                        trackListDownloadActionItem("playlist", TrackListDownloadState.NONE) { viewModel.toggleDownload(lightContext) }.copy(
-                                            liveUpdates = viewModel.playlistDownloadState().map { s ->
-                                                trackListDownloadActionItem("playlist", s) { viewModel.toggleDownload(lightContext) }
-                                            },
-                                        ),
-                                        deleteItem,
-                                    ),
-                                )
-                            })
+                            playlistActions.openMenu(
+                                playlistId,
+                                title,
+                                // Flips reorder mode in place: the handles live on this screen's own track list.
+                                editOrder = { viewModel.setReorderMode(true) },
+                                onDeleted = { goBack() },
+                            )
                         },
                     ),
             )
 
-            // Inside, not Outside — see AlbumDetailScreen's identical call site
-            // for why (Outside's gutter width isn't known until after first
-            // layout, so trailing per-row content briefly renders full-width
-            // then jumps left once it appears; PlaylistTrackRow reserves the
-            // same width itself, unconditionally, instead).
-            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
-            LightLazyScrollView(
-                modifier = Modifier.fillMaxWidth(),
-                scrollBarPosition = LightScrollBarPosition.Inside,
-                listState = listState,
-                uniformItemHeightGridUnits = 4.5f,
-            ) {
+            ScreenList(viewModel.scrollPosition, uniformItemHeightGridUnits = 4.5f) {
                 itemsIndexed(tracks, key = { index, track -> "$index-${track.id}" }) { index, track ->
                     TrackRow(
                         track = track,

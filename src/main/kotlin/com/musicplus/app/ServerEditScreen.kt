@@ -35,10 +35,8 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -136,7 +134,7 @@ class ServerEditScreenViewModel(
     /** What this server has downloaded, for the delete choice. */
     val downloadSummary: StateFlow<DownloadSummary?> =
         serverLifecycle.downloadSummaries.map { summaries -> serverId?.let { summaries[it] } }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+            .screenState(viewModelScope, null)
 
     // On the app's own scope (see ServerLifecycle), not this screen's.
     fun remove(keepDownloads: Boolean) {

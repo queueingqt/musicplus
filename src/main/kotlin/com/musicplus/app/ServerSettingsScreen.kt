@@ -32,7 +32,6 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -68,7 +67,7 @@ class ServerSettingsScreenViewModel(
     val removedServers: StateFlow<List<RemovedServer>> = AppServerPrefs.removedServers.value
 
     val downloadSummaries: StateFlow<Map<String, DownloadSummary>> =
-        serverLifecycle.downloadSummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+        serverLifecycle.downloadSummaries.screenState(viewModelScope, emptyMap())
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {}
 

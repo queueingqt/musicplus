@@ -13,62 +13,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
+import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
-import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
-import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class ArtistListScreenViewModel(
     private val libraryRepository: LibraryRepository,
     private val downloadRepository: DownloadRepository,
     private val syncQueueRepository: SyncQueueRepository,
-    private val listRefresher: ListRefresher,
-) : LightViewModel<Unit>() {
+    listRefresher: ListRefresher,
+) : CachedListViewModel(listRefresher, ListRefresher.Target.ARTISTS) {
 
-    // The page opens straight from the cache; this re-checks the server in the
-    // background and any additions or deletions arrive through the cache
-    // itself — no spinner. See ListRefresher's doc.
-    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
-        listRefresher.refreshOnOpen(ListRefresher.Target.ARTISTS)
-    }
-
-
-    // See AppLibraryCache's doc — reads the already-live, process-lifetime
-    // cache instead of re-subscribing to libraryRepository.observeArtists()
-    // on every fresh per-visit ViewModel.
-    private val allArtists: StateFlow<List<Artist>> = AppLibraryCache.artists.value
-
-    private val _filter = MutableStateFlow("")
-    val filter: StateFlow<String> = _filter
-
-    val artists: StateFlow<List<Artist>> = filteredBy(allArtists, _filter) { artist, query ->
-        artist.name.contains(query, ignoreCase = true)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    fun setFilter(query: String) {
-        _filter.value = query
-    }
+    // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observeArtists() on every
+    // fresh per-visit ViewModel.
+    val filter = ListFilter(viewModelScope)
+    val artists = filter.narrow(AppLibraryCache.artists.value) { artist, query -> artist.name.containsIgnoringCase(query) }
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
 
@@ -76,9 +48,6 @@ class ArtistListScreenViewModel(
     fun downloadEntireArtist(lightContext: SealedLightContext, artistId: String) {
         viewModelScope.launch { downloadEntireArtist(lightContext, libraryRepository, downloadRepository, artistId) }
     }
-
-    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    val scrollPosition = ScrollPosition()
 }
 
 class ArtistListScreen(activity: SealedLightActivity) :
@@ -94,7 +63,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
     @Composable
     override fun Content() {
         val artists by viewModel.artists.collectAsState()
-        val filter by viewModel.filter.collectAsState()
+        val filter by viewModel.filter.query.collectAsState()
 
         MusicPlusScaffold(
             screen = this,
@@ -102,31 +71,12 @@ class ArtistListScreen(activity: SealedLightActivity) :
                 LightTopBar(
                     leftButton = LightBarButton.LightIcon(icon = LightIcons.BACK, onClick = { goBack() }),
                     center = LightTopBarCenter.Text("Artists"),
-                    rightButton = LightBarButton.LightIcon(
-                        icon = LightIcons.SEARCH,
-                        onClick = {
-                            navigateTo({ a -> TextEditScreen(a, "Search artists", filter) }) { result ->
-                                viewModel.setFilter(result)
-                            }
-                        },
-                        contentDescription = "Search artists",
-                    ),
+                    rightButton = filterButton("artists", filter, viewModel.filter::set),
                 )
             },
         ) {
             if (artists.isEmpty()) EmptyListNote("artists", filter)
-            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
-            // Inside, not the default Outside — see ScrollbarGutter.kt's doc
-            // (issue #39): ArtistRow's trailing favorite star only reserves a
-            // stable position when the scrollbar's own gutter isn't racing
-            // the LazyColumn's first layout pass. Reported live as a visible
-            // flash from full-width to gutter-reserved-width on first load.
-            LightLazyScrollView(
-                modifier = Modifier.fillMaxWidth(),
-                scrollBarPosition = LightScrollBarPosition.Inside,
-                listState = listState,
-                uniformItemHeightGridUnits = 3f,
-            ) {
+            ScreenList(viewModel.scrollPosition) {
                 items(artists, key = { it.id }) { artist ->
                     ArtistRow(
                         artist = artist,
@@ -140,14 +90,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
                                         favoriteActionItem(artist.isFavorite) { favorite ->
                                             viewModel.setArtistFavorite(artist.id, favorite)
                                         },
-                                        // Moved here from a standalone row on
-                                        // ArtistDetailScreen itself (reported
-                                        // live, 2026-09-18: that screen was
-                                        // too crowded) — no aggregate
-                                        // download-state indicator, same
-                                        // reasoning as before the move (see
-                                        // downloadEntireArtist's own doc,
-                                        // TrackListDownload.kt).
+                                        // No aggregate download-state indicator: see downloadEntireArtist's own doc (TrackListDownload.kt).
                                         confirmActionItem(
                                             icon = LightIcons.DOWNLOAD_ARROW,
                                             label = "Download entire artist",
@@ -184,15 +127,6 @@ private fun ArtistRow(artist: Artist, onClick: () -> Unit, onOpenActions: () -> 
             LightText(text = artist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
             LightText(text = artist.albumsLine, variant = LightTextVariant.Fine)
         }
-        // Matches AlbumRow's identical treatment — no other at-a-glance signal
-        // an artist is favorited exists on this list.
-        if (artist.isFavorite) {
-            LightIcon(
-                icon = LightIcons.STAR,
-                size = 1.2f,
-                contentDescription = "Favorited",
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
-        }
+        if (artist.isFavorite) FavoritedStar()
     }
 }

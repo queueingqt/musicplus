@@ -7,6 +7,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.musicplus.app.data.AppServerPrefs
+import com.musicplus.app.data.ServerProfile
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.gridUnitsAsDp
@@ -22,20 +23,32 @@ fun EmptyListNote(what: String, filter: String = "") {
     val enabled by AppServerPrefs.enabledServerIds.value.collectAsState()
     val servers by AppServerPrefs.servers.value.collectAsState()
     val synced by AppServerPrefs.lastSyncedAt.value.collectAsState()
-    val text = when {
-        filter.isNotBlank() -> "No matches"
-        !configured -> "No server yet. Add one in Settings → Server."
-        enabled.isEmpty() -> "No server is on. Turn one on in Settings → Server."
-        else -> {
-            val loading = servers.filter { it.id in enabled && synced[it.id] == null }.map { it.name }
-            if (loading.isNotEmpty()) "Loading ${loading.joinToString(", ")}…" else "No $what yet"
-        }
-    }
     LightText(
-        text = text,
+        text = emptyListText(what, filter, configured, enabled, servers, synced),
         variant = LightTextVariant.Fine,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 1f.gridUnitsAsDp(), vertical = 0.5f.gridUnitsAsDp()),
     )
+}
+
+/**
+ * Why a list is empty, said plainly: a filter that matched nothing, no server saved, none switched on, a server whose lists have not
+ * loaded yet (by name), or just that there is nothing yet. In that order, so the most specific reason wins.
+ */
+fun emptyListText(
+    what: String,
+    filter: String,
+    configured: Boolean,
+    enabled: Set<String>,
+    servers: List<ServerProfile>,
+    lastSyncedAt: Map<String, Long>,
+): String = when {
+    filter.isNotBlank() -> "No matches"
+    !configured -> "No server yet. Add one in Settings → Server."
+    enabled.isEmpty() -> "No server is on. Turn one on in Settings → Server."
+    else -> {
+        val loading = servers.filter { it.id in enabled && lastSyncedAt[it.id] == null }.map { it.name }
+        if (loading.isNotEmpty()) "Loading ${loading.joinToString(", ")}…" else "No $what yet"
+    }
 }

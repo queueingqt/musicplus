@@ -13,39 +13,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
-import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class ArtistDetailScreenViewModel(
     private val libraryRepository: LibraryRepository,
-    private val downloadRepository: DownloadRepository,
     private val syncQueueRepository: SyncQueueRepository,
     private val artistId: String,
-) : LightViewModel<Unit>() {
+) : ListScreenViewModel() {
 
     // Reported live, 2026-09-18: the search field above this list took up
     // too much space on a screen that's already grown (similar artists/top
@@ -53,14 +44,14 @@ class ArtistDetailScreenViewModel(
     // rather than kept as dead weight. No filtering here anymore; every
     // album always shows.
     val albums: StateFlow<List<Album>> = libraryRepository.observeAlbumsByArtist(artistId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .screenState(viewModelScope, emptyList())
 
     // Same caveat as AlbumDetailScreenViewModel's `album` state: depends on the
     // artist already being cached locally (true once refreshArtists() has run, e.g.
     // from ArtistListScreen or HomeScreen) — there's no observeArtistById.
     val artist: StateFlow<Artist?> = libraryRepository.observeArtists()
         .map { artists -> artists.find { it.id == artistId } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .screenState(viewModelScope, null)
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         viewModelScope.launch { libraryRepository.refreshArtistDetail(artistId) }
@@ -70,23 +61,6 @@ class ArtistDetailScreenViewModel(
         val isFavorite = artist.value?.isFavorite ?: false
         viewModelScope.launch { syncQueueRepository.setArtistFavorite(artistId, !isFavorite) }
     }
-
-    // See SelfLoadingTrackList.kt — same fix, same root cause as
-    // AlbumListScreenViewModel: this album's tracks are only cached in Room
-    // once something has refreshed it, which used to only ever happen from
-    // AlbumDetailScreen's own onScreenShow.
-    fun albumDownloadState(albumId: String): Flow<TrackListDownloadState> =
-        SelfLoadingTrackList.forAlbum(libraryRepository, albumId).observeDownloadState(downloadRepository)
-
-    suspend fun toggleAlbumDownload(lightContext: SealedLightContext, albumId: String): TrackListDownloadState =
-        SelfLoadingTrackList.forAlbum(libraryRepository, albumId).toggleDownload(lightContext, downloadRepository)
-
-    suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
-
-    // Same fix as toggleAlbumDownload above — "Add album to queue" from this
-    // list has the identical dependency on the album's tracks already being cached.
-    suspend fun tracksForAlbum(albumId: String): List<Track> =
-        SelfLoadingTrackList.forAlbum(libraryRepository, albumId).tracks()
 
     // Similar artists / top songs — see LazyCollapsibleSection's own doc:
     // both collapsed by default, fetched only on first expand (not eagerly
@@ -101,9 +75,6 @@ class ArtistDetailScreenViewModel(
         val name = artist.value?.name
         if (name.isNullOrBlank()) emptyList() else libraryRepository.getTopSongs(artistId, name)
     }
-
-    // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
-    val scrollPosition = ScrollPosition()
 }
 
 class ArtistDetailScreen(
@@ -115,7 +86,7 @@ class ArtistDetailScreen(
 
     override fun createViewModel(): ArtistDetailScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return ArtistDetailScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, artistId)
+        return ArtistDetailScreenViewModel(graph.libraryRepository, graph.syncQueueRepository, artistId)
     }
 
     @Composable
@@ -129,6 +100,7 @@ class ArtistDetailScreen(
         val topSongsLoading by viewModel.topSongsSection.loading.collectAsState()
         val topSongs by viewModel.topSongsSection.items.collectAsState()
         val trackActions = rememberTrackActions(activity, lightContext)
+        val albumActions = rememberAlbumActions(activity, lightContext)
 
         // Favorite inline with the artist name — via LightTopBar's rightButton
         // slot, rather than a separate row, since the name is already the title
@@ -169,13 +141,7 @@ class ArtistDetailScreen(
             // one cost is a slightly-imprecise scrollbar thumb size/position
             // once heterogeneous-height header rows are mixed with the
             // uniform-height album rows — cosmetic only, not a scrolling bug.
-            val listState = rememberPersistedLazyListState(viewModel.scrollPosition)
-            LightLazyScrollView(
-                modifier = Modifier.fillMaxWidth(),
-                scrollBarPosition = LightScrollBarPosition.Inside,
-                listState = listState,
-                uniformItemHeightGridUnits = 3f,
-            ) {
+            ScreenList(viewModel.scrollPosition) {
                 // "About this artist" content — collapsed sections, fetched
                 // only once actually expanded (see the ViewModel's
                 // toggleSimilarArtists/toggleTopSongs doc).
@@ -221,83 +187,17 @@ class ArtistDetailScreen(
                     }
                 }
 
-                // Inside, not Outside — see AlbumDetailScreen's identical call
-                // site for why (Outside's gutter width isn't known until after
-                // first layout, so the trailing favorite star briefly rendered
-                // full-width then jumped left once it appeared; AlbumRow
-                // reserves the same width itself, unconditionally, instead).
                 items(albums, key = { it.id }) { album ->
                     AlbumRow(
                         lightContext = lightContext,
                         album = album,
+                        // The artist is the same for every row here, so the second line is how many songs the album has.
+                        secondLine = "${album.songCount} tracks",
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
-                        onOpenActions = {
-                            navigateTo({ a ->
-                                val addToQueueItem = addToQueueActionItem("Add album to queue", playbackRepository(activity, lightContext)) {
-                                    viewModel.tracksForAlbum(album.id)
-                                }
-                                ActionsMenuScreen(
-                                    activity = a,
-                                    subtitle = album.name,
-                                    items = listOf(
-                                        favoriteActionItem(album.isFavorite) { favorite ->
-                                            viewModel.setAlbumFavorite(album.id, favorite)
-                                        },
-                                        // Real state only starts being read once this menu is actually
-                                        // open (via liveUpdates below) — see AlbumListScreen's identical
-                                        // fix for why this used to be collected per-row in the list itself.
-                                        trackListDownloadActionItem("album", TrackListDownloadState.NONE) { viewModel.toggleAlbumDownload(lightContext, album.id) }.copy(
-                                            liveUpdates = viewModel.albumDownloadState(album.id).map { s ->
-                                                trackListDownloadActionItem("album", s) { viewModel.toggleAlbumDownload(lightContext, album.id) }
-                                            },
-                                        ),
-                                        addToQueueItem,
-                                    ),
-                                )
-                            })
-                        },
+                        onOpenActions = { albumActions.openMenu(album.id, album.name, album.isFavorite) },
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun AlbumRow(
-    lightContext: SealedLightContext,
-    album: Album,
-    onClick: () -> Unit,
-    onOpenActions: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightCombinedClickable(onClick = onClick, onLongClick = onOpenActions)
-            // end matches the SDK's own scrollbar track width — see the
-            // LightLazyScrollView call site above for why this is fixed
-            // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AlbumArt(
-            lightContext = lightContext,
-            coverArtId = album.coverArtId,
-            size = 2.5f.gridUnitsAsDp(),
-            modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            LightText(text = album.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            LightText(text = "${album.songCount} tracks", variant = LightTextVariant.Fine)
-        }
-        // Reported live: no way to tell an album was favorited from this list.
-        if (album.isFavorite) {
-            LightIcon(
-                icon = LightIcons.STAR,
-                size = 1.2f,
-                contentDescription = "Favorited",
-                modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-            )
         }
     }
 }
