@@ -161,6 +161,8 @@ object AppGraph {
             shownServerIds = serverConfigRepository.shownServerIds,
             serverSyncStatus = serverSyncStatus,
         )
+        // The phone's own copy of the library, as far as a write is concerned (see LocalFirstWrites).
+        val localCopy = RoomLocalCopy(database.artistDao(), database.albumDao(), database.trackDao(), database.playlistDao())
         val playlistRepository = PlaylistRepository(
             apiHolder = apiHolder,
             playlistDao = database.playlistDao(),
@@ -169,6 +171,8 @@ object AppGraph {
             downloadRepository = downloadRepository,
             shownServerIds = serverConfigRepository.shownServerIds,
             serverSyncStatus = serverSyncStatus,
+            localCopy = localCopy,
+            localStars = { LocalStars(database.pendingMutationDao().pendingFavoriteIds()) },
         )
         // Starts every list refresh — on app start / reconnect just below, and
         // whenever a list page is opened (each list screen's onScreenShow). See
@@ -234,11 +238,20 @@ object AppGraph {
             apiHolder = apiHolder,
             filesDir = lightContext.filesDir,
         )
+        val localFirstWrites = LocalFirstWrites(
+            queue = database.pendingMutationDao(),
+            local = localCopy,
+            apis = apiHolder,
+            enabledServerIds = serverConfigRepository.enabledServerIds,
+            keepsFavorites = { Capabilities.can(it, Capability.STAR) },
+            reconcile = { playlistRepository.refreshPlaylistDetail(it) },
+        )
         val syncQueueRepository = SyncQueueRepository(
-            pendingMutationDao = database.pendingMutationDao(),
+            writes = localFirstWrites,
+            local = localCopy,
             libraryRepository = libraryRepository,
             playlistRepository = playlistRepository,
-            enabledServerIds = serverConfigRepository.enabledServerIds,
+            apis = apiHolder,
         )
         val localDataRepository = LocalDataRepository(
             database = database,
