@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.musicplus.app.data.AppAvailability
+import com.musicplus.app.data.AvailableSplit
+import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SimpleLightScreen
@@ -17,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -48,6 +52,18 @@ class ListFilter(private val scope: CoroutineScope) {
     /** [source] narrowed by the current query: all of it while the query is blank, else the rows [matches] accepts. */
     fun <T> narrow(source: Flow<List<T>>, matches: (T, String) -> Boolean): StateFlow<List<T>> =
         filteredBy(source, _query, matches).screenState(scope, emptyList())
+
+    /**
+     * [narrow], then cut by whether each row can be played right now ([split] is one of [ListAvailability]'s functions): the rows that
+     * can, then the rows that cannot. Follows the servers coming and going and "Downloaded only", so a row moves without the screen being reopened.
+     */
+    fun <T> narrowAndSplit(
+        source: Flow<List<T>>,
+        matches: (T, String) -> Boolean,
+        split: ListAvailability.(List<T>) -> AvailableSplit<T>,
+    ): StateFlow<AvailableSplit<T>> =
+        combine(filteredBy(source, _query, matches), AppAvailability.now.value) { rows, availability -> availability.split(rows) }
+            .screenState(scope, AvailableSplit.empty())
 }
 
 /** Whether [this] contains [query], ignoring case: what every list's filter means by "matches". */

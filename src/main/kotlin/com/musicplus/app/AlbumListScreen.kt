@@ -1,12 +1,12 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppLibraryCache
+import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
@@ -19,9 +19,9 @@ class AlbumListScreenViewModel(listRefresher: ListRefresher) : CachedListViewMod
     // Reads the already-live, process-lifetime cache instead of re-subscribing to libraryRepository.observeAlbums() itself — see
     // AppLibraryCache's own doc for why a fresh per-visit stateIn() here was the actual root cause of Albums' reported per-visit load delay.
     val filter = ListFilter(viewModelScope)
-    val albums = filter.narrow(AppLibraryCache.albums.value) { album, query ->
+    val albums = filter.narrowAndSplit(AppLibraryCache.albums.value, { album, query ->
         album.name.containsIgnoringCase(query) || album.artistName.containsIgnoringCase(query)
-    }
+    }, ListAvailability::albums)
 }
 
 class AlbumListScreen(private val activity: SealedLightActivity) :
@@ -47,13 +47,14 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (albums.isEmpty()) EmptyListNote("albums", filter)
+            if (albums.isEmpty) EmptyListNote("albums", filter)
             ScreenList(viewModel.scrollPosition) {
-                items(albums, key = { it.id }) { album ->
+                availableItems(albums, key = { it.id }) { album, unavailable ->
                     AlbumRow(
                         lightContext = lightContext,
                         album = album,
                         secondLine = album.artistLine,
+                        unavailable = unavailable,
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
                         onOpenActions = { albumActions.openMenu(album.id, album.name, album.isFavorite) },
                     )

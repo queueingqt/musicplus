@@ -72,6 +72,12 @@ class SettingsScreenViewModel(
         viewModelScope.launch { appSettingsRepository.setShowAlbumArtwork(!showAlbumArtwork.value) }
     }
 
+    val downloadedOnly: StateFlow<Boolean> = AppDisplayPrefs.downloadedOnly.value
+
+    fun toggleDownloadedOnly() {
+        viewModelScope.launch { appSettingsRepository.setDownloadedOnly(!downloadedOnly.value) }
+    }
+
     val debugLoggingEnabled: StateFlow<Boolean> = AppDebugPrefs.debugLoggingEnabled.value
 
     fun toggleDebugLogging() {
@@ -106,6 +112,7 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
     @Composable
     override fun Content() {
         val showAlbumArtwork by viewModel.showAlbumArtwork.collectAsState()
+        val downloadedOnly by viewModel.downloadedOnly.collectAsState()
         val debugLoggingEnabled by viewModel.debugLoggingEnabled.collectAsState()
         val scrobblingEnabled by viewModel.scrobblingEnabled.collectAsState()
         val scrobblingError by viewModel.scrobblingError.collectAsState()
@@ -127,6 +134,12 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                     label = "Show album artwork",
                     isOn = showAlbumArtwork,
                     onToggle = { viewModel.toggleShowAlbumArtwork() },
+                )
+                ToggleRow(
+                    label = "Downloaded only",
+                    isOn = downloadedOnly,
+                    onToggle = { viewModel.toggleDownloadedOnly() },
+                    subtitle = "Lists show only what is on this phone",
                 )
                 LightText(
                     text = "Quality Settings",

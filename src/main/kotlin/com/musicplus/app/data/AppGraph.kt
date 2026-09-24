@@ -95,6 +95,7 @@ object AppGraph {
             AppDebugPrefs.debugLoggingEnabled.set(it)
         }
         mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs.showAlbumArtwork::set)
+        mirrorInto(appSettingsRepository.downloadedOnly, AppDisplayPrefs.downloadedOnly::set)
         mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs.streamQualityWifi::set)
         mirrorInto(appSettingsRepository.streamQualityCellular, AppQualityPrefs.streamQualityCellular::set)
         mirrorInto(appSettingsRepository.downloadQuality, AppQualityPrefs.downloadQuality::set)
@@ -184,6 +185,13 @@ object AppGraph {
         mirrorInto(libraryRepository.observeFavoriteAlbums(), AppLibraryCache.favoriteAlbums::set)
         mirrorInto(libraryRepository.observeFavoriteTracks(), AppLibraryCache.favoriteTracks::set)
         mirrorInto(playlistRepository.observePlaylists(), AppLibraryCache.playlists::set)
+        // Which rows can be played right now, for every list: see ListAvailability. Built from the caches just above, the stream cache's
+        // listing, and each playlist's songs.
+        mirrorInto(
+            observeOnPhoneIndex(AppLibraryCache.allTracks.value, AppLibraryCache.albums.value, streamCache.copyKeys, database.playlistDao().observeMemberships()),
+            AppAvailability.index::set,
+        )
+        mirrorInto(AppAvailability.observe(), AppAvailability.now::set)
         // Checked on every app open, but throttled to once per
         // VERSION_CHECK_INTERVAL_MS — an unauthenticated GitHub API call is
         // cheap, but someone opening/closing the app dozens of times a day

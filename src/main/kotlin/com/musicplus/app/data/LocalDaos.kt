@@ -218,6 +218,10 @@ interface PlaylistDao {
     @Query("SELECT songId FROM playlist_tracks WHERE playlistId = :playlistId ORDER BY position")
     suspend fun getSongIdsInOrder(playlistId: String): List<String>
 
+    /** Every playlist's songs, for the lists that say which playlists have audio on the phone (see [OnPhoneIndex]). */
+    @Query("SELECT playlistId, songId FROM playlist_tracks")
+    fun observeMemberships(): Flow<List<PlaylistMembership>>
+
     @Query("DELETE FROM playlist_tracks WHERE playlistId = :playlistId")
     suspend fun clearTracks(playlistId: String)
 
@@ -414,3 +418,6 @@ interface ServerCleanupDao {
     @Query("DELETE FROM playlists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")
     suspend fun deletePlaylists(serverId: String)
 }
+
+/** One song in one playlist: [PlaylistDao.observeMemberships]'s row. */
+data class PlaylistMembership(val playlistId: String, val songId: String)

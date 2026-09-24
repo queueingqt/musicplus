@@ -1,6 +1,5 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -8,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.LibraryRepository
+import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
@@ -26,9 +26,9 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
  */
 class SongsListScreenViewModel(listRefresher: ListRefresher) : CachedListViewModel(listRefresher, ListRefresher.Target.SONGS) {
     val filter = ListFilter(viewModelScope)
-    val tracks = filter.narrow(AppLibraryCache.allTracks.value) { track, query ->
+    val tracks = filter.narrowAndSplit(AppLibraryCache.allTracks.value, { track, query ->
         track.title.containsIgnoringCase(query) || track.artistName.containsIgnoringCase(query)
-    }
+    }, ListAvailability::songs)
 }
 
 class SongsListScreen(private val activity: SealedLightActivity) :
@@ -54,11 +54,12 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (tracks.isEmpty()) {
+            if (tracks.isEmpty) {
                 EmptyListNote("songs", filter)
             } else {
                 ScreenList(viewModel.scrollPosition) {
-                    items(tracks, key = { it.id }) { track ->
+                    // TrackRow greys a song out by itself, so the line is all the split adds here.
+                    availableItems(tracks, key = { it.id }) { track, _ ->
                         TrackRow(
                             track = track,
                             subtitle = track.artistLine,

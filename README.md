@@ -24,6 +24,9 @@ Subsonic-API-compatible server — Gonic, Airsonic, etc.).
 - **Playlists** — create, rename, delete, and reorder tracks
 - **Download for offline use** — albums, playlists, and individual songs, via
   long-press
+- **Offline-first lists** — when a server cannot be reached, every list puts what
+  plays from the phone (downloads and songs kept from streaming) first, and the
+  rest below a "Server not reachable" line
 - Album art and lyrics automatically saved locally for offline use as you load them.
 
 <p float="left">
@@ -62,7 +65,8 @@ Albums, Artists, Songs, Search, Favorites, and Playlists.
 - Now Playing opens by tapping the mini-player
 - Server connection is configurable in Settings, with support for saving more
   than one server
-- Preferences: show/hide album artwork. Haptic feedback follows LightOS's own
+- Preferences: show/hide album artwork, and "Downloaded only" (every list shows
+  just what is on the phone). Haptic feedback follows LightOS's own
   setting (see the temporary workaround noted in `SETUP.md`).
 
 ## How it's built

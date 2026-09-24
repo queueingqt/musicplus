@@ -1,12 +1,12 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppLibraryCache
+import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
@@ -24,9 +24,9 @@ class FavoritesScreenViewModel(
     // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observeFavorite*() on every
     // fresh per-visit ViewModel. One filter narrows all three lists.
     val filter = ListFilter(viewModelScope)
-    val artists = filter.narrow(AppLibraryCache.favoriteArtists.value) { artist, query -> artist.name.containsIgnoringCase(query) }
-    val albums = filter.narrow(AppLibraryCache.favoriteAlbums.value) { album, query -> album.name.containsIgnoringCase(query) }
-    val tracks = filter.narrow(AppLibraryCache.favoriteTracks.value) { track, query -> track.title.containsIgnoringCase(query) }
+    val artists = filter.narrowAndSplit(AppLibraryCache.favoriteArtists.value, { artist, query -> artist.name.containsIgnoringCase(query) }, ListAvailability::artists)
+    val albums = filter.narrowAndSplit(AppLibraryCache.favoriteAlbums.value, { album, query -> album.name.containsIgnoringCase(query) }, ListAvailability::albums)
+    val tracks = filter.narrowAndSplit(AppLibraryCache.favoriteTracks.value, { track, query -> track.title.containsIgnoringCase(query) }, ListAvailability::songs)
 
     // Unfavoriting here naturally drops the row from the lists above — each is derived from observeFavorite*(), which only ever includes
     // starred items — so there's no separate "remove from this list" step beyond the same favorite toggle every other screen uses.
@@ -62,12 +62,13 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (artists.isEmpty() && albums.isEmpty() && tracks.isEmpty()) EmptyListNote("favorites", filter)
+            if (artists.isEmpty && albums.isEmpty && tracks.isEmpty) EmptyListNote("favorites", filter)
             ScreenList(viewModel.scrollPosition) {
                 item { SectionHeader("Artists") }
-                items(artists, key = { "artist-${it.id}" }) { artist ->
+                availableItems(artists, key = { "artist-${it.id}" }, keyPrefix = "artist-") { artist, unavailable ->
                     LabelRow(
                         label = artist.nameLine,
+                        unavailable = unavailable,
                         onClick = { navigateTo({ a -> ArtistDetailScreen(a, artist.id) }) },
                         // Long-press for the way to remove it from favorites.
                         onLongClick = {
@@ -86,17 +87,18 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                     )
                 }
                 item { SectionHeader("Albums") }
-                items(albums, key = { "album-${it.id}" }) { album ->
+                availableItems(albums, key = { "album-${it.id}" }, keyPrefix = "album-") { album, unavailable ->
                     ArtRow(
                         lightContext = lightContext,
                         label = album.nameLine,
                         coverArtId = album.coverArtId,
+                        unavailable = unavailable,
                         onClick = { navigateTo({ a -> AlbumDetailScreen(a, album.id, album) }) },
                         onLongClick = { albumActions.openMenu(album.id, album.name, isFavorite = true) },
                     )
                 }
                 item { SectionHeader("Tracks") }
-                items(tracks, key = { "track-${it.id}" }) { track ->
+                availableItems(tracks, key = { "track-${it.id}" }, keyPrefix = "track-") { track, _ ->
                     TrackRow(
                         track = track,
                         subtitle = track.serverLabel,

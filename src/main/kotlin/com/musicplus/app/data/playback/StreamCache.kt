@@ -66,6 +66,14 @@ class StreamCache(
      */
     val revision: StateFlow<Int> = _revision
 
+    private val _copyKeys = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * The file keys ([ServerScope.fileKey]) of every song that has a finished copy here, at any quality: what lists need to say
+     * which songs play with no server. Follows the same listing as [anyCopy], so it changes when [revision] does.
+     */
+    val copyKeys: StateFlow<Set<String>> = _copyKeys
+
     init {
         // Read now, not at the first question: the first row to ask used to be answered from an empty listing.
         refreshListingInBackground()
@@ -78,6 +86,13 @@ class StreamCache(
         // The rest of the name must be a quality and the extension: an id that itself contains a dash must not match another song's copy.
         val name = names.firstOrNull { it.startsWith(prefix) && COPY_SUFFIX.matches(it.removePrefix(prefix)) } ?: return null
         return File(dir, name).takeIf { it.isFile }
+    }
+
+    /** Makes [listed] the listing everything reads: [anyCopy], [copyKeys] and [revision] change together. */
+    private fun publish(listed: Set<String>) {
+        names = listed
+        _copyKeys.value = listed.mapNotNullTo(HashSet()) { COPY_NAME.matchEntire(it)?.groupValues?.get(1) }
+        _revision.update { it + 1 }
     }
 
     private fun refreshListingInBackground() {
@@ -94,10 +109,7 @@ class StreamCache(
     internal fun refreshListingNow() {
         val listed = dir.list()?.toHashSet() ?: emptySet()
         listedAtMs = System.currentTimeMillis()
-        if (listed != names) {
-            names = listed
-            _revision.update { it + 1 }
-        }
+        if (listed != names) publish(listed)
     }
 
     /**
@@ -130,8 +142,7 @@ class StreamCache(
                 if (!part.renameTo(cached)) throw IOException("could not move ${cached.name}.part into place")
                 // Told to the listing directly rather than re-read, since this may run on the main thread; a refresh that raced it and
                 // missed the file finds it on the next one.
-                names = names + cached.name
-                _revision.update { it + 1 }
+                publish(names + cached.name)
                 AppLogger.d(TAG, "cachedStreamFile($songId): write complete")
             } catch (e: Exception) {
                 // A failed, interrupted or cancelled fetch only ever leaves its own .part, never something at the final path that
@@ -147,16 +158,14 @@ class StreamCache(
     fun deleteForServer(serverId: String) {
         val prefix = ServerScope.fileKey(ServerScope.scope(serverId, ""))
         dir.listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
-        names = names.filterNot { it.startsWith(prefix) }.toSet()
-        _revision.update { it + 1 }
+        publish(names.filterNot { it.startsWith(prefix) }.toSet())
         listedAtMs = 0L
     }
 
     /** Deletes everything. */
     fun clear() {
         dir.deleteRecursively()
-        names = emptySet()
-        _revision.update { it + 1 }
+        publish(emptySet())
         listedAtMs = 0L
     }
 
@@ -173,5 +182,8 @@ class StreamCache(
         private const val ORIGINAL = "orig"
         private const val LISTING_TTL_MS = 5_000L
         private val COPY_SUFFIX = Regex("^(\\d+|$ORIGINAL)\\.mp3$")
+
+        /** A finished copy's whole name: the song's file key (which may itself hold dashes), then the quality. */
+        private val COPY_NAME = Regex("^(.+)-(\\d+|$ORIGINAL)\\.mp3$")
     }
 }

@@ -180,4 +180,34 @@ class StreamCacheTest {
         cache.refreshListingNow()
         assertTrue(cache.revision.value != before, "a copy appeared")
     }
+
+    @Test
+    fun theKeysOfKeptSongsFollowTheListingAtEveryQuality() = runBlocking<Unit> {
+        assertTrue(cache.copyKeys.value.isEmpty())
+        cache.fetch("srv:abc", 192, rank, writing())
+        cache.fetch("srv:abc", null, rank, writing())
+        cache.fetch("srv:x-y", 128, rank, writing())
+        assertEquals(setOf("srv_abc", "srv_x-y"), cache.copyKeys.value, "one key per song, whatever the quality, and dashes in a key survive")
+    }
+
+    @Test
+    fun aPartFileAndAPlaceholderAreNotKeptSongs() {
+        dir.mkdirs()
+        File(dir, "srv_abc-192.mp3.part").writeBytes(ByteArray(1))
+        File(dir, cache.placeholder("srv:def").name).writeBytes(ByteArray(1))
+        File(dir, "srv_ghi-orig.mp3").writeBytes(ByteArray(1))
+        cache.refreshListingNow()
+        assertEquals(setOf("srv_ghi"), cache.copyKeys.value)
+    }
+
+    @Test
+    fun theKeysDropWhenAServersCopiesAreDeletedOrEverythingIsCleared() = runBlocking<Unit> {
+        cache.fetch("a:1", null, rank, writing())
+        cache.fetch("b:1", null, rank, writing())
+        cache.deleteForServer("a")
+        assertEquals(setOf("b_1"), cache.copyKeys.value)
+        cache.clear()
+        assertTrue(cache.copyKeys.value.isEmpty())
+    }
 }
+

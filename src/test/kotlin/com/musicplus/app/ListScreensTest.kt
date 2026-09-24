@@ -1,6 +1,11 @@
 package com.musicplus.app
 
+import com.musicplus.app.data.AppAvailability
+import com.musicplus.app.data.AvailableSplit
+import com.musicplus.app.data.ListAvailability
+import com.musicplus.app.data.OnPhoneIndex
 import com.musicplus.app.data.ServerProfile
+import com.musicplus.app.data.ServersNow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -111,4 +116,40 @@ class ListScreensTest {
     fun everythingLoadedAndStillNothingSaysSo() {
         assertEquals("No songs yet", text())
     }
+
+    @Test
+    fun downloadedOnlyWithNothingDownloadedSaysSoButAFilterOrNoServerStillWins() {
+        assertEquals("No downloaded songs", emptyListText("songs", "", true, setOf("a"), servers, mapOf("a" to 1L), downloadedOnly = true))
+        assertEquals("No downloaded songs", emptyListText("songs", "", true, setOf("a"), servers, emptyMap(), downloadedOnly = true), "not 'Loading': what is on the phone needs no sync")
+        assertEquals("No matches", emptyListText("songs", "x", true, setOf("a"), servers, emptyMap(), downloadedOnly = true))
+        assertTrue(emptyListText("songs", "", true, emptySet(), servers, emptyMap(), downloadedOnly = true).startsWith("No server is on"))
+    }
+
+    private fun availability(down: Set<String>) =
+        ListAvailability(OnPhoneIndex.EMPTY, ServersNow(anyKnown = true, enabled = setOf("up", "down"), unreachable = down), downloadedOnly = false)
+
+    private fun track(id: String) = Track(id, id, null, null, null, null, null, 100, null, false, null, null)
+
+    @Test
+    fun aFilteredListIsSplitByWhatCanBePlayedAndFollowsTheServersComingAndGoing() = runBlocking<Unit> {
+        val songs = listOf(track("up:1"), track("down:1"), track("up:2"), track("down:2"))
+        AppAvailability.now.set(availability(down = setOf("down")))
+        val filter = ListFilter(scope)
+        val split = filter.narrowAndSplit(flowOf(songs), { t, q -> t.title.containsIgnoringCase(q) }, ListAvailability::songs)
+
+        suspend fun next(ok: (AvailableSplit<Track>) -> Boolean) = withTimeout(5_000) { split.first(ok) }
+        val down = next { it.unavailable.size == 2 }
+        assertEquals(listOf("up:1", "up:2"), down.playable.map { it.id })
+        assertEquals(listOf("down:1", "down:2"), down.unavailable.map { it.id })
+
+        filter.set("2")
+        val narrowed = next { it.playable.size + it.unavailable.size == 2 }
+        assertEquals(listOf("up:2"), narrowed.playable.map { it.id })
+        assertEquals(listOf("down:2"), narrowed.unavailable.map { it.id })
+
+        AppAvailability.now.set(availability(down = emptySet()))
+        val back = next { it.unavailable.isEmpty() }
+        assertEquals(listOf("up:2", "down:2"), back.playable.map { it.id })
+    }
 }
+

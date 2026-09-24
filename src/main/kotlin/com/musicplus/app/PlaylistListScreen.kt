@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,6 +17,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
+import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.PlaylistHomes
@@ -44,7 +44,7 @@ class PlaylistListScreenViewModel(
     // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observePlaylists() on every
     // fresh per-visit ViewModel. A client-side filter: no server-side playlist name search worth a round trip for a realistically short list.
     val filter = ListFilter(viewModelScope)
-    val playlists = filter.narrow(AppLibraryCache.playlists.value) { playlist, query -> playlist.name.containsIgnoringCase(query) }
+    val playlists = filter.narrowAndSplit(AppLibraryCache.playlists.value, { playlist, query -> playlist.name.containsIgnoringCase(query) }, ListAvailability::playlists)
 
     /**
      * Makes a playlist at [home] (a server id, or Phone Only) and gives its id to [onCreated] — real if it synced
@@ -108,11 +108,12 @@ class PlaylistListScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (playlists.isEmpty()) EmptyListNote("playlists", query)
+            if (playlists.isEmpty) EmptyListNote("playlists", query)
             ScreenList(viewModel.scrollPosition) {
-                items(playlists, key = { it.id }) { playlist ->
+                availableItems(playlists, key = { it.id }) { playlist, unavailable ->
                     PlaylistRow(
                         playlist = playlist,
+                        unavailable = unavailable,
                         onClick = { navigateTo({ a -> PlaylistDetailScreen(a, playlist.id) }) },
                         onOpenActions = {
                             playlistActions.openMenu(
@@ -131,10 +132,11 @@ class PlaylistListScreen(private val activity: SealedLightActivity) :
 }
 
 @Composable
-private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit, onOpenActions: () -> Unit) {
+private fun PlaylistRow(playlist: Playlist, unavailable: Boolean, onClick: () -> Unit, onOpenActions: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .fadedWhen(unavailable)
             .lightCombinedClickable(onClick = onClick, onLongClick = onOpenActions)
             // end matches the SDK's own scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed

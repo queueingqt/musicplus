@@ -22,6 +22,7 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     private object Keys {
         val SHOW_ALBUM_ARTWORK = booleanPreferencesKey("show_album_artwork")
+        val DOWNLOADED_ONLY = booleanPreferencesKey("downloaded_only")
         val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val SCROBBLING_ENABLED = booleanPreferencesKey("scrobbling_enabled")
         // Int, not a serialized enum — see StreamQuality's doc: this is a
@@ -55,6 +56,18 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setShowAlbumArtwork(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[Keys.SHOW_ALBUM_ARTWORK] = enabled }
+    }
+
+    /**
+     * Off by default: every list shows the whole library. On, every list shows only what the phone holds audio for (see [ListAvailability]),
+     * for being online but not wanting to stream.
+     */
+    val downloadedOnly: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[Keys.DOWNLOADED_ONLY] ?: false
+    }
+
+    suspend fun setDownloadedOnly(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[Keys.DOWNLOADED_ONLY] = enabled }
     }
 
     /**

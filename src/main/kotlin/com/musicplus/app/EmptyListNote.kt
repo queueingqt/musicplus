@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.ServerProfile
 import com.thelightphone.sdk.ui.LightText
@@ -23,8 +24,9 @@ fun EmptyListNote(what: String, filter: String = "") {
     val enabled by AppServerPrefs.enabledServerIds.value.collectAsState()
     val servers by AppServerPrefs.servers.value.collectAsState()
     val synced by AppServerPrefs.lastSyncedAt.value.collectAsState()
+    val downloadedOnly by AppDisplayPrefs.downloadedOnly.value.collectAsState()
     LightText(
-        text = emptyListText(what, filter, configured, enabled, servers, synced),
+        text = emptyListText(what, filter, configured, enabled, servers, synced, downloadedOnly),
         variant = LightTextVariant.Fine,
         modifier = Modifier
             .fillMaxWidth()
@@ -33,8 +35,9 @@ fun EmptyListNote(what: String, filter: String = "") {
 }
 
 /**
- * Why a list is empty, said plainly: a filter that matched nothing, no server saved, none switched on, a server whose lists have not
- * loaded yet (by name), or just that there is nothing yet. In that order, so the most specific reason wins.
+ * Why a list is empty, said plainly: a filter that matched nothing, no server saved, none switched on, "Downloaded only" with nothing
+ * downloaded, a server whose lists have not loaded yet (by name), or just that there is nothing yet. In that order, so the most specific
+ * reason wins.
  */
 fun emptyListText(
     what: String,
@@ -43,10 +46,12 @@ fun emptyListText(
     enabled: Set<String>,
     servers: List<ServerProfile>,
     lastSyncedAt: Map<String, Long>,
+    downloadedOnly: Boolean = false,
 ): String = when {
     filter.isNotBlank() -> "No matches"
     !configured -> "No server yet. Add one in Settings → Server."
     enabled.isEmpty() -> "No server is on. Turn one on in Settings → Server."
+    downloadedOnly -> "No downloaded $what"
     else -> {
         val loading = servers.filter { it.id in enabled && lastSyncedAt[it.id] == null }.map { it.name }
         if (loading.isNotEmpty()) "Loading ${loading.joinToString(", ")}…" else "No $what yet"

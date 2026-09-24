@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -16,6 +15,7 @@ import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.LibraryRepository
+import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
@@ -40,7 +40,7 @@ class ArtistListScreenViewModel(
     // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observeArtists() on every
     // fresh per-visit ViewModel.
     val filter = ListFilter(viewModelScope)
-    val artists = filter.narrow(AppLibraryCache.artists.value) { artist, query -> artist.name.containsIgnoringCase(query) }
+    val artists = filter.narrowAndSplit(AppLibraryCache.artists.value, { artist, query -> artist.name.containsIgnoringCase(query) }, ListAvailability::artists)
 
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
 
@@ -75,11 +75,12 @@ class ArtistListScreen(activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (artists.isEmpty()) EmptyListNote("artists", filter)
+            if (artists.isEmpty) EmptyListNote("artists", filter)
             ScreenList(viewModel.scrollPosition) {
-                items(artists, key = { it.id }) { artist ->
+                availableItems(artists, key = { it.id }) { artist, unavailable ->
                     ArtistRow(
                         artist = artist,
+                        unavailable = unavailable,
                         onClick = { navigateTo({ a -> ArtistDetailScreen(a, artist.id) }) },
                         onOpenActions = {
                             navigateTo({ a ->
@@ -112,10 +113,11 @@ class ArtistListScreen(activity: SealedLightActivity) :
 }
 
 @Composable
-private fun ArtistRow(artist: Artist, onClick: () -> Unit, onOpenActions: () -> Unit) {
+private fun ArtistRow(artist: Artist, unavailable: Boolean, onClick: () -> Unit, onOpenActions: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .fadedWhen(unavailable)
             .lightCombinedClickable(onClick = onClick, onLongClick = onOpenActions)
             // end matches the SDK's own scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed
