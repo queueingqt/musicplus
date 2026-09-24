@@ -1,5 +1,6 @@
 package com.musicplus.app.data
 
+import com.musicplus.app.data.playback.StreamCache
 import java.io.File
 
 /**
@@ -23,6 +24,7 @@ class LocalDataRepository(
     private val database: MusicPlusDatabase,
     private val playbackStateRepository: PlaybackStateRepository,
     private val filesDir: File,
+    private val streamCache: StreamCache,
 ) {
     suspend fun clearAll() {
         database.artistDao().deleteAll()
@@ -35,7 +37,8 @@ class LocalDataRepository(
 
         playbackStateRepository.clear()
 
-        for (dirName in listOf("downloads", "streamcache", "lyrics", "albumart")) {
+        streamCache.clear()
+        for (dirName in listOf("downloads", "lyrics", "albumart")) {
             File(filesDir, dirName).deleteRecursively()
         }
 

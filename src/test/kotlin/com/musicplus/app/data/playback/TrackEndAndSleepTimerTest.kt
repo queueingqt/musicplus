@@ -84,7 +84,7 @@ class SleepTimerTest {
     private suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
 
     @Test
-    fun aCountdownPausesOnceWhenItRunsOutAndClearsItself() = runBlocking {
+    fun aCountdownPausesOnceWhenItRunsOutAndClearsItself() = runBlocking<Unit> {
         timer.startFor(40)
         assertTrue(timer.state.value is SleepTimerState.Countdown)
         until { slept == 1 }
@@ -94,7 +94,7 @@ class SleepTimerTest {
     }
 
     @Test
-    fun theCountdownTicksDownAndKeepsItsOriginalTotal() = runBlocking {
+    fun theCountdownTicksDownAndKeepsItsOriginalTotal() = runBlocking<Unit> {
         timer.startFor(200)
         until { (timer.state.value as? SleepTimerState.Countdown)?.remainingMs?.let { it < 200 } == true }
         assertEquals(200, (timer.state.value as SleepTimerState.Countdown).totalMs)
@@ -102,7 +102,7 @@ class SleepTimerTest {
     }
 
     @Test
-    fun cancellingStopsItWithoutSleeping() = runBlocking {
+    fun cancellingStopsItWithoutSleeping() = runBlocking<Unit> {
         timer.startFor(60)
         timer.cancel()
         assertNull(timer.state.value)
@@ -111,7 +111,7 @@ class SleepTimerTest {
     }
 
     @Test
-    fun startingAgainReplacesTheRunningCountdown() = runBlocking {
+    fun startingAgainReplacesTheRunningCountdown() = runBlocking<Unit> {
         timer.startFor(10_000)
         timer.startFor(30)
         until { slept == 1 }
@@ -120,7 +120,7 @@ class SleepTimerTest {
     }
 
     @Test
-    fun endOfTrackDoesNotTickAndFiresOnlyWhenToldTo() = runBlocking {
+    fun endOfTrackDoesNotTickAndFiresOnlyWhenToldTo() = runBlocking<Unit> {
         timer.startAtEndOfTrack()
         assertTrue(timer.endOfTrackArmed)
         delay(60)
@@ -132,7 +132,7 @@ class SleepTimerTest {
     }
 
     @Test
-    fun switchingToEndOfTrackStopsTheCountdown() = runBlocking {
+    fun switchingToEndOfTrackStopsTheCountdown() = runBlocking<Unit> {
         timer.startFor(50)
         timer.startAtEndOfTrack()
         delay(120)

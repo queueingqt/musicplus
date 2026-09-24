@@ -1,6 +1,7 @@
 package com.musicplus.app.data
 
 import com.musicplus.app.BuildConfig
+import com.musicplus.app.data.playback.StreamCache
 import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.LightWork
 import com.thelightphone.sdk.SealedLightContext
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,6 +40,7 @@ object AppGraph {
         val localDataRepository: LocalDataRepository,
         val serverRemoval: ServerRemoval,
         val connectivity: LightConnectivity,
+        val streamCache: StreamCache,
     )
 
     @Volatile private var instance: Graph? = null
@@ -136,7 +139,8 @@ object AppGraph {
         val capabilityRegistry = CapabilityRegistry(lightContext.dataStore, appScope, apiHolder, connectivity, build = "${BuildConfig.VERSION_NAME}#$CAPABILITY_PROBE_REVISION")
         apiHolder.learner = capabilityRegistry
         mirrorInto(capabilityRegistry.all, AppServerPrefs.capabilities::set)
-        TrackAvailability.init(lightContext.filesDir)
+        val streamCache = StreamCache(File(lightContext.filesDir, "streamcache"))
+        TrackAvailability.init(streamCache)
         // Lets FetchGate choose how many transfers to run at once: few on cellular, many on Wi-Fi.
         FetchGate.attach(connectivity)
         // Built before libraryRepository/playlistRepository — both now take
@@ -218,7 +222,7 @@ object AppGraph {
             if ((appSettingsRepository.mediaIntegrityCheckedVersion.first() ?: 0) >= MediaIntegrity.VERSION) return@launch
             connectivity.observeNetworkStatus().first { it.isConnected }
             if (apiHolder.get() == null) return@launch
-            val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), lightContext.filesDir)
+            val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), streamCache)
             val onWifi = connectivity.currentStatus.isWifi
             if (integrity.repair(lightContext, apiHolder, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
         }
@@ -240,6 +244,7 @@ object AppGraph {
             database = database,
             playbackStateRepository = playbackStateRepository,
             filesDir = lightContext.filesDir,
+            streamCache = streamCache,
         )
 
         // Periodic backstop (WorkManager's own 15-minute floor — see
@@ -319,6 +324,7 @@ object AppGraph {
             pendingMutationDao = database.pendingMutationDao(),
             queueDao = database.queueDao(),
             filesDir = lightContext.filesDir,
+            streamCache = streamCache,
         )
 
         return Graph(
@@ -337,6 +343,7 @@ object AppGraph {
             localDataRepository = localDataRepository,
             serverRemoval = serverRemoval,
             connectivity = connectivity,
+            streamCache = streamCache,
         )
     }
 }

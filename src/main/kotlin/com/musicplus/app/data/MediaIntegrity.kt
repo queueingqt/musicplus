@@ -3,6 +3,7 @@ package com.musicplus.app.data
 import com.thelightphone.sdk.LightWork
 import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.CancellationException
+import com.musicplus.app.data.playback.StreamCache
 import java.io.File
 
 /**
@@ -26,25 +27,19 @@ import java.io.File
  *   unasked over a data plan is not this cleanup's call. Downloads made at a
  *   capped quality are transcodes of a different length, so there is nothing to
  *   compare and they are left alone.
- * - **Play-from-server cache:** these are transcodes at a fixed bitrate, so a
- *   lossless original's copy that is well under a full transcode's length is a
- *   cut-off one and is dropped (it is only a cache; playing the song fetches it
- *   again). Leftover `.part` files from downloads that were killed go too.
+ * - **Play-from-server cache:** the same cut hit those copies, but they cannot be told from a finished transcode by length (a
+ *   transcode has no length of its own), and the cause is gone, so nothing is guessed about them; only the leftover `.part`
+ *   files of fetches that were killed are swept.
  */
 class MediaIntegrity(
     private val downloadDao: DownloadDao,
     private val trackDao: TrackDao,
-    private val filesDir: File,
+    private val streamCache: StreamCache,
 ) {
     companion object {
         /** Bump to run the cleanup again on every install that already ran an older one. */
         const val VERSION = 1
 
-        private val LOSSLESS = setOf("flac", "wav", "alac", "aiff", "aif", "ape", "wv")
-        private val CACHE_NAME = Regex("^(.+)-(\\d+)\\.mp3$")
-
-        /** A cached copy under this fraction of a full CBR transcode counts as cut short. */
-        private const val CUT_SHORT_FRACTION = 0.9
 
         /** A `.part` younger than this may belong to a download running right now. */
         private const val STALE_PART_MS = 2 * 60 * 1000L
@@ -85,10 +80,10 @@ class MediaIntegrity(
             fixUp(lightContext, download, requeue)
             requeued++
         }
-        val droppedCache = dropCutShortStreamCache()
+        val sweptParts = streamCache.sweepStaleParts(STALE_PART_MS)
         AppLogger.d(
             "MediaIntegrity",
-            "checked $checked downloads, ${if (requeue) "re-queued" else "un-marked (not on Wi-Fi)"} $requeued, dropped $droppedCache cut-short cached streams " +
+            "checked $checked downloads, ${if (requeue) "re-queued" else "un-marked (not on Wi-Fi)"} $requeued, swept $sweptParts leftover partial cache file(s) " +
                 "(${if (answeredAll) "complete" else "incomplete, will retry"}, ${System.currentTimeMillis() - startedAt} ms)",
         )
         return answeredAll
@@ -116,25 +111,4 @@ class MediaIntegrity(
         )
     }
 
-    private suspend fun dropCutShortStreamCache(): Int {
-        val files = File(filesDir, "streamcache").listFiles() ?: return 0
-        var dropped = 0
-        for (file in files) {
-            if (file.name.endsWith(".part")) {
-                if (System.currentTimeMillis() - file.lastModified() > STALE_PART_MS) file.delete()
-                continue
-            }
-            val match = CACHE_NAME.matchEntire(file.name) ?: continue
-            val (id, capKbps) = match.destructured
-            val track = trackDao.getById(id) ?: continue
-            if (track.suffix?.lowercase() !in LOSSLESS) continue
-            // kbps -> bytes per second is x125; a lossless original transcodes to constant bitrate.
-            val fullTranscodeBytes = capKbps.toLong() * 125L * track.durationSec
-            if (fullTranscodeBytes > 0 && file.length() < fullTranscodeBytes * CUT_SHORT_FRACTION) {
-                file.delete()
-                dropped++
-            }
-        }
-        return dropped
-    }
 }

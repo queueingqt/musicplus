@@ -14,6 +14,7 @@ import com.musicplus.app.data.playback.Recovery
 import com.musicplus.app.data.playback.ScrobbleSink
 import com.musicplus.app.data.playback.SkipMove
 import com.musicplus.app.data.playback.SleepTimer
+import com.musicplus.app.data.playback.StreamCache
 import com.musicplus.app.data.playback.TrackEnd
 import com.musicplus.app.data.playback.TrackEndAction
 import com.thelightphone.sdk.LightConnectivity
@@ -41,11 +42,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Wraps one [LightAudio]-provided player for the whole tool session. Built as
@@ -57,7 +55,7 @@ import java.util.concurrent.ConcurrentHashMap
 class PlaybackRepository(
     audio: LightAudio,
     private val apiHolder: ApiHolder,
-    private val filesDir: File,
+    private val streamCache: StreamCache,
     private val libraryRepository: LibraryRepository,
     private val queueDao: QueueDao,
     private val playbackStateRepository: PlaybackStateRepository,
@@ -78,7 +76,7 @@ class PlaybackRepository(
     // 2026-09-17: playAsync()'s launch crashed on exactly this
     // ("MediaController method is called from a wrong thread") the first
     // time anything actually ran on this scope with Dispatchers.Default.
-    // Suspend calls that do real network I/O (toAudioItem/cachedStreamFile)
+    // Suspend calls that do real network I/O (toAudioItem/StreamCache.fetch)
     // stay non-blocking regardless — Ktor's CIO engine dispatches its own
     // socket I/O internally rather than blocking the caller's dispatcher.
     //
@@ -203,11 +201,6 @@ class PlaybackRepository(
     // beginPlay() can cancel it outright instead of leaving a superseded run
     // downloading a whole queue behind the new one (issue #47).
     private var extendJob: Job? = null
-
-    // One lock per stream-cache file name, so two callers that want the same
-    // track (a re-tapped queue row while the previous rebuild is still fetching
-    // it) share one download instead of both writing the same file (issue #47).
-    private val streamFileLocks = ConcurrentHashMap<String, Mutex>()
 
     /**
      * The songs the player currently holds as a transcoded stream rather than a file — the ones it cannot seek in (see
@@ -1278,15 +1271,15 @@ class PlaybackRepository(
             // Its server is off or cannot be reached and the phone has no copy: fetching would only stall the whole queue
             // build. It stays in the queue as an item that will not play, and playback skips it (see skipUnavailable).
             !TrackAvailability.serverUsable(ServerScope.serverOf(id)) ->
-                TrackAvailability.streamCopy(id)?.let { LightAudioSource.FileSource(it) }
-                    ?: LightAudioSource.FileSource(File(filesDir, "streamcache/${ServerScope.fileKey(id)}-unreachable"))
+                streamCache.anyCopy(id)?.let { LightAudioSource.FileSource(it) }
+                    ?: LightAudioSource.FileSource(streamCache.placeholder(id))
             api == null -> throw java.io.IOException("the server for \"$title\" is not set up")
             api.baseUrlIsHttps -> LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
-            api.playerCanFetchDirectly && streamIfUncached && !streamCacheFile(maxBitRateKbps).exists() -> {
+            api.playerCanFetchDirectly && streamIfUncached && !streamCache.has(id, maxBitRateKbps) -> {
                 AppLogger.d("PlaybackRepository", "toAudioItem($id): not cached, streaming it")
                 LightAudioSource.UrlSource(api.streamUrl(id, maxBitRateKbps))
             }
-            else -> LightAudioSource.FileSource(cachedStreamFile(api, maxBitRateKbps, rank))
+            else -> LightAudioSource.FileSource(streamCache.fetch(id, maxBitRateKbps, rank) { part, lease -> api.streamToFile(id, part, maxBitRateKbps, lease) })
         }
         AppLogger.d("PlaybackRepository", "toAudioItem($id): ${source::class.simpleName} ${(source as? LightAudioSource.FileSource)?.file?.name ?: ""} (downloaded=${downloadedFile != null}, serverUsable=${TrackAvailability.serverUsable(ServerScope.serverOf(id))})")
         return LightAudioItem(
@@ -1316,67 +1309,6 @@ class PlaybackRepository(
         } else {
             appSettingsRepository.streamQualityCellular.first()
         }
-
-    /**
-     * [maxBitRateKbps] is folded into the cache filename (not just the
-     * request) — otherwise a track cached once at one quality would keep
-     * being reused forever afterward even after switching networks/quality,
-     * since the plain `$id`-keyed cache has no way to tell "already have
-     * this at the quality that's wanted right now" from "already have this
-     * at some other quality." Means the same track can end up with more than
-     * one cached copy at different qualities over time, an accepted tradeoff
-     * (streamcache has no eviction policy regardless — see "Clear all local
-     * data" for the manual escape hatch).
-     */
-    private fun Track.streamCacheFile(maxBitRateKbps: Int?): File =
-        File(File(filesDir, "streamcache"), "${ServerScope.fileKey(id)}-${maxBitRateKbps ?: "orig"}.mp3")
-
-    private suspend fun Track.cachedStreamFile(api: MusicApi, maxBitRateKbps: Int?, rank: () -> FetchGate.Priority): File {
-        val cacheDir = File(filesDir, "streamcache").apply { mkdirs() }
-        val cached = streamCacheFile(maxBitRateKbps)
-        val name = cached.name
-        if (cached.exists()) {
-            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")
-            return cached
-        }
-        // One download per file at a time, and written under a temporary name
-        // then moved into place (issue #47): a file at `cached`'s path is now
-        // always a finished one. Before, the download wrote straight to that
-        // path, so a second caller arriving mid-download (the rebuild a queue
-        // tap superseded, still running beside the new one — both visible in the
-        // 2026-09-19 12:00 log) saw "already cached" on a half-written file, or
-        // started a second download writing into the same file, and a cancelled
-        // download deleted whatever was at that path.
-        return streamFileLocks.getOrPut(name) { Mutex() }.withLock {
-            if (cached.exists()) {
-                AppLogger.d("PlaybackRepository", "cachedStreamFile($id): already cached")
-                return@withLock cached
-            }
-            AppLogger.d("PlaybackRepository", "cachedStreamFile($id): not cached, downloading")
-            val part = File(cacheDir, "$name.part")
-            try {
-                // Streams straight to disk — see SubsonicClient.downloadToFile's
-                // doc: the old `cached.writeBytes(api.streamBytes(id))` briefly
-                // held the whole track as one in-memory ByteArray, which crashed
-                // the app outright (OutOfMemoryError) on a real ~30MB track.
-                val fetched = FetchGate.run(FetchGate.Lane.PLAYBACK, id, rank, transcoding = maxBitRateKbps != null) { lease ->
-                    api.streamToFile(id, part, maxBitRateKbps, lease)
-                }
-                if (fetched == null) throw java.io.IOException("the connection is busy with other transfers")
-                if (!part.renameTo(cached)) throw java.io.IOException("could not move $name.part into place")
-                AppLogger.d("PlaybackRepository", "cachedStreamFile($id): write complete")
-            } catch (e: Exception) {
-                // A failed, interrupted or cancelled download now only ever
-                // leaves its own .part file, never something at `cached`'s path
-                // that the exists() check above would treat as a cache hit —
-                // which is what used to play back a corrupt partial file instead
-                // of ever retrying.
-                part.delete()
-                throw e
-            }
-            cached
-        }
-    }
 
     private companion object {
         /** How many songs after the playing one count as "up next" for [FetchGate]. */
@@ -1428,13 +1360,12 @@ object PlaybackRepositoryHolder {
     fun get(
         sealedActivity: com.thelightphone.sdk.SealedLightActivity,
         graph: AppGraph.Graph,
-        filesDir: File,
     ): PlaybackRepository =
         instance ?: synchronized(this) {
             instance ?: PlaybackRepository(
                 audio = com.thelightphone.sdk.audio.DefaultLightAudio(sealedActivity),
                 apiHolder = graph.apiHolder,
-                filesDir = filesDir,
+                streamCache = graph.streamCache,
                 libraryRepository = graph.libraryRepository,
                 queueDao = graph.database.queueDao(),
                 playbackStateRepository = graph.playbackStateRepository,
@@ -1462,4 +1393,4 @@ object PlaybackRepositoryHolder {
  * `SealedLightActivity` constructor property — stay explicit parameters here.
  */
 fun playbackRepository(activity: SealedLightActivity, lightContext: SealedLightContext): PlaybackRepository =
-    PlaybackRepositoryHolder.get(activity, AppGraph.from(lightContext), lightContext.filesDir)
+    PlaybackRepositoryHolder.get(activity, AppGraph.from(lightContext))

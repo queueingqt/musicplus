@@ -1,5 +1,6 @@
 package com.musicplus.app.data
 
+import com.musicplus.app.data.playback.StreamCache
 import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +41,7 @@ class ServerRemoval(
     private val pendingMutationDao: PendingMutationDao,
     private val queueDao: QueueDao,
     private val filesDir: File,
+    private val streamCache: StreamCache,
 ) {
     /** Finished downloads per server, live. Sizes come off the disk, so this runs off the main thread. */
     val downloadSummaries: Flow<Map<String, DownloadSummary>> = downloadDao.observeAll().map { rows ->
@@ -109,17 +111,13 @@ class ServerRemoval(
         }
     }
 
-    /** Files are named after the scoped id, so a server's are the ones starting with its (file-safe) scope. */
+    /** A server's files are named after the scoped id, so they are the ones starting with its (file-safe) scope; the stream cache knows its own. */
     private suspend fun deleteCachedFiles(serverId: String, includingArtAndLyrics: Boolean) = withContext(Dispatchers.IO) {
-        val prefix = ServerScope.fileKey(ServerScope.scope(serverId, ""))
-        val dirs = buildList {
-            add("streamcache")
-            if (includingArtAndLyrics) {
-                add("albumart")
-                add("lyrics")
-            }
+        streamCache.deleteForServer(serverId)
+        if (includingArtAndLyrics) {
+            val prefix = ServerScope.fileKey(ServerScope.scope(serverId, ""))
+            for (dir in listOf("albumart", "lyrics")) File(filesDir, dir).listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
         }
-        for (dir in dirs) File(filesDir, dir).listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
     }
 
     private companion object {

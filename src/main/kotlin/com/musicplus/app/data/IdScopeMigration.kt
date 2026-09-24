@@ -5,6 +5,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import com.musicplus.app.data.playback.StreamCache
 import java.io.File
 import java.io.IOException
 
@@ -209,6 +210,6 @@ internal object IdScopeMigration {
 
     /** Streams cached under the old names would never be found again; it is only a cache. */
     private fun clearStreamCache(filesDir: File) {
-        File(filesDir, "streamcache").listFiles()?.forEach { it.delete() }
+        StreamCache(File(filesDir, "streamcache")).clear()
     }
 }
