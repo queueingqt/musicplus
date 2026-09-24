@@ -74,7 +74,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (artists.isEmpty) EmptyListNote("artists", filter)
+            if (artists.isEmpty) EmptyListNote("artists", filter, artists.loaded)
             ScreenList(viewModel.scrollPosition) {
                 availableItems(artists, key = { it.id }) { artist, unavailable ->
                     ArtistRow(

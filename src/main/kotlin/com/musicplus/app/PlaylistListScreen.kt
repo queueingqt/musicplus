@@ -107,7 +107,7 @@ class PlaylistListScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (playlists.isEmpty) EmptyListNote("playlists", query)
+            if (playlists.isEmpty) EmptyListNote("playlists", query, playlists.loaded)
             ScreenList(viewModel.scrollPosition) {
                 availableItems(playlists, key = { it.id }) { playlist, unavailable ->
                     PlaylistRow(

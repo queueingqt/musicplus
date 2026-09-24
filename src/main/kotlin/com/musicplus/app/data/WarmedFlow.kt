@@ -20,7 +20,18 @@ import kotlinx.coroutines.flow.asStateFlow
 class WarmedFlow<T>(initial: T) {
     private val _value = MutableStateFlow(initial)
     val value: StateFlow<T> = _value.asStateFlow()
+
+    private val _loaded = MutableStateFlow(false)
+
+    /**
+     * False until the real source has answered once, so [value] is still only the default. A list needs it to tell "not loaded yet" from
+     * "loaded and empty": before, both drew "No albums yet", for the whole cold-start load of a big list (seconds for Songs) and for a
+     * few frames on every warm open.
+     */
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+
     fun set(newValue: T) {
         _value.value = newValue
+        _loaded.value = true
     }
 }

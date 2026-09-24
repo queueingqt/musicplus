@@ -12,8 +12,11 @@ data class ServersNow(val anyKnown: Boolean, val enabled: Set<String>, val unrea
     fun usable(serverId: String?): Boolean = TrackAvailability.serverUsable(serverId, anyKnown, enabled, unreachable)
 }
 
-/** A list cut in two: the rows that can be played now, then the rows that cannot. Each keeps the order it had. */
-data class AvailableSplit<T>(val playable: List<T>, val unavailable: List<T>) {
+/**
+ * A list cut in two: the rows that can be played now, then the rows that cannot. Each keeps the order it had.
+ * [loaded] is false until the library behind the list has answered once: an empty list that is not loaded yet is not "empty".
+ */
+data class AvailableSplit<T>(val playable: List<T>, val unavailable: List<T>, val loaded: Boolean = true) {
     val isEmpty: Boolean get() = playable.isEmpty() && unavailable.isEmpty()
 
     /** The line between the two groups is only there to tell them apart: with nothing playable above it there is nothing to tell them from. */
@@ -21,6 +24,9 @@ data class AvailableSplit<T>(val playable: List<T>, val unavailable: List<T>) {
 
     companion object {
         fun <T> empty() = AvailableSplit<T>(emptyList(), emptyList())
+
+        /** What a list holds before its library has answered. */
+        fun <T> notLoaded() = AvailableSplit<T>(emptyList(), emptyList(), loaded = false)
     }
 }
 
@@ -80,17 +86,25 @@ object AppAvailability {
 
     // Every list's rows, already cut by [now] (see [ListAvailability]) and kept current off the main thread, for the same reason [now] is warmed: a
     // list that opens from a default and then fills in shows its "No albums yet" note for the frames in between (measured on the phone: 100-280 ms).
-    val songs = WarmedFlow(AvailableSplit.empty<Track>())
-    val albums = WarmedFlow(AvailableSplit.empty<Album>())
-    val artists = WarmedFlow(AvailableSplit.empty<Artist>())
-    val playlists = WarmedFlow(AvailableSplit.empty<Playlist>())
-    val favoriteTracks = WarmedFlow(AvailableSplit.empty<Track>())
-    val favoriteAlbums = WarmedFlow(AvailableSplit.empty<Album>())
-    val favoriteArtists = WarmedFlow(AvailableSplit.empty<Artist>())
+    val songs = WarmedFlow(AvailableSplit.notLoaded<Track>())
+    val albums = WarmedFlow(AvailableSplit.notLoaded<Album>())
+    val artists = WarmedFlow(AvailableSplit.notLoaded<Artist>())
+    val playlists = WarmedFlow(AvailableSplit.notLoaded<Playlist>())
+    val favoriteTracks = WarmedFlow(AvailableSplit.notLoaded<Track>())
+    val favoriteAlbums = WarmedFlow(AvailableSplit.notLoaded<Album>())
+    val favoriteArtists = WarmedFlow(AvailableSplit.notLoaded<Artist>())
 
-    /** [rows] cut by [now]: what [AppGraph.build] mirrors into each of the lists above. [by] is one of [ListAvailability]'s functions. */
-    fun <T> split(rows: Flow<List<T>>, by: ListAvailability.(List<T>) -> AvailableSplit<T>): Flow<AvailableSplit<T>> =
-        combine(rows, now.value) { list, availability -> availability.by(list) }
+    /**
+     * [rows] cut by [now]: what [AppGraph.build] mirrors into each of the lists above. [by] is one of [ListAvailability]'s functions and
+     * [rowsLoaded] is whether the library behind [rows] has answered yet. The result is [AvailableSplit.loaded] only once that, and everything the
+     * "No albums yet" line reads (the saved servers, which are on, when each last synced), has too.
+     */
+    fun <T> split(rows: Flow<List<T>>, rowsLoaded: Flow<Boolean>, by: ListAvailability.(List<T>) -> AvailableSplit<T>): Flow<AvailableSplit<T>> {
+        val ready = combine(
+            listOf(rowsLoaded, AppServerPrefs.servers.loaded, AppServerPrefs.enabledServerIds.loaded, AppServerPrefs.lastSyncedAt.loaded, AppServerPrefs.isConfigured.loaded),
+        ) { flags -> flags.all { it } }
+        return combine(rows, ready, now.value) { list, isReady, availability -> availability.by(list).copy(loaded = isReady) }
+    }
 
     /** [now]'s inputs, joined: what [AppGraph.build] mirrors into it. */
     fun observe() = combine(

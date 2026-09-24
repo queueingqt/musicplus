@@ -59,7 +59,7 @@ class ListFilter(private val scope: CoroutineScope) {
      */
     fun <T> narrowSplit(source: StateFlow<AvailableSplit<T>>, matches: (T, String) -> Boolean): StateFlow<AvailableSplit<T>> =
         combine(source, _query) { split, query ->
-            if (query.isBlank()) split else AvailableSplit(split.playable.filter { matches(it, query) }, split.unavailable.filter { matches(it, query) })
+            if (query.isBlank()) split else AvailableSplit(split.playable.filter { matches(it, query) }, split.unavailable.filter { matches(it, query) }, split.loaded)
         }.screenState(scope, source.value)
 }
 

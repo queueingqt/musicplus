@@ -1,6 +1,8 @@
 package com.musicplus.app
 
 import com.musicplus.app.data.AppAvailability
+import com.musicplus.app.data.AppServerPrefs
+import com.musicplus.app.data.WarmedFlow
 import com.musicplus.app.data.AvailableSplit
 import com.musicplus.app.data.ListAvailability
 import com.musicplus.app.data.OnPhoneIndex
@@ -134,7 +136,7 @@ class ListScreensTest {
     fun theWarmedSplitFollowsTheServersComingAndGoing() = runBlocking<Unit> {
         val songs = listOf(track("up:1"), track("down:1"), track("up:2"), track("down:2"))
         AppAvailability.now.set(availability(down = setOf("down")))
-        val split = AppAvailability.split(MutableStateFlow(songs), ListAvailability::songs)
+        val split = AppAvailability.split(MutableStateFlow(songs), flowOf(true), ListAvailability::songs)
         val down = withTimeout(5_000) { split.first { it.unavailable.size == 2 } }
         assertEquals(listOf("up:1", "up:2"), down.playable.map { it.id })
         assertEquals(listOf("down:1", "down:2"), down.unavailable.map { it.id })
@@ -171,4 +173,40 @@ class ListScreensTest {
         filter.set("")
         assertEquals(2, next { it.playable.size == 2 }.playable.size)
     }
+
+    @Test
+    fun aWarmedFlowIsNotLoadedUntilItsSourceHasAnsweredOnce() {
+        val flow = WarmedFlow(emptyList<String>())
+        assertFalse(flow.loaded.value, "still only the default")
+        flow.set(emptyList())
+        assertTrue(flow.loaded.value, "answered, and the answer was: nothing")
+    }
+
+    @Test
+    fun aWarmedSplitIsNotLoadedUntilTheLibraryAndTheServerPrefsHaveAnswered() = runBlocking<Unit> {
+        // The prefs stay at their defaults: only whether they have answered matters here.
+        AppServerPrefs.servers.set(AppServerPrefs.servers.value.value)
+        AppServerPrefs.enabledServerIds.set(AppServerPrefs.enabledServerIds.value.value)
+        AppServerPrefs.lastSyncedAt.set(AppServerPrefs.lastSyncedAt.value.value)
+        AppServerPrefs.isConfigured.set(AppServerPrefs.isConfigured.value.value)
+        AppAvailability.now.set(availability(down = emptySet()))
+        val libraryLoaded = MutableStateFlow(false)
+        val split = AppAvailability.split(MutableStateFlow(emptyList<Track>()), libraryLoaded, ListAvailability::songs)
+
+        assertFalse(withTimeout(5_000) { split.first() }.loaded, "an empty list whose library has not answered is not empty yet")
+        libraryLoaded.value = true
+        val answered = withTimeout(5_000) { split.first { it.loaded } }
+        assertTrue(answered.isEmpty && answered.loaded, "now it is empty for real")
+    }
+
+    @Test
+    fun aQueryKeepsASplitListNotLoaded() = runBlocking<Unit> {
+        val source = MutableStateFlow(AvailableSplit.notLoaded<Track>())
+        val filter = ListFilter(scope)
+        val narrowed = filter.narrowSplit(source) { t, q -> t.title.containsIgnoringCase(q) }
+        assertFalse(narrowed.value.loaded)
+        filter.set("x")
+        assertFalse(withTimeout(5_000) { narrowed.first() }.loaded)
+    }
 }
+

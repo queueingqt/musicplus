@@ -46,7 +46,7 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (albums.isEmpty) EmptyListNote("albums", filter)
+            if (albums.isEmpty) EmptyListNote("albums", filter, albums.loaded)
             ScreenList(viewModel.scrollPosition) {
                 availableItems(albums, key = { it.id }) { album, unavailable ->
                     AlbumRow(

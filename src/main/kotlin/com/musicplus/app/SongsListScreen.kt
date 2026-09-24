@@ -54,7 +54,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
             },
         ) {
             if (tracks.isEmpty) {
-                EmptyListNote("songs", filter)
+                EmptyListNote("songs", filter, tracks.loaded)
             } else {
                 ScreenList(viewModel.scrollPosition) {
                     // TrackRow greys a song out by itself, so the line is all the split adds here.

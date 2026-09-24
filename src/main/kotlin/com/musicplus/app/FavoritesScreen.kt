@@ -61,7 +61,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 )
             },
         ) {
-            if (artists.isEmpty && albums.isEmpty && tracks.isEmpty) EmptyListNote("favorites", filter)
+            if (artists.isEmpty && albums.isEmpty && tracks.isEmpty) EmptyListNote("favorites", filter, artists.loaded && albums.loaded && tracks.loaded)
             ScreenList(viewModel.scrollPosition) {
                 item { SectionHeader("Artists") }
                 availableItems(artists, key = { "artist-${it.id}" }, keyPrefix = "artist-") { artist, unavailable ->
