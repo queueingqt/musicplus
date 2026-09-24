@@ -169,21 +169,11 @@ class PlayerScreenViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    /**
-     * Same tap semantics as every list's per-track download row (see
-     * AlbumDetailScreenViewModel.toggleDownload): queued/downloading/complete
-     * -> cancel or remove; failed/not downloaded -> start.
-     */
+    /** Same tap as every list's per-track download row: see [tap]. */
     fun toggleDownloadCurrentTrack(lightContext: SealedLightContext) {
         val track = state.value.currentTrack ?: return
         val status = downloadStatus.value
-        viewModelScope.launch {
-            when (status) {
-                DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE ->
-                    downloadRepository.cancel(lightContext, track.id)
-                DownloadStatus.FAILED, null -> downloadRepository.enqueue(lightContext, track)
-            }
-        }
+        viewModelScope.launch { downloadRepository.tap(lightContext, track, status) }
     }
 
     fun togglePlayPause() = playback.togglePlayPause()
@@ -214,9 +204,6 @@ class PlayerScreenViewModel(
         playback.setRepeatMode(next)
     }
 
-    fun removeFromQueue(index: Int) = viewModelScope.launch { playback.removeFromQueue(index) }
-    fun moveQueueItemUp(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, -1) }
-    fun moveQueueItemDown(index: Int) = viewModelScope.launch { playback.moveQueueItem(index, 1) }
 }
 
 /**

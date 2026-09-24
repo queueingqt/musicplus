@@ -1,20 +1,17 @@
 package com.musicplus.app
 
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.DownloadRepository
-import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.PlaylistRepository
 import com.musicplus.app.data.SyncQueueRepository
@@ -89,31 +86,10 @@ class PlaylistDetailScreenViewModel(
         viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
 
-    /**
-     * Same enqueue/cancel-doubles-as-remove semantics as
-     * AlbumDetailScreenViewModel.toggleDownload. Suspend and returns the
-     * resulting status (rather than fire-and-forget) so the action menu row
-     * that triggers this can update itself in place afterward.
-     */
-    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
-        when (currentStatus) {
-            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
-                downloadRepository.cancel(lightContext, track.id)
-                null
-            }
-            DownloadStatus.FAILED, null -> {
-                downloadRepository.enqueue(lightContext, track)
-                DownloadStatus.QUEUED
-            }
-        }
-
     /** [position] is the track's zero-based index in the currently-displayed (i.e. server) order. Suspend, same reasoning as [toggleDownload]. */
     suspend fun removeTrack(position: Int) {
         syncQueueRepository.removeTrack(playlistId, position)
     }
-
-    /** Same pattern as FavoritesScreen's identical wrapper — the View shouldn't reach past this ViewModel to AppGraph's syncQueueRepository directly. */
-    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
 
     fun moveUp(position: Int) {
         viewModelScope.launch { syncQueueRepository.moveTrackUp(playlistId, position) }
@@ -163,6 +139,7 @@ class PlaylistDetailScreen(
         val tracks by viewModel.tracks.collectAsState()
         val playlist by viewModel.playlist.collectAsState()
         val title = playlist?.name ?: "Playlist"
+        val trackActions = rememberTrackActions(activity, lightContext)
 
         // Reorder handles are opt-in, entered via the title's long-press menu
         // ("Edit order") rather than always visible — reported live: previously
@@ -272,7 +249,6 @@ class PlaylistDetailScreen(
                 itemsIndexed(tracks, key = { index, track -> "$index-${track.id}" }) { index, track ->
                     TrackRow(
                         track = track,
-                        downloadStatus = track.downloadStatus,
                         // Left-aligned, leading the title, matching QueueScreen's
                         // own reorder icons exactly (reported live) — only shows
                         // once "Edit order" is chosen from the playlist-level
@@ -304,44 +280,21 @@ class PlaylistDetailScreen(
                         } else {
                             null
                         },
-                        onPlay = {
-                            // playAsync() updates title/art synchronously and
-                            // continues loading on PlaybackRepository's own scope,
-                            // so navigating away immediately after is safe — see
-                            // PlaybackRepository.playAsync's doc.
-                            val playback = playbackRepository(activity, lightContext)
-                            playback.playAsync(tracks, index)
-                            navigateTo(::PlayerScreen)
-                        },
+                        onPlay = { trackActions.play(tracks, index) },
                         onOpenActions = {
-                            navigateTo({ a ->
-                                ActionsMenuScreen(
-                                    activity = a,
-                                    subtitle = track.title,
-                                    items = listOf(
-                                        favoriteActionItem(track.isFavorite) { favorite ->
-                                            viewModel.setTrackFavorite(track.id, favorite)
+                            trackActions.openMenu(
+                                track,
+                                alsoOffer = listOf(
+                                    ActionMenuItem(
+                                        icon = LightIcons.CLOSE,
+                                        label = "Remove from playlist",
+                                        onSelect = ActionMenuSelection.Perform {
+                                            viewModel.removeTrack(index)
+                                            null
                                         },
-                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
-                                            viewModel.toggleDownload(lightContext, track, newStatus)
-                                        }.copy(
-                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
-                                                trackDownloadActionItem(entity?.status) { newStatus ->
-                                                    viewModel.toggleDownload(lightContext, track, newStatus)
-                                                }
-                                            },
-                                        ),
-                                        ActionMenuItem(
-                                            icon = LightIcons.CLOSE,
-                                            label = "Remove from playlist",
-                                            onSelect = ActionMenuSelection.Perform {
-                                                viewModel.removeTrack(index)
-                                                null
-                                            },
-                                        ),
                                     ),
-                                )
-                            })
+                                ),
+                            )
                         },
                     )
                 }

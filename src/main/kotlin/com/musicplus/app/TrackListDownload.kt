@@ -25,23 +25,12 @@ import kotlinx.coroutines.flow.first
  */
 enum class TrackListDownloadState { NONE, SOME, IN_PROGRESS, ALL }
 
-private val IN_PROGRESS_DOWNLOAD_STATUSES = setOf(DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING)
-
 fun observeTrackListDownloadState(
     tracksFlow: Flow<List<Track>>,
     downloadRepository: DownloadRepository,
 ): Flow<TrackListDownloadState> =
     combine(tracksFlow, downloadRepository.observeAll()) { trackList, downloads ->
-        if (trackList.isEmpty()) return@combine TrackListDownloadState.NONE
-        val statusById = downloads.associateBy { it.songId }
-        val completeCount = trackList.count { statusById[it.id]?.status == DownloadStatus.COMPLETE }
-        val anyInProgress = trackList.any { statusById[it.id]?.status in IN_PROGRESS_DOWNLOAD_STATUSES }
-        when {
-            anyInProgress -> TrackListDownloadState.IN_PROGRESS
-            completeCount == trackList.size -> TrackListDownloadState.ALL
-            completeCount > 0 -> TrackListDownloadState.SOME
-            else -> TrackListDownloadState.NONE
-        }
+        trackListDownloadState(trackList.map { it.id }, downloads.associate { it.songId to it.status })
     }
 
 /**
@@ -82,9 +71,9 @@ fun trackListDownloadActionItem(
 ): ActionMenuItem = ActionMenuItem(
     key = "download",
     icon = when (state) {
-        TrackListDownloadState.ALL -> com.thelightphone.sdk.ui.LightIcons.DOWNLOADED_ARROW
-        TrackListDownloadState.IN_PROGRESS -> com.thelightphone.sdk.ui.LightIcons.REFRESH
-        TrackListDownloadState.SOME, TrackListDownloadState.NONE -> com.thelightphone.sdk.ui.LightIcons.DOWNLOAD_ARROW
+        TrackListDownloadState.ALL -> downloadStatusIcon(DownloadStatus.COMPLETE)
+        TrackListDownloadState.IN_PROGRESS -> downloadStatusIcon(DownloadStatus.DOWNLOADING)
+        TrackListDownloadState.SOME, TrackListDownloadState.NONE -> downloadStatusIcon(null)
     },
     label = when (state) {
         TrackListDownloadState.ALL -> "Downloaded — remove"

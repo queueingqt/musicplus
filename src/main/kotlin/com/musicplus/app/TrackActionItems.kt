@@ -2,7 +2,6 @@ package com.musicplus.app
 
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
-import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightModalManager
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -79,38 +78,6 @@ private fun alreadyInQueueMessage(tracks: List<Track>, alreadyQueued: Int): Stri
     tracks.size == 1 -> "\"${tracks[0].title}\" is already in the queue. Add it anyway?"
     alreadyQueued == tracks.size -> "All ${tracks.size} songs are already in the queue. Add them anyway?"
     else -> "$alreadyQueued of ${tracks.size} songs are already in the queue. Add them all anyway?"
-}
-
-/**
- * Three real visual states, not two: QUEUED/DOWNLOADING now render distinctly
- * from both "not downloaded" and "downloaded" instead of only toggling
- * between DOWNLOAD_ARROW/DOWNLOADED_ARROW. Uses REFRESH for "in progress" —
- * LOOP was tried first but is the exact same icon the Now Playing screen uses
- * for Repeat, which on-device looked like a stray repeat toggle appearing on
- * tracks whenever an album download was running. There's no dedicated
- * spinner/progress icon in LightIcons; REFRESH isn't used anywhere else in
- * this app, so it doesn't collide.
- *
- * PlaylistDetailScreen's own copy of this had drifted down to only two states
- * (COMPLETE vs. everything else, both for the action-menu row and the
- * always-visible row glyph) — a track actively downloading inside a playlist
- * showed the exact same icon as one not yet started at all, while the
- * identical screen for albums/songs already showed a distinct in-progress
- * icon. Consolidating every call site onto this version fixes that.
- */
-fun downloadStatusIcon(status: DownloadStatus?): LightIconConfiguration = when (status) {
-    DownloadStatus.COMPLETE -> LightIcons.DOWNLOADED_ARROW
-    DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING -> LightIcons.REFRESH
-    DownloadStatus.FAILED, null -> LightIcons.DOWNLOAD_ARROW
-}
-
-/** Tap semantics: QUEUED/DOWNLOADING/COMPLETE -> stop or remove; FAILED/null -> start. See each screen's own `toggleDownload`. */
-fun downloadStatusLabel(status: DownloadStatus?): String = when (status) {
-    null -> "Download"
-    DownloadStatus.QUEUED -> "Queued — tap to cancel"
-    DownloadStatus.DOWNLOADING -> "Downloading — tap to cancel"
-    DownloadStatus.COMPLETE -> "Downloaded — tap to remove"
-    DownloadStatus.FAILED -> "Failed — tap to retry"
 }
 
 /**

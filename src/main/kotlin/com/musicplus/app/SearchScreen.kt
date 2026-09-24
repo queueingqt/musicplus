@@ -14,11 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.DownloadRepository
-import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.SyncQueueRepository
-import com.musicplus.app.data.playbackRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -39,31 +35,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class SearchScreenViewModel(
     private val libraryRepository: LibraryRepository,
-    private val downloadRepository: DownloadRepository,
-    private val syncQueueRepository: SyncQueueRepository,
 ) : LightViewModel<Unit>() {
-
-    // Also missing entirely before — track results had no favorite action
-    // and Track.isFavorite (already correctly populated by search()) was
-    // never even read by the row.
-    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
-
-    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
-        when (currentStatus) {
-            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
-                downloadRepository.cancel(lightContext, track.id)
-                null
-            }
-            DownloadStatus.FAILED, null -> {
-                downloadRepository.enqueue(lightContext, track)
-                DownloadStatus.QUEUED
-            }
-        }
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
@@ -125,7 +101,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
 
     override fun createViewModel(): SearchScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return SearchScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository)
+        return SearchScreenViewModel(graph.libraryRepository)
     }
 
     @Composable
@@ -134,6 +110,7 @@ class SearchScreen(private val activity: SealedLightActivity) :
         val artists by viewModel.artistResults.collectAsState()
         val albums by viewModel.albumResults.collectAsState()
         val tracks by viewModel.trackResults.collectAsState()
+        val trackActions = rememberTrackActions(activity, lightContext)
 
         // Both snapshotted once per show (not re-read after). hadAlreadyOpened
         // answers "was the editor already auto-opened before *this* appearance
@@ -223,7 +200,6 @@ class SearchScreen(private val activity: SealedLightActivity) :
                 items(tracks, key = { "track-${it.id}" }) { track ->
                     TrackRow(
                         track = track,
-                        downloadStatus = track.downloadStatus,
                         subtitle = track.serverLabel,
                         leading = {
                             AlbumArt(
@@ -233,48 +209,8 @@ class SearchScreen(private val activity: SealedLightActivity) :
                                 modifier = Modifier.padding(end = 1f.gridUnitsAsDp()),
                             )
                         },
-                        onPlay = {
-                            // playAsync() updates title/art synchronously and
-                            // continues loading on PlaybackRepository's own scope,
-                            // so navigating away immediately after is safe — see
-                            // PlaybackRepository.playAsync's doc.
-                            val playback = playbackRepository(activity, lightContext)
-                            playback.playAsync(listOf(track), 0)
-                            navigateTo(::PlayerScreen)
-                        },
-                        onOpenActions = {
-                            navigateTo({ a ->
-                                val addToQueueItem = addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) {
-                                    listOf(track)
-                                }
-                                ActionsMenuScreen(
-                                    activity = a,
-                                    subtitle = track.title,
-                                    items = listOf(
-                                        favoriteActionItem(track.isFavorite) { favorite ->
-                                            viewModel.setTrackFavorite(track.id, favorite)
-                                        },
-                                        addToQueueItem,
-                                        ActionMenuItem(
-                                            icon = LightIcons.LIST,
-                                            label = "Add to playlist",
-                                            onSelect = ActionMenuSelection.Navigate {
-                                                navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
-                                            },
-                                        ),
-                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
-                                            viewModel.toggleDownload(lightContext, track, newStatus)
-                                        }.copy(
-                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
-                                                trackDownloadActionItem(entity?.status) { newStatus ->
-                                                    viewModel.toggleDownload(lightContext, track, newStatus)
-                                                }
-                                            },
-                                        ),
-                                    ),
-                                )
-                            })
-                        },
+                        onPlay = { trackActions.play(listOf(track)) },
+                        onOpenActions = { trackActions.openMenu(track) },
                     )
                 }
             }

@@ -1,7 +1,6 @@
 package com.musicplus.app
 
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -11,29 +10,20 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
-import com.musicplus.app.data.DownloadRepository
-import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
-import com.musicplus.app.data.playbackRepository
-import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
-import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightScrollBarPosition
-import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
-import com.thelightphone.sdk.ui.gridUnitsAsDp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -50,9 +40,6 @@ import kotlinx.coroutines.flow.stateIn
  * deletions reach the list through the cache (see ListRefresher's doc).
  */
 class SongsListScreenViewModel(
-    private val libraryRepository: LibraryRepository,
-    private val downloadRepository: DownloadRepository,
-    private val syncQueueRepository: SyncQueueRepository,
     private val listRefresher: ListRefresher,
 ) : LightViewModel<Unit>() {
 
@@ -85,20 +72,6 @@ class SongsListScreenViewModel(
         _filter.value = query
     }
 
-    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
-        when (currentStatus) {
-            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
-                downloadRepository.cancel(lightContext, track.id)
-                null
-            }
-            DownloadStatus.FAILED, null -> {
-                downloadRepository.enqueue(lightContext, track)
-                DownloadStatus.QUEUED
-            }
-        }
-
-    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
-
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
 }
@@ -110,13 +83,14 @@ class SongsListScreen(private val activity: SealedLightActivity) :
 
     override fun createViewModel(): SongsListScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return SongsListScreenViewModel(graph.libraryRepository, graph.downloadRepository, graph.syncQueueRepository, graph.listRefresher)
+        return SongsListScreenViewModel(graph.listRefresher)
     }
 
     @Composable
     override fun Content() {
         val tracks by viewModel.tracks.collectAsState()
         val filter by viewModel.filter.collectAsState()
+        val trackActions = rememberTrackActions(activity, lightContext)
 
         MusicPlusScaffold(
             screen = this,
@@ -154,50 +128,9 @@ class SongsListScreen(private val activity: SealedLightActivity) :
                     items(tracks, key = { it.id }) { track ->
                         TrackRow(
                             track = track,
-                            downloadStatus = track.downloadStatus,
                             subtitle = track.artistLine,
-                            onPlay = {
-                                // playAsync() updates title/art synchronously and
-                                // continues loading on PlaybackRepository's own
-                                // scope, so navigating away immediately after is
-                                // safe — see PlaybackRepository.playAsync's doc.
-                                val playback = playbackRepository(activity, lightContext)
-                                playback.playAsync(listOf(track), 0)
-                                navigateTo(::PlayerScreen)
-                            },
-                            onOpenActions = {
-                                navigateTo({ a ->
-                                    val addToQueueItem = addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) {
-                                        listOf(track)
-                                    }
-                                    ActionsMenuScreen(
-                                        activity = a,
-                                        subtitle = track.title,
-                                        items = listOf(
-                                            favoriteActionItem(track.isFavorite) { favorite ->
-                                                viewModel.setTrackFavorite(track.id, favorite)
-                                            },
-                                            addToQueueItem,
-                                            ActionMenuItem(
-                                                icon = LightIcons.LIST,
-                                                label = "Add to playlist",
-                                                onSelect = ActionMenuSelection.Navigate {
-                                                    navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
-                                                },
-                                            ),
-                                            trackDownloadActionItem(track.downloadStatus) { newStatus ->
-                                                viewModel.toggleDownload(lightContext, track, newStatus)
-                                            }.copy(
-                                                liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
-                                                    trackDownloadActionItem(entity?.status) { newStatus ->
-                                                        viewModel.toggleDownload(lightContext, track, newStatus)
-                                                    }
-                                                },
-                                            ),
-                                        ),
-                                    )
-                                })
-                            },
+                            onPlay = { trackActions.play(listOf(track)) },
+                            onOpenActions = { trackActions.openMenu(track) },
                         )
                     }
                 }

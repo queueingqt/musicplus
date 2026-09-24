@@ -1,7 +1,6 @@
 package com.musicplus.app
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -10,11 +9,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.DownloadRepository
-import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.SyncQueueRepository
@@ -28,14 +25,11 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightScrollBarPosition
-import com.thelightphone.sdk.ui.LightText
-import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -79,36 +73,11 @@ class AlbumDetailScreenViewModel(
         viewModelScope.launch { selfLoadingTracks.refreshNow() }
     }
 
-    /**
-     * This button is now the only download control (no separate Downloads screen —
-     * status lives inline per track everywhere), so it has to do double duty:
-     * enqueue when there's nothing downloaded/in-flight, and stop/remove otherwise.
-     * `DownloadRepository.cancel` already deletes both the local file and the DB
-     * row regardless of job state, so it doubles as "remove local copy" for a
-     * COMPLETE download, not just "abort an in-flight one". Suspend and returns
-     * the resulting status (rather than fire-and-forget) so the action menu row
-     * that triggers this can update itself in place afterward.
-     */
-    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
-        when (currentStatus) {
-            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
-                downloadRepository.cancel(lightContext, track.id)
-                null
-            }
-            DownloadStatus.FAILED, null -> {
-                downloadRepository.enqueue(lightContext, track)
-                DownloadStatus.QUEUED
-            }
-        }
-
     /** See SelfLoadingTrackList.kt's [SelfLoadingTrackList.toggleDownload] — shared with AlbumListScreen/ArtistDetailScreen's own album-level download rows, and PlaylistListScreen's playlist ones. */
     suspend fun toggleAlbumDownload(lightContext: SealedLightContext): TrackListDownloadState =
         selfLoadingTracks.toggleDownload(lightContext, downloadRepository)
 
-    // Same pattern as FavoritesScreen's identical wrappers — the View shouldn't
-    // reach past this ViewModel to AppGraph's syncQueueRepository directly.
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
-    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
@@ -137,6 +106,7 @@ class AlbumDetailScreen(
         val tracks by viewModel.tracks.collectAsState()
         val album by viewModel.album.collectAsState()
         val albumDownloadState by viewModel.albumDownloadState.collectAsState()
+        val trackActions = rememberTrackActions(activity, lightContext)
         val title = album?.name ?: tracks.firstOrNull()?.albumName ?: "Album"
         // Reported live: favoriting an album showed no indication anywhere on
         // this screen. LightTopBarCenter only supports plain text (no
@@ -229,49 +199,8 @@ class AlbumDetailScreen(
                 itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
                     TrackRow(
                         track = track,
-                        downloadStatus = track.downloadStatus,
-                        onPlay = {
-                            // playAsync() updates title/art synchronously and
-                            // continues loading on PlaybackRepository's own scope,
-                            // so navigating away immediately after is safe — see
-                            // PlaybackRepository.playAsync's doc.
-                            val playback = playbackRepository(activity, lightContext)
-                            playback.playAsync(tracks, index, albumArtId = album?.coverArtId)
-                            navigateTo(::PlayerScreen)
-                        },
-                        onOpenActions = {
-                            navigateTo({ a ->
-                                val addTrackToQueueItem = addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) {
-                                    listOf(track)
-                                }
-                                ActionsMenuScreen(
-                                    activity = a,
-                                    subtitle = track.title,
-                                    items = listOf(
-                                        favoriteActionItem(track.isFavorite) { favorite ->
-                                            viewModel.setTrackFavorite(track.id, favorite)
-                                        },
-                                        addTrackToQueueItem,
-                                        ActionMenuItem(
-                                            icon = LightIcons.LIST,
-                                            label = "Add to playlist",
-                                            onSelect = ActionMenuSelection.Navigate {
-                                                navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
-                                            },
-                                        ),
-                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
-                                            viewModel.toggleDownload(lightContext, track, newStatus)
-                                        }.copy(
-                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
-                                                trackDownloadActionItem(entity?.status) { newStatus ->
-                                                    viewModel.toggleDownload(lightContext, track, newStatus)
-                                                }
-                                            },
-                                        ),
-                                    ),
-                                )
-                            })
-                        },
+                        onPlay = { trackActions.play(tracks, index, albumArtId = album?.coverArtId) },
+                        onOpenActions = { trackActions.openMenu(track) },
                     )
                 }
             }

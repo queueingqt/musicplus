@@ -8,7 +8,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -129,6 +128,7 @@ class ArtistDetailScreen(
         val topSongsExpanded by viewModel.topSongsSection.expanded.collectAsState()
         val topSongsLoading by viewModel.topSongsSection.loading.collectAsState()
         val topSongs by viewModel.topSongsSection.items.collectAsState()
+        val trackActions = rememberTrackActions(activity, lightContext)
 
         // Favorite inline with the artist name — via LightTopBar's rightButton
         // slot, rather than a separate row, since the name is already the title
@@ -211,16 +211,11 @@ class ArtistDetailScreen(
                         topSongsLoading -> item { SectionStatusText("Loading…") }
                         topSongs.isEmpty() -> item { SectionStatusText("No top songs found") }
                         else -> items(topSongs, key = { "top-${it.id}" }) { track ->
-                            TopSongRow(
+                            TrackRow(
                                 track = track,
-                                onPlay = {
-                                    // playAsync() updates title/art synchronously and
-                                    // continues loading on PlaybackRepository's own
-                                    // scope, so navigating away immediately after is
-                                    // safe — see PlaybackRepository.playAsync's doc.
-                                    playbackRepository(activity, lightContext).playAsync(listOf(track), 0)
-                                    navigateTo(::PlayerScreen)
-                                },
+                                subtitle = track.artistName ?: "Unknown artist",
+                                onPlay = { trackActions.play(listOf(track)) },
+                                onOpenActions = { trackActions.openMenu(track) },
                             )
                         }
                     }
@@ -363,31 +358,4 @@ private fun SimilarArtistRow(artist: Artist, onClick: () -> Unit) {
             .lightClickable(onClick = onClick)
             .padding(top = 0.75f.gridUnitsAsDp(), bottom = 0.75f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
     )
-}
-
-/** A top song — tap plays it, same convention as SongsListScreen's SongRow (play-on-tap; no long-press actions menu here, matching the "playable rows" scope this section was asked for). */
-@Composable
-private fun TopSongRow(track: Track, onPlay: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .lightClickable(onClick = onPlay)
-            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        LightText(
-            text = track.title,
-            variant = LightTextVariant.Copy,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        LightText(
-            text = track.artistName ?: "Unknown artist",
-            variant = LightTextVariant.Fine,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
-        )
-    }
 }

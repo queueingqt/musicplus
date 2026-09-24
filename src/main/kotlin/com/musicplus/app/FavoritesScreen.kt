@@ -15,7 +15,6 @@ import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
-import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.playbackRepository
 import com.musicplus.app.data.SyncQueueRepository
@@ -88,7 +87,6 @@ class FavoritesScreenViewModel(
     // already uses.
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
     suspend fun setAlbumFavorite(id: String, favorite: Boolean) = syncQueueRepository.setAlbumFavorite(id, favorite)
-    suspend fun setTrackFavorite(id: String, favorite: Boolean) = syncQueueRepository.setTrackFavorite(id, favorite)
 
     // Same pattern as AlbumListScreenViewModel's identical trio — see its doc:
     // SelfLoadingTrackList refreshes an album's tracks before reading them, so
@@ -103,18 +101,6 @@ class FavoritesScreenViewModel(
 
     suspend fun tracksForAlbum(albumId: String): List<Track> =
         SelfLoadingTrackList.forAlbum(libraryRepository, albumId).tracks()
-
-    suspend fun toggleDownload(lightContext: SealedLightContext, track: Track, currentStatus: DownloadStatus?): DownloadStatus? =
-        when (currentStatus) {
-            DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING, DownloadStatus.COMPLETE -> {
-                downloadRepository.cancel(lightContext, track.id)
-                null
-            }
-            DownloadStatus.FAILED, null -> {
-                downloadRepository.enqueue(lightContext, track)
-                DownloadStatus.QUEUED
-            }
-        }
 
     // See ScrollPosition.kt — this ViewModel is the one thing that survives a navigate-away/goBack() round trip.
     val scrollPosition = ScrollPosition()
@@ -136,6 +122,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
         val albums by viewModel.albums.collectAsState()
         val tracks by viewModel.tracks.collectAsState()
         val filter by viewModel.filter.collectAsState()
+        val trackActions = rememberTrackActions(activity, lightContext)
 
         MusicPlusScaffold(
             screen = this,
@@ -229,57 +216,13 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                 items(tracks, key = { "track-${it.id}" }) { track ->
                     TrackRow(
                         track = track,
-                        downloadStatus = track.downloadStatus,
                         subtitle = track.serverLabel,
                         // Every row on this screen is definitionally favorited
                         // already (it's the Favorites list) — a star here would
-                        // be redundant, not a gap. The download glyph is a real
-                        // gap fix: this row previously showed neither.
+                        // be redundant, not a gap.
                         showFavorite = false,
-                        onPlay = {
-                            // playAsync() updates title/art synchronously and
-                            // continues loading on PlaybackRepository's own scope,
-                            // so navigating away immediately after is safe — see
-                            // PlaybackRepository.playAsync's doc.
-                            val playback = playbackRepository(activity, lightContext)
-                            playback.playAsync(listOf(track), 0)
-                            navigateTo(::PlayerScreen)
-                        },
-                        onOpenActions = {
-                            navigateTo({ a ->
-                                val addToQueueItem = addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) {
-                                    listOf(track)
-                                }
-                                ActionsMenuScreen(
-                                    activity = a,
-                                    subtitle = track.title,
-                                    items = listOf(
-                                        favoriteActionItem(isFavorite = true) { favorite ->
-                                            viewModel.setTrackFavorite(track.id, favorite)
-                                        },
-                                        addToQueueItem,
-                                        ActionMenuItem(
-                                            icon = LightIcons.LIST,
-                                            label = "Add to playlist",
-                                            onSelect = ActionMenuSelection.Navigate {
-                                                navigateTo({ a2 -> PlaylistPickerScreen(a2, track.id) })
-                                            },
-                                        ),
-                                        // Wasn't here before — reported live, same
-                                        // gap as the missing row glyph.
-                                        trackDownloadActionItem(track.downloadStatus) { newStatus ->
-                                            viewModel.toggleDownload(lightContext, track, newStatus)
-                                        }.copy(
-                                            liveUpdates = AppGraph.from(lightContext).downloadRepository.observeStatus(track.id).map { entity ->
-                                                trackDownloadActionItem(entity?.status) { newStatus ->
-                                                    viewModel.toggleDownload(lightContext, track, newStatus)
-                                                }
-                                            },
-                                        ),
-                                    ),
-                                )
-                            })
-                        },
+                        onPlay = { trackActions.play(listOf(track)) },
+                        onOpenActions = { trackActions.openMenu(track) },
                     )
                 }
             }

@@ -9,7 +9,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.style.TextOverflow
-import com.musicplus.app.data.DownloadStatus
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightText
@@ -20,8 +19,9 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
  * Shared shape for every "browsable track row" in the app: tap to play,
  * long-press for actions, the fixed scrollbar-gutter trailing padding every
  * `LightLazyScrollView(Inside)` row needs — and, the actual reason this
- * exists, explicit [showFavorite]/[downloadStatus] a caller now has to
- * decide about rather than silently omit. `TrackResultRow` (SearchScreen)
+ * exists, explicit [showFavorite] (and the track's own download status glyph, which
+ * every caller passed identically and so now always follows [Track.downloadStatus]) a
+ * caller now has to decide about rather than silently omit. `TrackResultRow` (SearchScreen)
  * and `FavoriteTrackRow` (FavoritesScreen) both independently dropped one or
  * both glyphs before this existed, next to sibling rows (the old `SongRow`,
  * `AlbumDetailScreen`'s old `TrackRow`, `PlaylistTrackRow`) that always
@@ -40,7 +40,6 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 @Composable
 fun TrackRow(
     track: Track,
-    downloadStatus: DownloadStatus?,
     onPlay: () -> Unit,
     onOpenActions: () -> Unit,
     modifier: Modifier = Modifier,
@@ -92,11 +91,11 @@ fun TrackRow(
                 modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
             )
         }
-        if (downloadStatus != null) {
+        if (track.downloadStatus != null) {
             LightIcon(
-                icon = downloadStatusIcon(downloadStatus),
+                icon = downloadStatusIcon(track.downloadStatus),
                 size = 1.2f,
-                contentDescription = downloadStatusLabel(downloadStatus),
+                contentDescription = downloadStatusLabel(track.downloadStatus),
                 modifier = Modifier.padding(start = 0.5f.gridUnitsAsDp()),
             )
         }
