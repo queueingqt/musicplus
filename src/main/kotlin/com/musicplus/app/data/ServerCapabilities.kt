@@ -18,22 +18,22 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import java.util.concurrent.ConcurrentHashMap
 
-/** What a server may or may not be able to do. Not every Subsonic-compatible server (Bandcamp's, for one) offers all of it. */
-enum class Capability(
-    /** The harmless request that shows whether a server offers it, and its parameters. Ids here name nothing that exists. */
-    val probeMethod: String,
-    val probeParams: List<Pair<String, String>>,
-) {
-    /** Favorites. The starred list is what the app reads them back from, so it is the thing to ask. */
-    STAR("getStarred2.view", emptyList()),
-    /** "Now playing" for an id that does not exist: a server that has scrobbling refuses it as "not found". */
-    SCROBBLE("scrobble.view", listOf("id" to PROBE_ID, "submission" to "false")),
-    LYRICS("getLyricsBySongId.view", listOf("id" to PROBE_ID)),
-    /** Changing a playlist that does not exist: a server that can write playlists refuses it as "not found". */
-    PLAYLIST_WRITE("updatePlaylist.view", listOf("playlistId" to PROBE_ID)),
-}
+/**
+ * What a server may or may not be able to do. Not every Subsonic-compatible server (Bandcamp's, for one) offers all of it. How a
+ * backend finds out is its own business (see [MusicApi.probeCapabilities]); this is only the vocabulary the app reasons in.
+ */
+enum class Capability {
+    /** Favorites. */
+    STAR,
 
-private const val PROBE_ID = "musicplus-probe-nothing"
+    /** Counting a listen as a relay to a linked account (see [ScrobbleTarget]). */
+    SCROBBLE,
+
+    LYRICS,
+
+    /** Changing a playlist on the server. */
+    PLAYLIST_WRITE,
+}
 
 /**
  * What is known about one server. A null answer has not been found out yet, and counts as "can": the first real request
@@ -95,7 +95,7 @@ interface CapabilityLearner {
 class CapabilityRegistry(
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
-    private val apiHolder: ApiHolder,
+    private val apiHolder: ApiLookup,
     private val connectivity: LightConnectivity,
     /** Identifies this build of the app; a different one probes again. */
     private val build: String,
@@ -146,25 +146,12 @@ class CapabilityRegistry(
     }
 
     private suspend fun probe(serverId: String) {
-        val profile = AppServerPrefs.servers.value.value.find { it.id == serverId } ?: return
-        if (profile.kind == ServerKind.JELLYFIN) {
-            // A real Jellyfin server's whole feature set is documented by its own API — nothing here is undocumented
-            // the way an arbitrary Subsonic mount (Bandcamp) can be, so there is nothing to find out by probing.
-            // scrobble is deliberately left false: it means "this server takes a Subsonic-style scrobble.view relay",
-            // which Jellyfin has no equivalent of — its own playback-progress reporting is unconditional and never
-            // goes through this capability at all. See MusicApi's class doc and PlaybackRepository's Jellyfin watcher.
-            save(serverId) { ServerCapabilities(star = true, scrobble = false, lyrics = true, playlistWrite = true, probedBy = build) }
-            AppLogger.d("Capabilities", "${describe(serverId)}: Jellyfin, star/lyrics/playlistWrite assumed offered")
-            return
-        }
-        // probe() itself is Subsonic-specific (its harmless-request vocabulary is .view endpoints) — only ever
-        // reached for a Subsonic profile, per the branch just above.
-        val api = apiHolder.forServer(serverId) as? SubsonicApi ?: return
-        if (api.checkLogin().isFailure) {
+        val api = apiHolder.forServer(serverId) ?: return
+        val found = api.probeCapabilities()
+        if (found == null) {
             AppLogger.d("Capabilities", "${describe(serverId)} did not answer an ordinary request, will ask again later")
             return
         }
-        val found = Capability.entries.associateWith { api.probe(it) }
         save(serverId) { current ->
             var next = current.copy(probedBy = build)
             for ((capability, support) in found) {

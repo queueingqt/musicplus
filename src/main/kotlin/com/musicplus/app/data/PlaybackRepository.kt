@@ -6,7 +6,7 @@ import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
 import com.musicplus.app.data.playback.AlbumArtHint
 import com.musicplus.app.data.playback.ErrorRecovery
-import com.musicplus.app.data.playback.JellyfinPlayReportSink
+import com.musicplus.app.data.playback.PlayReportSink
 import com.musicplus.app.data.playback.LightQueuePlayer
 import com.musicplus.app.data.playback.ListenReporting
 import com.musicplus.app.data.playback.PlayQueue
@@ -50,7 +50,8 @@ import kotlinx.coroutines.launch
  */
 class PlaybackRepository(
     audio: LightAudio,
-    private val apiHolder: ApiHolder,
+    private val apiHolder: ApiLookup,
+    private val onServerUnreachable: (serverId: String) -> Unit,
     streamCache: StreamCache,
     private val libraryRepository: LibraryRepository,
     queueDao: QueueDao,
@@ -131,8 +132,8 @@ class PlaybackRepository(
     private val listens: ListenReporting = ListenReporting(
         scope = scope,
         sinks = listOf(
-            ScrobbleSink(apiHolder, libraryRepository) { appSettingsRepository.scrobblingEnabled.first() },
-            JellyfinPlayReportSink(apiHolder),
+            ScrobbleSink(apiHolder, { libraryRepository.sameSongElsewhere(it) }, enabled = { appSettingsRepository.scrobblingEnabled.first() }),
+            PlayReportSink(apiHolder),
         ),
     ).also { it.start(state) }
 
@@ -150,7 +151,7 @@ class PlaybackRepository(
             )
             val fault = PlayerFault(isSourceError = err.kind == LightAudioErrorKind.Source, diagnostic = err.diagnostic)
             if (track != null && errorRecovery.indicatesUnreachableServer(fault)) {
-                ServerScope.serverOf(track.id)?.let { apiHolder.reachability?.report(it, false) }
+                ServerScope.serverOf(track.id)?.let(onServerUnreachable)
             }
             when (val recovery = errorRecovery.decide(fault, s, s.repeatMode, { TrackAvailability.isPlayable(it) }, System.currentTimeMillis())) {
                 Recovery.None -> {}
@@ -284,6 +285,7 @@ object PlaybackRepositoryHolder {
             instance ?: PlaybackRepository(
                 audio = com.thelightphone.sdk.audio.DefaultLightAudio(sealedActivity),
                 apiHolder = graph.apiHolder,
+                onServerUnreachable = { graph.apiHolder.reachability?.report(it, false) },
                 streamCache = graph.streamCache,
                 libraryRepository = graph.libraryRepository,
                 queueDao = graph.database.queueDao(),

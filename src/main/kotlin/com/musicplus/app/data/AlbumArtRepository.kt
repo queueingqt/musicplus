@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap
  * artwork, placeholder, artwork flicker on every screen that showed previously-seen art).
  */
 class AlbumArtRepository(
-    apiHolder: ApiHolder,
+    apiHolder: ApiLookup,
     filesDir: File,
     private val store: CoverArtStore = CoverArtStore(
         dir = File(filesDir, CoverArtStore.DIR_NAME),

@@ -50,7 +50,7 @@ class MediaIntegrity(
      * again; false when the server couldn't be asked about some song (offline,
      * error), so it should be tried again next launch.
      */
-    suspend fun repair(lightContext: SealedLightContext, apiHolder: ApiHolder, requeue: Boolean): Boolean {
+    suspend fun repair(lightContext: SealedLightContext, apiHolder: ApiLookup, requeue: Boolean): Boolean {
         val startedAt = System.currentTimeMillis()
         var answeredAll = true
         var checked = 0

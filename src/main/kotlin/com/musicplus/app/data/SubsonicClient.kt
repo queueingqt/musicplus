@@ -95,9 +95,6 @@ class SubsonicClient(
         private val SALT_CHARS = ('a'..'z') + ('A'..'Z') + ('0'..'9')
         private val HEX_CHARS = "0123456789abcdef".toCharArray()
 
-        /** See [downloadToFile]'s doc — the fixed chunk size that keeps its memory use constant regardless of file size. */
-        private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
-
         /**
          * Whole-call limit for an ordinary API request or a cover image — the
          * client itself has no total cap (see [newJsonHttpClient]), so anything
@@ -213,19 +210,9 @@ class SubsonicClient(
     }
 
     /**
-     * Streams a binary endpoint's response body straight to [destination] —
-     * for `stream.view`/`download.view`, where the payload is a whole audio
-     * file, not a small image. [getBytes] materializes the entire response as
-     * one `ByteArray` before the caller can do anything with it; that crashed
-     * with `OutOfMemoryError` on a real ~30MB track (Android's per-process
-     * heap growth limit is commonly ~128MB, and one contiguous 30MB
-     * allocation doesn't fit once anything else is already resident —
-     * confirmed on-device, 2026-09-18). Both callers of the old
-     * `streamBytes`/`downloadBytes` only ever did `file.writeBytes(...)`
-     * immediately afterward anyway, so there was never a reason to hold the
-     * whole file in memory at once — this reads and writes in fixed-size
-     * chunks instead, keeping memory use roughly constant regardless of file
-     * size.
+     * Streams a binary endpoint's response body straight to [destination], for `stream.view`/`download.view`, where the payload is a
+     * whole audio file, not a small image: see [streamToFile], which is shared with every backend and is what keeps a cut-off body from
+     * being stored as a complete song. ([getBytes] materializes the entire response as one `ByteArray`, fine for a cover.)
      */
     suspend fun downloadToFile(
         method: String,
@@ -236,42 +223,7 @@ class SubsonicClient(
         AppLogger.d("SubsonicClient", "downloadToFile($method): issuing request")
         http.prepareGet("$baseUrl/rest/$method") {
             (authParams() + params).forEach { (k, v) -> parameter(k, v) }
-        }.execute { response ->
-            val expectedBytes = response.contentLength()
-            AppLogger.d("SubsonicClient", "downloadToFile($method): got response ${response.status}, contentLength=$expectedBytes")
-            // Everything below exists so that a file which is not the whole song
-            // never reaches disk looking like one. A cut-off body used to end the
-            // read loop exactly as a finished one does (readAvailable returns -1
-            // either way), so a fraction of a song was stored as complete.
-            if (!response.status.isSuccess()) throw IOException("server answered ${response.status}")
-            // A Subsonic server reports an error as an ordinary 200 carrying a
-            // JSON/XML document, not as an audio file.
-            val type = response.contentType()
-            if (type != null && (type.match(ContentType.Application.Json) || type.match(ContentType.Application.Xml) || type.match(ContentType.Text.Any))) {
-                throw IOException("server answered with $type instead of audio")
-            }
-            val channel = response.bodyAsChannel()
-            var totalBytes = 0L
-            destination.outputStream().use { output ->
-                val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
-                while (true) {
-                    // A transfer that a more important one is outranking pauses here — see FetchGate.
-                    lease?.checkpoint()
-                    val bytesRead = channel.readAvailable(buffer)
-                    if (bytesRead == -1) break
-                    if (bytesRead > 0) {
-                        output.write(buffer, 0, bytesRead)
-                        totalBytes += bytesRead
-                        lease?.bytes(bytesRead)
-                    }
-                }
-            }
-            channel.closedCause?.let { throw IOException("connection dropped after $totalBytes bytes", it) }
-            if (expectedBytes != null && totalBytes != expectedBytes) {
-                throw IOException("cut short: got $totalBytes of $expectedBytes bytes")
-            }
-            AppLogger.d("SubsonicClient", "downloadToFile($method): wrote $totalBytes bytes")
-        }
+        }.streamToFile(destination, lease, "downloadToFile($method)")
     }
 
     /**
@@ -327,9 +279,6 @@ class SubsonicClient(
         if (e.isUnreachable()) Support.UNKNOWN else Support.NO
     }
 }
-
-/** What a probe found out. UNKNOWN means it could not tell (the server was unreachable, or answered oddly), so nothing is concluded. */
-enum class Support { YES, NO, UNKNOWN }
 
 private const val MISSING_PARAMETER = 10
 private const val NOT_AUTHORIZED = 50

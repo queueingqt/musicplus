@@ -20,20 +20,26 @@ import java.io.File
 class JellyfinApi(
     override val serverId: String,
     private val client: JellyfinClient,
-) : MusicApi {
+) : MusicApi, PlayReporter {
 
-    private fun scopeId(id: String) = ServerScope.scope(serverId, id)
+    override val playReporter: PlayReporter get() = this
 
-    /** The id as this server knows it. An id that was never scoped is passed through and logged — see [SubsonicApi.native]'s identical doc. */
-    private fun native(id: String): String {
-        val owner = ServerScope.serverOf(id)
-        if (owner == null) {
-            AppLogger.e("JellyfinApi", "unscoped id \"$id\" sent to server $serverId")
-            return id
-        }
-        require(owner == serverId) { "id $id belongs to server $owner, not $serverId" }
-        return ServerScope.nativeOf(id)
-    }
+    /**
+     * A real Jellyfin server's whole feature set is documented by its own API: nothing here is undocumented the way an arbitrary
+     * Subsonic mount (Bandcamp) can be, so there is nothing to find out by asking. SCROBBLE is deliberately not offered: it means
+     * "this server takes a Subsonic-style `scrobble.view` relay", which Jellyfin has no equivalent of (its own playback reporting is
+     * [playReporter], unconditional, and never goes through this capability).
+     */
+    override suspend fun probeCapabilities(): Map<Capability, Support> = mapOf(
+        Capability.STAR to Support.YES,
+        Capability.SCROBBLE to Support.NO,
+        Capability.LYRICS to Support.YES,
+        Capability.PLAYLIST_WRITE to Support.YES,
+    )
+
+    private val ids = ScopedIds(serverId, "JellyfinApi")
+    private fun scopeId(id: String) = ids.scope(id)
+    private fun native(id: String) = ids.native(id)
 
     private val userId: String get() = client.userId
 
@@ -320,17 +326,17 @@ class JellyfinApi(
     // (unconditionally, never gated by AppSettingsRepository.scrobblingEnabled). ---
 
     /** Once, when a song starts (or resumes into) playing — drives this server's own "now playing" and starts its resume-position tracking for the session. */
-    suspend fun reportPlaybackStart(songId: String, positionMs: Long, playSessionId: String) {
+    override suspend fun reportPlaybackStart(songId: String, positionMs: Long, playSessionId: String) {
         client.post<Unit>("/Sessions/Playing", body = playbackInfo(songId, positionMs, isPaused = false, playSessionId)) {}
     }
 
     /** Periodically while a song remains current (playing or paused) — see [PlaybackRepository]'s reporting cadence. Also what actually saves the resume position server-side. */
-    suspend fun reportPlaybackProgress(songId: String, positionMs: Long, isPaused: Boolean, playSessionId: String) {
+    override suspend fun reportPlaybackProgress(songId: String, positionMs: Long, isPaused: Boolean, playSessionId: String) {
         client.post<Unit>("/Sessions/Playing/Progress", body = playbackInfo(songId, positionMs, isPaused, playSessionId)) {}
     }
 
     /** Once, when a song stops being current (the queue moves on, playback is cleared, or the app is releasing the player). */
-    suspend fun reportPlaybackStopped(songId: String, positionMs: Long, playSessionId: String) {
+    override suspend fun reportPlaybackStopped(songId: String, positionMs: Long, playSessionId: String) {
         client.post<Unit>("/Sessions/Playing/Stopped", body = playbackInfo(songId, positionMs, isPaused = false, playSessionId)) {}
     }
 

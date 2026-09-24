@@ -17,8 +17,8 @@ interface ListenSink {
     suspend fun progress(listen: Listen, positionMs: Long, paused: Boolean) {}
     suspend fun ended(listen: Listen, positionMs: Long) {}
 
-    /** True if this sink wants [progress] calls while [listen] lasts (a server that keeps a resume position). */
-    fun wantsProgress(listen: Listen): Boolean = false
+    /** True if this sink wants [progress] calls while [listen] lasts (a server that keeps a resume position). Asked of the server's api, so it can suspend. */
+    suspend fun wantsProgress(listen: Listen): Boolean = false
 }
 
 /**
@@ -57,8 +57,8 @@ class ListenReporting(
 
     private fun startTicker(listen: Listen) {
         ticker?.cancel()
-        if (sinks.none { it.wantsProgress(listen) }) return
         ticker = scope.launch {
+            if (sinks.none { it.wantsProgress(listen) }) return@launch
             while (true) {
                 delay(progressIntervalMs)
                 val s = latest ?: break

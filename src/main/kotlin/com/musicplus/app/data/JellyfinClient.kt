@@ -158,38 +158,12 @@ class JellyfinClient(
         return response.body()
     }
 
-    /** Streams a binary endpoint's response body straight to [destination] in fixed-size chunks — same reasoning as [SubsonicClient.downloadToFile] (a whole track held in memory as one ByteArray crashed the app on a real file, confirmed there; not re-proven here, same fix applied up front). */
+    /** Streams a binary endpoint's response body straight to [destination]: see [streamToFile], shared with every backend. */
     suspend fun downloadToFile(path: String, destination: File, params: List<Pair<String, String>> = emptyList(), lease: FetchGate.Lease? = null) {
         http.prepareGet("$baseUrl$path") {
             header("Authorization", tokenHeader())
             params.forEach { (k, v) -> parameter(k, v) }
-        }.execute { response ->
-            val expectedBytes = response.contentLength()
-            if (!response.status.isSuccess()) throw IOException("server answered ${response.status}")
-            val type = response.contentType()
-            if (type != null && (type.match(ContentType.Application.Json) || type.match(ContentType.Text.Any))) {
-                throw IOException("server answered with $type instead of audio")
-            }
-            val channel = response.bodyAsChannel()
-            var totalBytes = 0L
-            destination.outputStream().use { output ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    lease?.checkpoint()
-                    val bytesRead = channel.readAvailable(buffer)
-                    if (bytesRead == -1) break
-                    if (bytesRead > 0) {
-                        output.write(buffer, 0, bytesRead)
-                        totalBytes += bytesRead
-                        lease?.bytes(bytesRead)
-                    }
-                }
-            }
-            channel.closedCause?.let { throw IOException("connection dropped after $totalBytes bytes", it) }
-            if (expectedBytes != null && totalBytes != expectedBytes) {
-                throw IOException("cut short: got $totalBytes of $expectedBytes bytes")
-            }
-        }
+        }.streamToFile(destination, lease, "downloadToFile($path)")
     }
 
     /** A cheap authenticated request that says whether the server (and this token) is still good — Jellyfin has no dedicated "ping", so this reuses the same one-item lookup [checkLogin] does. */

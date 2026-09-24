@@ -32,7 +32,7 @@ import java.util.UUID
  * reason, 2026-09-18 architecture review + this session's own /grilling pass).
  */
 class PlaylistRepository(
-    private val apiHolder: ApiHolder,
+    private val apiHolder: ApiLookup,
     private val playlistDao: PlaylistDao,
     private val trackDao: TrackDao,
     private val connectivity: LightConnectivity,

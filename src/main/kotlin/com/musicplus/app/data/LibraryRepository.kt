@@ -51,7 +51,7 @@ private const val ALBUM_LIST_PAGE_SIZE = 500
  * localFilePath was always null too.
  */
 class LibraryRepository(
-    private val apiHolder: ApiHolder,
+    private val apiHolder: ApiLookup,
     private val artistDao: ArtistDao,
     private val albumDao: AlbumDao,
     private val trackDao: TrackDao,

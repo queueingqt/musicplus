@@ -37,7 +37,7 @@ private fun CachedLyrics.toState(): LyricsState = when (kind) {
  * retried next time rather than permanently remembered as "no lyrics."
  */
 class LyricsRepository(
-    private val apiHolder: ApiHolder,
+    private val apiHolder: ApiLookup,
     filesDir: File,
 ) {
     private val diskCacheDir = File(filesDir, "lyrics").apply { mkdirs() }

@@ -36,7 +36,7 @@ data class RemovedServer(val id: String, val name: String, val baseUrl: String, 
  * fails, so an install that already has a server saved from before this
  * change doesn't lose it — the next [addOrUpdate] re-writes it encrypted.
  */
-class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
+class ServerConfigRepository(private val dataStore: DataStore<Preferences>) : ServerProfiles {
 
     private object Keys {
         val SERVERS_JSON = stringPreferencesKey("server_profiles_json")
@@ -59,7 +59,7 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
         val LEGACY_PASSWORD = stringPreferencesKey("server_password")
     }
 
-    val servers: Flow<List<ServerProfile>> = dataStore.data.map { parseServers(it) }
+    override val servers: Flow<List<ServerProfile>> = dataStore.data.map { parseServers(it) }
 
     /** The ids of the servers that are switched on. */
     val enabledServerIds: Flow<Set<String>> = dataStore.data.map { prefs -> enabledIds(prefs, parseServers(prefs)) }.distinctUntilChanged()
@@ -75,7 +75,7 @@ class ServerConfigRepository(private val dataStore: DataStore<Preferences>) {
      * The first server that is on, or null when none is. This is what a call that needs "a server" and has no other
      * context talks to (the id in hand names its own server, so most calls never use it).
      */
-    val activeProfile: Flow<ServerProfile?> = enabledServers.map { it.firstOrNull() }
+    override val activeProfile: Flow<ServerProfile?> = enabledServers.map { it.firstOrNull() }
 
     val activeServerId: Flow<String?> = activeProfile.map { it?.id }
 

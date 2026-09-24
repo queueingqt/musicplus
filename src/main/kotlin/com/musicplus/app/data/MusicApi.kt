@@ -9,6 +9,36 @@ enum class ServerKind {
     JELLYFIN,
 }
 
+/** What a probe found out. UNKNOWN means it could not tell (the server was unreachable, or answered oddly), so nothing is concluded. */
+enum class Support { YES, NO, UNKNOWN }
+
+/**
+ * A server that counts a listen as a Last.fm-style relay (Subsonic's `scrobble`): "now playing" when a listen starts, the real scrobble
+ * once it counts. Opt-in (see `AppSettingsRepository.scrobblingEnabled`), purely to relay to whatever account is linked server-side.
+ */
+interface ScrobbleTarget {
+    /** [songId] is scoped. [submission] false is "now playing", true the real scrobble. Throws on a failure, for the caller to surface. */
+    suspend fun scrobble(songId: String, submission: Boolean)
+}
+
+/**
+ * A server that keeps a resume position and a play history from what it is told about playback (Jellyfin's own reporting).
+ * Unconditional, never gated by the scrobbling setting: it drives that server's own resume position and history and has nothing to do
+ * with a Last.fm relay. The two look like the same idea ("tell the server about a play") but are not, which is why they are two
+ * interfaces and not one method: forcing them together would either wrongly gate Jellyfin's resume tracking behind a "scrobbling"
+ * toggle, or wrongly make Subsonic's opt-in relay unconditional.
+ */
+interface PlayReporter {
+    /** Once, when a song starts (or resumes into) playing. [songId] is scoped. */
+    suspend fun reportPlaybackStart(songId: String, positionMs: Long, playSessionId: String)
+
+    /** Periodically while a song remains current (playing or paused): this is what actually saves the resume position server-side. */
+    suspend fun reportPlaybackProgress(songId: String, positionMs: Long, isPaused: Boolean, playSessionId: String)
+
+    /** Once, when a song stops being current. */
+    suspend fun reportPlaybackStopped(songId: String, positionMs: Long, playSessionId: String)
+}
+
 /**
  * What any music server backend can do, in the app's own vocabulary rather than either wire protocol's — everything
  * [LibraryRepository], [PlaylistRepository], [AlbumArtRepository], [LyricsRepository], [DownloadRepository],
@@ -17,17 +47,26 @@ enum class ServerKind {
  * [ServerScope]) — everything returned here already has its ids scoped to [serverId], exactly as before this
  * interface existed.
  *
- * Deliberately NOT on this interface: [SubsonicApi.scrobble] and Jellyfin's own playback-progress reporting
- * ([JellyfinApi.reportPlaybackStart]/[JellyfinApi.reportPlaybackProgress]/[JellyfinApi.reportPlaybackStopped]).
- * They look like the same idea ("tell the server about a play") but are not: Subsonic's scrobble is a single opt-in
- * action gated by [AppSettingsRepository.scrobblingEnabled], purely to relay to whatever Last.fm/ListenBrainz account
- * is linked server-side. Jellyfin's playback-progress calls are unconditional core Jellyfin behavior (they drive its
- * own resume-position and play history) and have nothing to do with scrobbling — forcing them into one shared method
- * would either wrongly gate Jellyfin's resume tracking behind a "scrobbling" toggle, or wrongly make Subsonic's opt-in
- * relay unconditional. [PlaybackRepository] calls each backend's own method directly instead.
+ * What only some backends can do is offered as an optional capability ([scrobbler], [playReporter]) rather than as a method every
+ * backend must have, and rather than something callers reach by casting to a backend: a caller asks the api what it offers and
+ * uses that, so a fake api can offer anything.
  */
 interface MusicApi : SongStreams, CoverArtSource {
     val serverId: String
+
+    /** What this server takes for counting a listen as a relay, or null when it takes none (Jellyfin has no equivalent of a `scrobble.view` relay). */
+    val scrobbler: ScrobbleTarget? get() = null
+
+    /** What this server takes for keeping a resume position and play history, or null when it takes none. */
+    val playReporter: PlayReporter? get() = null
+
+    /**
+     * Finds out what this server can do, or null when it could not be asked. A backend that must be asked does so with harmless requests
+     * (Subsonic's vocabulary is `.view` endpoints, and not every compatible server, Bandcamp's for one, offers all of them), and only
+     * after an ordinary request has been answered, so a server that is merely down or slow is never written off. A backend whose
+     * feature set is documented by its own API answers without asking.
+     */
+    suspend fun probeCapabilities(): Map<Capability, Support>?
 
     /** An ordinary, signed-in question — the control that says a "no" from a capability probe means something. */
     suspend fun checkLogin(): Result<Unit>

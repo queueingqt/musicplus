@@ -17,9 +17,30 @@ class SubsonicApi(
     private val client: SubsonicClient,
     /** Told when a real request shows that this server does or does not offer a feature — see [CapabilityRegistry]. */
     private val learner: CapabilityLearner? = null,
-) : MusicApi {
+) : MusicApi, ScrobbleTarget {
 
-    private fun scopeId(id: String) = ServerScope.scope(serverId, id)
+    override val scrobbler: ScrobbleTarget get() = this
+
+    internal class Probe(val method: String, val params: List<Pair<String, String>>)
+
+    internal companion object {
+        /** An id that names nothing that exists. */
+        const val PROBE_ID = "musicplus-probe-nothing"
+
+        /** The harmless request that shows whether a server offers each capability. */
+        val PROBES = mapOf(
+            // The starred list is what the app reads favorites back from, so it is the thing to ask.
+            Capability.STAR to Probe("getStarred2.view", emptyList()),
+            // "Now playing" for an id that does not exist: a server that has scrobbling refuses it as "not found".
+            Capability.SCROBBLE to Probe("scrobble.view", listOf("id" to PROBE_ID, "submission" to "false")),
+            Capability.LYRICS to Probe("getLyricsBySongId.view", listOf("id" to PROBE_ID)),
+            // Changing a playlist that does not exist: a server that can write playlists refuses it as "not found".
+            Capability.PLAYLIST_WRITE to Probe("updatePlaylist.view", listOf("playlistId" to PROBE_ID)),
+        )
+    }
+
+    private val ids = ScopedIds(serverId, "SubsonicApi")
+    private fun scopeId(id: String) = ids.scope(id)
 
     /**
      * Runs a real request for [capability] and tells the [learner] how it went: a success means the server offers it,
@@ -44,22 +65,15 @@ class SubsonicApi(
     /** An ordinary, signed-in question — the control that says a "no" from [probe] means something. See [SubsonicClient.checkLogin]. */
     override suspend fun checkLogin(): Result<Unit> = client.checkLogin()
 
-    /** One harmless request that shows whether this server offers [capability]. Only meaningful right after [checkLogin] succeeded. */
-    suspend fun probe(capability: Capability): Support = client.probe(capability.probeMethod, capability.probeParams)
+    override suspend fun probeCapabilities(): Map<Capability, Support>? {
+        if (checkLogin().isFailure) return null
+        return Capability.entries.associateWith { capability -> PROBES.getValue(capability).let { client.probe(it.method, it.params) } }
+    }
 
     /** A cheap "is it there" request; the outcome reaches [ServerReachability] through the client. */
     override suspend fun ping(): Result<Unit> = client.ping()
 
-    /** The id as this server knows it. An id that was never scoped is passed through and logged: it means a code path missed the scoping. */
-    private fun native(id: String): String {
-        val owner = ServerScope.serverOf(id)
-        if (owner == null) {
-            AppLogger.e("SubsonicApi", "unscoped id \"$id\" sent to server $serverId")
-            return id
-        }
-        require(owner == serverId) { "id $id belongs to server $owner, not $serverId" }
-        return ServerScope.nativeOf(id)
-    }
+    private fun native(id: String) = ids.native(id)
 
     private fun SubsonicArtist.scoped() = copy(id = scopeId(id), coverArt = coverArt?.let { scopeId(it) })
     private fun SubsonicArtistDetail.scoped() =
@@ -315,7 +329,7 @@ class SubsonicApi(
      * only the live server can answer — propagates as a normal exception here,
      * not swallowed.
      */
-    suspend fun scrobble(songId: String, submission: Boolean) {
+    override suspend fun scrobble(songId: String, submission: Boolean) {
         learning(Capability.SCROBBLE) { client.call("scrobble.view", listOf("id" to native(songId), "submission" to submission.toString())) }
     }
 
