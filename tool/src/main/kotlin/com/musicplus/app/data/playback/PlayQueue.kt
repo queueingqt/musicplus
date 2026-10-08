@@ -488,6 +488,8 @@ class PlayQueue(
      * nothing to follow: editing a restored queue used to load the whole of it into the player (downloading every song) while
      * leaving the state as "not loaded", and to read the player's stale index 0 as the playing one.
      */
+    private fun apply(edit: QueueEdit) = edit(edit.queue, edit.playingIndex)
+
     private fun edit(newQueue: List<Track>, explicitIndex: Int? = null) {
         val before = session.value
         val currentIndex = explicitIndex ?: queueIndex().coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))
@@ -511,7 +513,7 @@ class PlayQueue(
         if (tracks.isEmpty()) return
         awaitQueueRestored()
         val current = session.value.queue
-        if (current.isEmpty()) play(tracks, 0) else edit(current + tracks)
+        if (current.isEmpty()) play(tracks, 0) else QueueEdits.append(current, tracks)?.let { apply(it) }
     }
 
     /** [addToQueue] on this queue's own scope, for a caller that is not a suspend function and must not depend on a screen's scope. [onDone] runs after the tracks are queued. */
@@ -532,9 +534,7 @@ class PlayQueue(
      * skip. An earlier version wiped the queue and stopped playback too, which is not what "clear queue" means while something plays.
      */
     fun clear() {
-        val current = session.value.queue
-        if (current.isEmpty()) return
-        edit(listOf(current[queueIndex().coerceIn(0, current.lastIndex)]))
+        QueueEdits.clear(session.value.queue, queueIndex())?.let { apply(it) }
     }
 
     /**
@@ -542,29 +542,17 @@ class PlayQueue(
      * deciding what plays next, which is a skip, not a queue edit.
      */
     fun removeAt(index: Int) {
-        val current = session.value.queue
-        if (index !in current.indices || index <= queueIndex()) return
-        edit(current.toMutableList().also { it.removeAt(index) })
+        QueueEdits.removeAt(session.value.queue, queueIndex(), index)?.let { apply(it) }
     }
 
     /** Drops [serverId]'s upcoming songs, for a server that was removed and can no longer be fetched from. The playing song stays whichever server it is from. */
     fun removeServer(serverId: String) {
-        val current = session.value.queue
-        if (current.isEmpty()) return
-        val currentIndex = queueIndex().coerceIn(0, current.lastIndex)
-        val trimmed = current.filterIndexed { index, track -> index <= currentIndex || ServerScope.serverOf(track.id) != serverId }
-        if (trimmed.size == current.size) return
-        edit(trimmed)
+        QueueEdits.removeServer(session.value.queue, queueIndex(), serverId)?.let { apply(it) }
     }
 
     /** Moves the upcoming song at [index] by [delta] slots. Both source and destination must be after the playing song, see [removeAt]. */
     fun move(index: Int, delta: Int) {
-        val current = session.value.queue
-        val target = index + delta
-        if (index !in current.indices || target !in current.indices) return
-        val playing = queueIndex()
-        if (index <= playing || target <= playing) return
-        edit(current.toMutableList().also { it.add(target, it.removeAt(index)) })
+        QueueEdits.move(session.value.queue, queueIndex(), index, delta)?.let { apply(it) }
     }
 
     /**
@@ -601,21 +589,15 @@ class PlayQueue(
     }
 
     private fun applyShuffle(enabled: Boolean) {
-        val current = session.value.queue
-        if (current.isEmpty()) return
-        val currentIndex = queueIndex().coerceIn(0, current.lastIndex)
-        val currentTrack = current[currentIndex]
-        val rest = current.filterIndexed { i, _ -> i != currentIndex }
-        if (rest.isEmpty()) return // nothing to shuffle or restore: one song in the queue
+        val queue = session.value.queue
         if (enabled) {
-            preShuffleOrder = current.map { it.id }
-            edit(listOf(currentTrack) + rest.shuffled(), explicitIndex = 0)
+            val shuffled = QueueEdits.shuffle(queue, queueIndex()) ?: return
+            preShuffleOrder = shuffled.originalOrder
+            apply(shuffled.edit)
         } else {
             val order = preShuffleOrder ?: return // shuffle was never really applied: nothing to restore
-            preShuffleOrder = null
-            val byId = current.associateBy { it.id }
-            val restored = order.mapNotNull { byId[it] } + current.filter { it.id !in order }
-            edit(restored, explicitIndex = restored.indexOfFirst { it.id == currentTrack.id }.coerceAtLeast(0))
+            if (queue.size > 1) preShuffleOrder = null
+            QueueEdits.unshuffle(queue, queueIndex(), order)?.let { apply(it) }
         }
     }
 
