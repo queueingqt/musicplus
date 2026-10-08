@@ -53,9 +53,9 @@ object AppGraph {
     private val VERSION_CHECK_INTERVAL_MS = TimeUnit.HOURS.toMillis(24)
 
     // Process-lifetime, not tied to any screen's own viewModelScope — needed so
-    // debugLoggingEnabled keeps being observed (and AppLogger kept in sync) no
-    // matter which screen is currently on top, including screens that never
-    // touch AppSettingsRepository themselves.
+    // the settings mirrors keep being observed no matter which screen is
+    // currently on top, including screens that never touch
+    // AppSettingsRepository themselves.
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     fun from(lightContext: SealedLightContext): Graph =
@@ -87,10 +87,6 @@ object AppGraph {
         }
         val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
         val playbackStateRepository = PlaybackStateRepository(lightContext.dataStore)
-        mirrorInto(appSettingsRepository.debugLoggingEnabled) {
-            AppLogger.setEnabled(it)
-            AppDebugPrefs.debugLoggingEnabled.set(it)
-        }
         mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs.showAlbumArtwork::set)
         mirrorInto(appSettingsRepository.downloadedOnly, AppDisplayPrefs.downloadedOnly::set)
         mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs.streamQualityWifi::set)

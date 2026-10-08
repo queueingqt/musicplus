@@ -190,7 +190,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
                 // Swallow rather than crash from inside our own pre-flight step —
                 // worst case we fall through to Room's own (already-flagged, already
                 // understood) failure mode below, never a new one.
-                android.util.Log.e("MusicPlusDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
+                AppLogger.e("MusicPlusDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
                 AppLogger.e("MusicPlusDatabase", "v1 -> v2 hand migration failed, falling back to Room's own open", e)
             }
         }
@@ -218,7 +218,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
                     it.version = 3
                 }
             } catch (e: Exception) {
-                android.util.Log.e("MusicPlusDatabase", "v2 -> v3 hand migration failed, falling back to Room's own open", e)
+                AppLogger.e("MusicPlusDatabase", "v2 -> v3 hand migration failed, falling back to Room's own open", e)
                 AppLogger.e("MusicPlusDatabase", "v2 -> v3 hand migration failed, falling back to Room's own open", e)
             }
         }
@@ -245,7 +245,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
                     it.version = 4
                 }
             } catch (e: Exception) {
-                android.util.Log.e("MusicPlusDatabase", "v3 -> v4 hand migration failed, falling back to Room's own open", e)
+                AppLogger.e("MusicPlusDatabase", "v3 -> v4 hand migration failed, falling back to Room's own open", e)
                 AppLogger.e("MusicPlusDatabase", "v3 -> v4 hand migration failed, falling back to Room's own open", e)
             }
         }
@@ -270,7 +270,7 @@ abstract class MusicPlusDatabase : RoomDatabase() {
                     IdScopeMigration.run(it, serverId, lightContext.filesDir, newVersion = 5)
                 }
             } catch (e: Exception) {
-                android.util.Log.e("MusicPlusDatabase", "v4 -> v5 id scoping failed; the database is unchanged", e)
+                AppLogger.e("MusicPlusDatabase", "v4 -> v5 id scoping failed; the database is unchanged", e)
                 AppLogger.e("MusicPlusDatabase", "v4 -> v5 id scoping failed; the database is unchanged", e)
                 throw e
             }

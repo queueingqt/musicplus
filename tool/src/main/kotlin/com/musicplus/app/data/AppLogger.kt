@@ -1,5 +1,6 @@
 package com.musicplus.app.data
 
+import com.musicplus.app.BuildConfig
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -13,19 +14,15 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * File-based crash/error log, independent of Logcat — once a device is out in
- * the field there's no adb session to read Logcat from, only whatever this app
- * wrote to its own storage, pullable later via `adb run-as` (same mechanism used
- * for the package-rename data migration). Gated by
- * AppSettingsRepository.debugLoggingEnabled for routine [e]/[d] calls, but a
- * crash is always captured regardless of that toggle — a disabled toggle means
- * "don't clutter the log with routine errors," not "don't capture the one thing
- * this whole feature exists for." Rotates (keeping one prior generation as
- * app.log.1) past MAX_LOG_BYTES or MAX_LOG_AGE_MS, whichever comes first, so
- * the log can't grow unbounded or go stale.
+ * File-based error and debug log, independent of Logcat, for test and dev builds only: pullable with `adb run-as` from a debuggable build.
+ * A release build (what Light builds and signs, and what people run) writes no log, keeps no file and installs no crash handler: every
+ * function here does nothing when [BuildConfig.DEBUG] is false, and the compiler drops the code. Light's tool guidelines allow no collecting
+ * of user data, and a log of server names, ids and stack traces kept on the phone for no one's benefit is that.
  *
- * [init] must run once, as early as possible in the process — see
- * AppGraph.build(), the first thing any screen touches.
+ * Where it does run, it also captures an uncaught crash. Rotates (keeping one prior generation as app.log.1) past MAX_LOG_BYTES or
+ * MAX_LOG_AGE_MS, whichever comes first, so the log can't grow unbounded or go stale.
+ *
+ * [init] must run once, as early as possible in the process — see AppGraph.build(), the first thing any screen touches.
  */
 object AppLogger {
     private const val MAX_LOG_BYTES = 1_000_000L
@@ -33,12 +30,14 @@ object AppLogger {
     private val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     private val lock = ReentrantLock()
 
-    @Volatile private var enabled = true
+    /** True only in a test or dev build: see the class doc. A constant, so a release build has none of the code below. */
+    private val available = BuildConfig.DEBUG
+
     @Volatile private var logFile: File? = null
     @Volatile private var installed = false
 
     fun init(filesDir: File) {
-        if (installed) return
+        if (!available || installed) return
         installed = true
 
         val dir = File(filesDir, "logs").apply { mkdirs() }
@@ -52,17 +51,13 @@ object AppLogger {
         writeSync("INFO", "AppLogger installed", null)
     }
 
-    fun setEnabled(value: Boolean) {
-        enabled = value
-    }
-
     fun d(tag: String, message: String) {
-        if (!enabled) return
+        if (!available) return
         writeSync("DEBUG", "$tag: $message", null)
     }
 
     fun e(tag: String, message: String, throwable: Throwable? = null) {
-        if (!enabled) return
+        if (!available) return
         writeSync("ERROR", "$tag: $message", throwable)
     }
 

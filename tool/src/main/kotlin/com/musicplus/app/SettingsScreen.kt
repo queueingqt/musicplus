@@ -58,7 +58,7 @@ class SettingsScreenViewModel(
     val pendingSyncCount: StateFlow<Int> = syncQueueRepository.pendingCount
         .screenState(viewModelScope, 0)
 
-    // AppDisplayPrefs/AppDebugPrefs, not appSettingsRepository directly — this
+    // AppDisplayPrefs, not appSettingsRepository directly — this
     // screen gets a fresh ViewModel (and a fresh `.stateIn(...)`) every time
     // it's opened, seeded from a hardcoded default before the real DataStore
     // Flow catches up. Same root cause as Server's "No servers yet" flash

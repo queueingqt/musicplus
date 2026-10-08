@@ -23,7 +23,6 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
     private object Keys {
         val SHOW_ALBUM_ARTWORK = booleanPreferencesKey("show_album_artwork")
         val DOWNLOADED_ONLY = booleanPreferencesKey("downloaded_only")
-        val DEBUG_LOGGING_ENABLED = booleanPreferencesKey("debug_logging_enabled")
         val SCROBBLING_ENABLED = booleanPreferencesKey("scrobbling_enabled")
         // Int, not a serialized enum — see StreamQuality's doc: this is a
         // plain kbps value (or absent = original/uncapped), not a closed set
@@ -68,19 +67,6 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     suspend fun setDownloadedOnly(enabled: Boolean) {
         dataStore.edit { prefs -> prefs[Keys.DOWNLOADED_ONLY] = enabled }
-    }
-
-    /**
-     * On by default — the whole point is catching crashes/errors before the user
-     * knows to go turn it on. Gates [com.musicplus.app.data.AppLogger.d]/[e]; the
-     * crash handler itself always writes regardless of this flag.
-     */
-    val debugLoggingEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[Keys.DEBUG_LOGGING_ENABLED] ?: true
-    }
-
-    suspend fun setDebugLoggingEnabled(enabled: Boolean) {
-        dataStore.edit { prefs -> prefs[Keys.DEBUG_LOGGING_ENABLED] = enabled }
     }
 
     /**
