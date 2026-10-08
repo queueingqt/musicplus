@@ -1,5 +1,6 @@
 package com.musicplus.app.data
 
+import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
@@ -75,12 +76,18 @@ class SubsonicApiException(val code: Int, message: String) : Exception(message),
 class SubsonicClient(
     private val config: ServerConfig,
     /** Told after every API request whether the server could be reached (true) or not (false) — see [ServerReachability]. */
-    private val onReachable: (Boolean) -> Unit = {},
-) {
+    onReachable: (Boolean) -> Unit = {},
+    /** The engine, so a test can point this at a server of its own. */
+    httpClient: HttpClient? = null,
+) : java.io.Closeable {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val http = newJsonHttpClient(json)
+    private val server = ServerHttp(httpClient ?: newJsonHttpClient(json), onReachable)
+    private val http: HttpClient get() = server.http
+
+    /** Lets go of the connections: this client is not wanted any more. */
+    override fun close() = server.close()
 
     // Normalized once here rather than trusted from the caller — ServerConfig.baseUrl
     // is only trimmed of a trailing slash on the save path (ServerConfigRepository),
@@ -165,23 +172,12 @@ class SubsonicClient(
 
     /** Calls a JSON endpoint and unwraps the `subsonic-response` envelope. */
     suspend fun call(method: String, params: List<Pair<String, String>> = emptyList()): SubsonicResponse {
-        val httpResponse = try {
-            http.get("$baseUrl/rest/$method") {
+        val httpResponse = server.send {
+            get("$baseUrl/rest/$method") {
                 (authParams() + params).forEach { (k, v) -> parameter(k, v) }
                 timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (e.isUnreachable()) onReachable(false)
-            throw e
         }
-        // A proxy in front of a server that is down answers for it with a 502-504.
-        if (httpResponse.status.value in 502..504) {
-            onReachable(false)
-            throw IOException("server answered ${httpResponse.status}")
-        }
-        onReachable(true)
         val response: SubsonicEnvelope = httpResponse.body()
         val body = response.response
         if (!body.isOk) {
@@ -194,18 +190,12 @@ class SubsonicClient(
     /** Raw bytes from a small binary endpoint (getCoverArt.view — a few tens of KB) — same client/engine as [call], so it gets the same cleartext-over-CIO handling. Never use this for a full track (see [downloadToFile]'s doc). */
     suspend fun getBytes(method: String, params: List<Pair<String, String>> = emptyList()): ByteArray {
         AppLogger.d("SubsonicClient", "getBytes($method): issuing request")
-        val response = try {
-            http.get("$baseUrl/rest/$method") {
+        val response = server.send {
+            get("$baseUrl/rest/$method") {
                 (authParams() + params).forEach { (k, v) -> parameter(k, v) }
                 timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (e.isUnreachable()) onReachable(false)
-            throw e
         }
-        onReachable(response.status.value !in 502..504)
         AppLogger.d("SubsonicClient", "getBytes($method): got response ${response.status}, contentLength=${response.contentLength()}")
         if (!response.status.isSuccess()) throw IOException("server answered ${response.status}")
         // A Subsonic server reports a failure (unknown id, no such art) as a 200 whose body is the error envelope, not as a status.

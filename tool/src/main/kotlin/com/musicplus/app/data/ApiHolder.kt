@@ -82,12 +82,12 @@ class ApiHolder(
 
     /** Drops one server's api (it was removed). */
     override suspend fun forget(serverId: String) {
-        apis.remove(serverId)
+        apis.remove(serverId)?.close()
     }
 
     /** Drops a server's api, so the next use picks up its edited address or credentials. */
     override fun edited(serverId: String) {
-        apis.remove(serverId)
+        apis.remove(serverId)?.close()
     }
 }
 

@@ -24,6 +24,8 @@ class JellyfinApi(
 
     override val playReporter: PlayReporter get() = this
 
+    override fun close() = client.close()
+
     /**
      * A real Jellyfin server's whole feature set is documented by its own API: nothing here is undocumented the way an arbitrary
      * Subsonic mount (Bandcamp) can be, so there is nothing to find out by asking. SCROBBLE is deliberately not offered: it means

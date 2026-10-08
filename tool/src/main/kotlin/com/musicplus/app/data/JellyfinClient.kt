@@ -1,5 +1,6 @@
 package com.musicplus.app.data
 
+import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.timeout
 import io.ktor.client.request.delete
@@ -49,10 +50,16 @@ class JellyfinApiException(val code: Int, message: String) : Exception(message),
 class JellyfinClient(
     private val config: JellyfinConfig,
     /** Told after every request whether the server could be reached — see [ServerReachability]. */
-    private val onReachable: (Boolean) -> Unit = {},
-) {
+    onReachable: (Boolean) -> Unit = {},
+    /** The engine, so a test can point this at a server of its own. */
+    httpClient: HttpClient? = null,
+) : java.io.Closeable {
     private val json = Json { ignoreUnknownKeys = true }
-    private val http = newJsonHttpClient(json)
+    private val server = ServerHttp(httpClient ?: newJsonHttpClient(json), onReachable)
+    private val http: HttpClient get() = server.http
+
+    /** Lets go of the connections: this client is not wanted any more. */
+    override fun close() = server.close()
     private val baseUrl: String = config.baseUrl.trimEnd('/')
 
     val userId: String get() = config.userId
@@ -71,27 +78,17 @@ class JellyfinClient(
 
     /** GET returning a decoded JSON body. [path] starts with `/`. */
     suspend fun <T> get(path: String, params: List<Pair<String, String>> = emptyList(), deserialize: suspend (io.ktor.client.statement.HttpResponse) -> T): T {
-        val response = try {
-            http.get("$baseUrl$path") {
+        val response = server.send {
+            get("$baseUrl$path") {
                 header("Authorization", tokenHeader())
                 params.forEach { (k, v) -> parameter(k, v) }
                 timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (e.isUnreachable()) onReachable(false)
-            throw e
         }
         return respond(response, deserialize)
     }
 
     private suspend fun <T> respond(response: io.ktor.client.statement.HttpResponse, deserialize: suspend (io.ktor.client.statement.HttpResponse) -> T): T {
-        if (response.status.value in 502..504) {
-            onReachable(false)
-            throw IOException("server answered ${response.status}")
-        }
-        onReachable(true)
         if (!response.status.isSuccess()) {
             throw JellyfinApiException(response.status.value, "Jellyfin request failed: ${response.status}")
         }
@@ -106,8 +103,8 @@ class JellyfinClient(
         forceJsonBody: Boolean = false,
         deserialize: suspend (io.ktor.client.statement.HttpResponse) -> T,
     ): T {
-        val response = try {
-            http.post("$baseUrl$path") {
+        val response = server.send {
+            post("$baseUrl$path") {
                 header("Authorization", tokenHeader())
                 params.forEach { (k, v) -> parameter(k, v) }
                 timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
@@ -117,46 +114,30 @@ class JellyfinClient(
                     forceJsonBody -> setBody("{}")
                 }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (e.isUnreachable()) onReachable(false)
-            throw e
         }
         return respond(response, deserialize)
     }
 
     suspend fun delete(path: String, params: List<Pair<String, String>> = emptyList()) {
-        val response = try {
-            http.delete("$baseUrl$path") {
+        val response = server.send {
+            delete("$baseUrl$path") {
                 header("Authorization", tokenHeader())
                 params.forEach { (k, v) -> parameter(k, v) }
                 timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (e.isUnreachable()) onReachable(false)
-            throw e
         }
         respond(response) {}
     }
 
     /** Raw bytes from a small binary endpoint (cover art) — same client/engine as everything else, so it gets the same cleartext handling. Never use this for a full track — see [downloadToFile]. */
     suspend fun getBytes(path: String, params: List<Pair<String, String>> = emptyList()): ByteArray {
-        val response = try {
-            http.get("$baseUrl$path") {
+        val response = server.send {
+            get("$baseUrl$path") {
                 header("Authorization", tokenHeader())
                 params.forEach { (k, v) -> parameter(k, v) }
                 timeout { requestTimeoutMillis = API_CALL_TIMEOUT_MS }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (e.isUnreachable()) onReachable(false)
-            throw e
         }
-        onReachable(response.status.value !in 502..504)
         if (!response.status.isSuccess()) throw JellyfinApiException(response.status.value, "Jellyfin request failed: ${response.status}")
         return response.body()
     }
@@ -195,6 +176,12 @@ class JellyfinClient(
 suspend fun authenticateJellyfin(baseUrl: String, username: String, password: String, deviceId: String, appVersion: String): Result<JellyfinAuthResult> {
     val client = newJsonHttpClient(Json { ignoreUnknownKeys = true })
     val trimmedUrl = baseUrl.trimEnd('/')
+    return client.use {
+        authenticate(it, trimmedUrl, username, password, deviceId, appVersion)
+    }
+}
+
+private suspend fun authenticate(client: HttpClient, trimmedUrl: String, username: String, password: String, deviceId: String, appVersion: String): Result<JellyfinAuthResult> {
     return try {
         val response = client.post("$trimmedUrl/Users/AuthenticateByName") {
             header("Authorization", "MediaBrowser Client=\"Music+\", Device=\"Light Phone III\", DeviceId=\"$deviceId\", Version=\"$appVersion\"")

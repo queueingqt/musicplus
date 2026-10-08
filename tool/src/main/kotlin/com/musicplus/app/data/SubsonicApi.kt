@@ -21,6 +21,8 @@ class SubsonicApi(
 
     override val scrobbler: ScrobbleTarget get() = this
 
+    override fun close() = client.close()
+
     internal class Probe(val method: String, val params: List<Pair<String, String>>)
 
     internal companion object {

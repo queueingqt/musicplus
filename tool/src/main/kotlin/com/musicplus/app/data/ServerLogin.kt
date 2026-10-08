@@ -40,7 +40,7 @@ sealed interface LoginResult {
 class ServerLogin(
     private val jellyfinDeviceId: suspend () -> String,
     private val appVersion: String,
-    private val checkSubsonic: suspend (ServerConfig) -> Result<Unit> = { SubsonicClient(it).checkLogin() },
+    private val checkSubsonic: suspend (ServerConfig) -> Result<Unit> = { config -> SubsonicClient(config).use { it.checkLogin() } },
     private val signInJellyfin: suspend (baseUrl: String, username: String, password: String, deviceId: String, appVersion: String) -> Result<JellyfinAuthResult> =
         ::authenticateJellyfin,
 ) {

@@ -54,6 +54,9 @@ interface PlayReporter {
 interface MusicApi : SongStreams, CoverArtSource {
     val serverId: String
 
+    /** Lets go of what this api holds (its connections) once it is no longer wanted: a server removed or edited. Nothing to do for an api that holds none. */
+    fun close() {}
+
     /** What this server takes for counting a listen as a relay, or null when it takes none (Jellyfin has no equivalent of a `scrobble.view` relay). */
     val scrobbler: ScrobbleTarget? get() = null
 
