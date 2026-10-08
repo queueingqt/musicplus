@@ -166,7 +166,7 @@ class PlayerScreenViewModel(
         }
         .screenState(viewModelScope, null)
 
-    /** Same tap as every list's per-track download row: see [tap]. */
+    /** Same tap as every list's per-track download row: see `DownloadRepository.tap` in DownloadStates.kt. */
     fun toggleDownloadCurrentTrack(lightContext: SealedLightContext) {
         val track = state.value.currentTrack ?: return
         val status = downloadStatus.value

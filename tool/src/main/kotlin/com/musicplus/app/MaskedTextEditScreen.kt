@@ -25,10 +25,10 @@ class MaskedTextEditScreenViewModel(initialValue: String) : LightViewModel<Strin
  * [MaskedTextInputEditor]'s file header for the full explanation and for why this has
  * to be a duplicated component rather than a parameter on the real one. Tracked as
  * issue #2 — delete this file (and [MaskedTextInputEditor]) once upstream adds real
- * masking support, and switch SettingsScreen's password field back to plain
+ * masking support, and switch ServerEditScreen's password field back to plain
  * [TextEditScreen].
  *
- * Only used by SettingsScreen.kt's password field.
+ * Only used by ServerEditScreen.kt's password field.
  */
 class MaskedTextEditScreen(
     activity: SealedLightActivity,

@@ -31,7 +31,7 @@ class TextEditScreenViewModel(initialValue: String) : LightViewModel<String>() {
  *
  * Not used for the password field — `LightTextInputEditor` has no masking option
  * (there's no such parameter on it, and `KeyboardOptions` comes from the external
- * `light-keyboard` artifact, which isn't source-available to patch). SettingsScreen's
+ * `light-keyboard` artifact, which isn't source-available to patch). ServerEditScreen's
  * password field instead uses `MaskedTextEditScreen` (`MaskedTextInputEditor.kt`), a
  * local fork of this same SDK pattern that masks the rendered text — see that file's
  * header for the full explanation. Tracked as issue #2.

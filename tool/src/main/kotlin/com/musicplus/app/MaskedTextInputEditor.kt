@@ -83,7 +83,7 @@ import kotlinx.coroutines.flow.StateFlow
 // copied as closely as possible to the original so this is easy to diff against it and
 // delete once upstream ships real masking support.
 //
-// Only wired into SettingsScreen.kt's password field; every other field keeps using the
+// Only wired into ServerEditScreen.kt's password field; every other field keeps using the
 // real `TextEditScreen` / `LightTextInputEditor`.
 
 private const val MASKED_INPUT_UNDERLINE_THICKNESS_PX = 3f
