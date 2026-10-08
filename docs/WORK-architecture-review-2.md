@@ -28,7 +28,7 @@ Carried over from the first review (see `arch-review-execution` in project memor
 - **Behaviour changes need a phone check** (adb recipe in `musicplus-device-debug-loop`). Pure moves need only tests.
 - **Review before commit**: anything delegated is reviewed in the seat before it is committed.
 
-## Part 1: the 12 fixes
+## Part 1: the 12 fixes (plus #93, added later)
 
 Order matters because some issues build on others. Tick a box only when the commit exists, the tests pass, and (where it
 changes behaviour) the phone check is done. Record the commit hash.
@@ -47,6 +47,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [ ] | 10 | #89 | Settings declared once, read model | #82 helps | |
 | [ ] | 11 | #88 | Action-menu state holder | none | D9 |
 | [ ] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
+| [ ] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
 
 Per issue, the loop is:
 
@@ -71,11 +72,11 @@ them early (small, safe, and they shrink the diff of the bigger issues): do the 
 
 | Done | # | Where | Defect | Status before | Fixed by | First step |
 |---|---|---|---|---|---|---|
-| [ ] | D1 | `PlaybackRepository.kt:145,159-163` | Error retry replays the queue snapshot taken before the 750 ms delay, overwriting a jump or edit made meanwhile. The retry also blocks `collect`, so a second error is missed until it ends. | verified | #86, **or standalone first** (re-read the snapshot after the delay) | Test with `FakePlayback`: error, jump during the delay, assert the jump survives |
+| [x] | D1 | `PlaybackRepository.kt:145,159-163` | Error retry replays the queue snapshot taken before the 750 ms delay, overwriting a jump or edit made meanwhile. The retry also blocks `collect`, so a second error is missed until it ends. | verified | #86, **or standalone first** (re-read the snapshot after the delay) | Test with `FakePlayback`: error, jump during the delay, assert the jump survives |
 | [ ] | D2 | `PlayerScreen.kt:189`, `TrackActions.kt:42` | Favoriting the playing track from a list menu leaves Now Playing's star stale (`updateTrackFavorite` has one caller). | verified | #87 | Test: favorite the playing track via the menu path, assert the queue snapshot |
 | [ ] | D3 | `MediaIntegrity.kt:67` | A capped-quality download is saved as `.mp3`; when the track's suffix is also `mp3` the transcoded file is compared with the original size, mismatches, and is deleted and re-queued. Runs once per install (`VERSION = 1`). | verified | #81 | Test: capped download of an mp3 track passes the check. Also decide: does this need a `VERSION` bump to repair files already wrongly discarded? (They were re-queued, so probably not; check on the phone.) |
 | [ ] | D4 | `DownloadRepository.kt:232` | Every `IOException` counts as congestion and halves the FetchGate limit, including `server answered 404` and `cut short` from `streamToFile`. | verified | #81 then #85 | Test: a 404 does not call `onCongestion` |
-| [ ] | D5 | `SubsonicClient.kt:205-209`, `CoverArtStore.kt:135-137` | `getBytes` never checks the status or the Subsonic error envelope (Jellyfin's does), and the store caches whatever came back as art, forever. | verified | #91, **or standalone first** (status check in `getBytes`, validate before writing) | Test with a stub that answers 200 + an error body; **also scan the phone's existing cover-art cache for non-image files** and clear any found |
+| [x] | D5 | `SubsonicClient.kt:205-209`, `CoverArtStore.kt:135-137` | `getBytes` never checks the status or the Subsonic error envelope (Jellyfin's does), and the store caches whatever came back as art, forever. | verified | #91, **or standalone first** (status check in `getBytes`, validate before writing) | Test with a stub that answers 200 + an error body; **also scan the phone's existing cover-art cache for non-image files** and clear any found |
 | [ ] | D6 | `VersionCheckRepository.kt:41-47`, `AppGraph.kt:208-214` | A failed check (offline at launch) returns Unit and `setLastVersionCheckAtMs(now)` runs anyway, suppressing the check for 24 h. `runCatching` also swallows `CancellationException`. | from reading | standalone | Test: a failing fetch leaves `lastCheckedAt` untouched; make `checkForUpdate` return success/failure |
 | [ ] | D7 | `LocalFirstWrites.kt:139-147,255-290` | A permanently refused write (e.g. delete of an offline-created playlist: `deletePlaylist(<server>:pending:uuid)`) is queued and fails every drain, blocking all later edits for that server. | from reading | #83 | Test: the poison-head scenario with a fake server that throws a refusal; **then check the phone's real queue** (`PendingMutation` table, via adb run-as) for rows already stuck |
 | [ ] | D8 | `LazyCollapsibleSection.kt:34-44`, `ArtistDetailScreen.kt:74-77` | `loaded = true` and `_loading = true` are set before `fetch()` with no try/finally, so a throwing fetch leaves "Loading…" forever and the exception escapes `viewModelScope.launch`. Top-songs reads `artist.value?.name` at expand time; if the artist has not emitted it returns empty, and because `loaded` is already true it never retries. | from reading | standalone | Test the section with a throwing fetch; phone: expand Top Songs immediately on opening an artist |
@@ -84,7 +85,7 @@ them early (small, safe, and they shrink the diff of the bigger issues): do the 
 | [ ] | D11 | `TrackListDownload.kt:114` | `downloadEntireArtist` uses `observeAlbumsByArtist(artistId).first()` without `refreshArtistDetail` first; the caller (`ArtistListScreen`) does not refresh, unlike `ArtistDetailScreen.onScreenShow`. May silently do nothing. | unconfirmed | standalone | Phone: long-press an artist in the list that was never opened, choose download, see whether anything queues |
 | [ ] | D12 | `MaskedTextInputEditor.kt:86`, `MaskedTextEditScreen.kt`, `TextEditScreen.kt`, `PlayerScreen.kt:169` | Stale comments: the masked editor is described as "only used by SettingsScreen" but `ServerEditScreen.kt:233` uses it; `PlayerScreen.kt:169` says "see [tap]" which is actually `DownloadStates.kt`'s `DownloadRepository.tap`. | verified | standalone | Fix the comments |
 
-Standalone fixes, in the order to do them before #81: D1, D5, D6, D8, D12, then the phone checks for D10 and D11.
+Standalone fixes, in the order to do them before #81: D1 (done), D5 (done), D6, D8, D12, then the phone checks for D10 and D11.
 Their results go in the progress log.
 
 ### Also noticed (not in the rendered report; triage with the defects)
@@ -204,6 +205,15 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
 ## Progress log
 
 (append below: date, issue or defect, commit hash, what was verified on the phone, anything that differed from the plan)
+
+- 2026-10-08: **D1 done** `cac0af9`. Retry now launched, reads the queue after the delay, and only applies if the same song is
+  still current at the same index (`ErrorRecovery.retryStillApplies`, 1 test). Not checked on the phone. #86 may still absorb
+  the watcher glue.
+- 2026-10-08: **D5 done** `cae546a`. `SubsonicClient.getBytes` now throws on a non-success status and on a JSON/XML/text body
+  (Subsonic's 200 error envelope); `CoverArtStore` keeps only bytes that start like an image and drops a non-image already on
+  disk, then asks again, so bad art already cached on the phone heals itself (2 new tests; test helper now makes JPEG-signed
+  bytes). Not checked on the phone. #91 will still fold `getBytes` into the shared request layer.
+- 2026-10-08: **#93 filed** (debug logging only in test/dev builds), from the user's request after `CrashReporter` was removed.
 
 - 2026-10-08: issues #81-#92 filed; this doc written. No fix started. The Light-tool submission restructure
   (`tool/` layout, SDK 0.2.0 compile fixes) is already on `main` (`da11073`, `13adb46`), unpushed.
