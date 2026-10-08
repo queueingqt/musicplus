@@ -36,7 +36,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | Done | Order | Issue | Fix | Depends on / pairs with | Defects fixed by it |
 |---|---|---|---|---|---|
 | [x] | 1 | #81 | Downloads module | none | D3, D4 |
-| [~] | 2 | #83 | Write queue: offline vs refused | introduces the failure classification #91 reuses | D7 |
+| [x] | 2 | #83 | Write queue: offline vs refused | introduces the failure classification #91 reuses | D7 |
 | [x] | 3 | #86 | Advance module (what plays next) | none; relates to #78 | D1 |
 | [x] | 4 | #87 | One "set favorite" behaviour | none | D2 |
 | [x] | 5 | #82 | Server standing module | none | |
@@ -298,3 +298,6 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
 - 2026-10-08: **#92 done** `c3c3fde`. `QueueEdits` (pure functions: append, clear, removeAt, removeServer, move, shuffle, unshuffle) split out of `PlayQueue`, which
   keeps hand-over and transport; `PlayQueueTest` unchanged and green; 9 new tests (399 total). Phone: shuffle on then off with the
   restored 18-song queue returned the saved order exactly.
+- 2026-10-08: **#83 completed** `04e123a`. The Phone Only half: `LocalCopy.createPhonePlaylist` (adopt + setSongIds) is the one way a phone playlist is
+  made; the DAO-level duplicate in `PlaylistRepository` is a delegate. 2 new tests (401 total). Phone: created and deleted a throwaway
+  Phone Only playlist, no leftovers. `copyToPhone`, `uniquePhoneName`, `PlaylistHomes` and the SQL recount stay where they are.
