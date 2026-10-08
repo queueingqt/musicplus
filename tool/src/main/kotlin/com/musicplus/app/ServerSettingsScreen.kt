@@ -181,7 +181,7 @@ private fun ServerRow(server: ServerProfile, isOn: Boolean, status: String, onCl
             // end matches the SDK's own scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed
             // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+            .listRowPadding(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Leading state indicator, not trailing — matches QueueScreen's own
@@ -209,7 +209,7 @@ private fun RemovedServerRow(server: RemovedServer, summary: DownloadSummary?, o
         modifier = Modifier
             .fillMaxWidth()
             .lightCombinedClickable(onClick = {}, onLongClick = onLongClick)
-            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+            .listRowPadding(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {

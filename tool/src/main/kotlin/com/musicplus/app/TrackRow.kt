@@ -60,7 +60,7 @@ fun TrackRow(
             // end matches the SDK's own scrollbar track width — see
             // ScrollbarGutter.kt's doc (issue #39) for why this is fixed
             // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 0.5f.gridUnitsAsDp(), bottom = 0.5f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+            .listRowPadding(0.5f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leading?.invoke()

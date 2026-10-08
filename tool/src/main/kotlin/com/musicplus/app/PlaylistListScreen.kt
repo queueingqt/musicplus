@@ -141,7 +141,7 @@ private fun PlaylistRow(playlist: Playlist, unavailable: Boolean, onClick: () ->
             // end matches the SDK's own scrollbar track width — see the
             // LightLazyScrollView call site above for why this is fixed
             // rather than conditional on whether a scrollbar happens to show.
-            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+            .listRowPadding(),
     ) {
         LightText(text = playlist.name, variant = LightTextVariant.Copy, maxLines = 1, overflow = TextOverflow.Ellipsis)
         LightText(text = playlist.detailLine, variant = LightTextVariant.Fine)

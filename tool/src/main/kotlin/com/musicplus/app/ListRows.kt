@@ -27,8 +27,12 @@ import com.thelightphone.sdk.ui.lightClickable
 private fun Modifier.tapAndHold(onClick: () -> Unit, onLongClick: (() -> Unit)?): Modifier =
     if (onLongClick != null) lightCombinedClickable(onClick = onClick, onLongClick = onLongClick) else lightClickable(onClick = onClick)
 
+/**
+ * The padding of one row of a scrolling list: [vertical] above and below, a unit at the start, and the scrollbar's gutter at the end (see
+ * [SCROLLBAR_GUTTER_GRID_UNITS]) whether or not a scrollbar shows. Every list row uses this, so a change to the spacing is made once.
+ */
 @Composable
-private fun Modifier.listRowPadding(vertical: Float = 1f): Modifier =
+fun Modifier.listRowPadding(vertical: Float = 1f): Modifier =
     padding(top = vertical.gridUnitsAsDp(), bottom = vertical.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp())
 
 /** A heading between the sections of one list (Favorites and Search show artists, albums and tracks in one). */

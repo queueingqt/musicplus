@@ -217,7 +217,7 @@ private fun CollapsibleSectionHeader(title: String, expanded: Boolean, onClick: 
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onClick)
-            .padding(top = 1f.gridUnitsAsDp(), bottom = 1f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+            .listRowPadding(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LightText(text = title, variant = LightTextVariant.Heading, modifier = Modifier.weight(1f))
@@ -264,6 +264,6 @@ private fun SimilarArtistRow(artist: Artist, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .lightClickable(onClick = onClick)
-            .padding(top = 0.75f.gridUnitsAsDp(), bottom = 0.75f.gridUnitsAsDp(), start = 1f.gridUnitsAsDp(), end = SCROLLBAR_GUTTER_GRID_UNITS.gridUnitsAsDp()),
+            .listRowPadding(0.75f),
     )
 }
