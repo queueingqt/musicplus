@@ -98,6 +98,18 @@ interface LocalCopy {
 
     /** A placeholder playlist has its real id: its row and its membership rows move over together. */
     suspend fun reassignPlaylist(oldId: String, newId: String)
+
+    /**
+     * A playlist that exists only on this phone ("Phone Only"), holding [songIds] (which can come from any servers). Returns its id. Built from
+     * the primitives above, so a Phone Only playlist is made the same way a placeholder one is and has its count and length worked out the same
+     * way (see [setSongIds]); nothing is sent or queued for it, because a write to a phone id has no server to go to (see [LocalFirstWrites.write]).
+     */
+    suspend fun createPhonePlaylist(name: String, songIds: List<String> = emptyList()): String {
+        val id = ServerScope.newPhoneId()
+        adoptPlaylist(id, name)
+        if (songIds.isNotEmpty()) setSongIds(id, songIds)
+        return id
+    }
 }
 
 /** What a write came to: whether the server has it, and the id of what it was about (a created playlist's real id, once it has one). */

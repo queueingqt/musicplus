@@ -420,4 +420,29 @@ class LocalFirstWritesTest {
         assertEquals(PendingMutation.Favorite(FavoriteKind.ALBUM, true), Json.decodeFromString<PendingMutation>(old))
         assertEquals("""{"type":"FAVORITE","favoriteType":"track","favorite":false}""", Json.encodeToString<PendingMutation>(PendingMutation.Favorite(FavoriteKind.TRACK, false)))
     }
+
+    // ---- Phone Only ----
+
+    @Test
+    fun aPhoneOnlyPlaylistIsMadeAndEditedOnThePhoneAloneAndNothingIsSentOrQueued() = runBlocking<Unit> {
+        val id = local.createPhonePlaylist("road", listOf("one:a", "two:b"))
+        assertTrue(ServerScope.isPhone(id))
+        assertEquals("road", local.names[id])
+        assertEquals(listOf("one:a", "two:b"), local.members[id], "it holds songs from any server")
+
+        val added = writes.write(id, PendingMutation.PlaylistAddTrack("one:c"))
+        val renamed = writes.write(id, PendingMutation.PlaylistRename("long road"))
+        assertEquals(WriteOutcome.NOT_CONFIGURED, added.outcome)
+        assertEquals(WriteOutcome.NOT_CONFIGURED, renamed.outcome)
+        assertEquals(listOf("one:a", "two:b", "one:c"), local.members[id])
+        assertEquals("long road", local.names[id])
+        assertTrue(queue.rows.isEmpty() && one.calls.isEmpty() && two.calls.isEmpty(), "no server heard of it")
+    }
+
+    @Test
+    fun anEmptyPhoneOnlyPlaylistIsMadeWithNoSongs() = runBlocking<Unit> {
+        val id = local.createPhonePlaylist("empty")
+        assertEquals(emptyList(), local.members[id])
+        assertEquals("empty", local.names[id])
+    }
 }

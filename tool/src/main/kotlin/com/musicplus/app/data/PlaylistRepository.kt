@@ -48,12 +48,7 @@ class PlaylistRepository(
         shownServerIds.map { it + ServerScope.PHONE }.flatMapLatest { playlistDao.observeAll(it).retryOnTransientDbError() }.map { it.map { entity -> entity.toDomain() } }.labelledBy(ServerLabels::playlists)
 
     /** A playlist that exists only on this phone, holding [songIds] (which can come from any servers). Returns its id. Nothing is ever sent to a server for it. */
-    suspend fun createPhonePlaylist(name: String, songIds: List<String> = emptyList()): String {
-        val id = ServerScope.newPhoneId()
-        playlistDao.upsert(PlaylistEntity(id, name, songIds.size, localCopy.durationOf(songIds)))
-        if (songIds.isNotEmpty()) playlistDao.insertTracks(songIds.mapIndexed { i, songId -> PlaylistTrackEntity(id, i, songId) })
-        return id
-    }
+    suspend fun createPhonePlaylist(name: String, songIds: List<String> = emptyList()): String = localCopy.createPhonePlaylist(name, songIds)
 
     /** [wanted], or "<wanted> 2", "<wanted> 3" ... when a Phone Only playlist already has that name. Playlists on servers are told apart by their label, so only Phone Only ones count. */
     suspend fun uniquePhoneName(wanted: String): String {

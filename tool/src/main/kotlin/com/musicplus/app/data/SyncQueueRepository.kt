@@ -44,7 +44,7 @@ class SyncQueueRepository(
      * that server is not set up.
      */
     suspend fun createPlaylist(name: String, home: String): String? {
-        if (home == ServerScope.PHONE) return playlistRepository.createPhonePlaylist(name)
+        if (home == ServerScope.PHONE) return local.createPhonePlaylist(name)
         if (apis.forServer(home) == null) return null
         val placeholderId = ServerScope.scope(home, PLACEHOLDER_PREFIX + UUID.randomUUID())
         return writes.write(placeholderId, PendingMutation.PlaylistCreate(name)).target
