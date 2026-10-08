@@ -1,7 +1,5 @@
 package com.musicplus.app.data
 
-import com.thelightphone.sdk.LightWork
-import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.CancellationException
 import com.musicplus.app.data.playback.StreamCache
 import java.io.File
@@ -35,6 +33,7 @@ class MediaIntegrity(
     private val downloadDao: DownloadDao,
     private val trackDao: TrackDao,
     private val streamCache: StreamCache,
+    private val downloads: DownloadRepository,
 ) {
     companion object {
         /** Bump to run the cleanup again on every install that already ran an older one. */
@@ -50,7 +49,7 @@ class MediaIntegrity(
      * again; false when the server couldn't be asked about some song (offline,
      * error), so it should be tried again next launch.
      */
-    suspend fun repair(lightContext: SealedLightContext, apiHolder: ApiLookup, requeue: Boolean): Boolean {
+    suspend fun repair(apiHolder: ApiLookup, requeue: Boolean): Boolean {
         val startedAt = System.currentTimeMillis()
         var answeredAll = true
         var checked = 0
@@ -59,12 +58,13 @@ class MediaIntegrity(
             val file = download.localFilePath?.let { File(it) }
             val track = trackDao.getById(download.songId) ?: continue
             if (file == null || !file.isFile) {
-                fixUp(lightContext, download, requeue)
+                fixUp(download, requeue)
                 requeued++
                 continue
             }
-            // Only an original-format file can be compared with the server's size.
-            if (track.suffix == null || !file.extension.equals(track.suffix, ignoreCase = true)) continue
+            // Only an original-format file can be compared with the server's size (a capped-quality download is a transcode, whatever
+            // its extension says).
+            if (!DownloadRepository.comparableWithOriginal(file, track.suffix)) continue
             val serverBytes = try {
                 apiHolder.forId(download.songId)?.getSong(download.songId)?.sizeBytes
             } catch (e: CancellationException) {
@@ -77,7 +77,7 @@ class MediaIntegrity(
             if (serverBytes == null || file.length() == serverBytes) continue
             AppLogger.d("MediaIntegrity", "${track.title}: file is ${file.length()} of $serverBytes bytes, discarding it")
             file.delete()
-            fixUp(lightContext, download, requeue)
+            fixUp(download, requeue)
             requeued++
         }
         val sweptParts = streamCache.sweepStaleParts(STALE_PART_MS)
@@ -89,26 +89,7 @@ class MediaIntegrity(
         return answeredAll
     }
 
-    private suspend fun fixUp(lightContext: SealedLightContext, download: DownloadEntity, requeue: Boolean) {
-        if (!requeue) {
-            downloadDao.delete(download.songId)
-            return
-        }
-        downloadDao.upsert(
-            download.copy(
-                localFilePath = null,
-                status = DownloadStatus.QUEUED,
-                queuedAtEpochMs = System.currentTimeMillis(),
-                completedAtEpochMs = null,
-                attemptCount = 0,
-            ),
-        )
-        LightWork.enqueue(
-            lightContext = lightContext,
-            jobKey = DownloadRepository.JOB_KEY,
-            inputData = mapOf("songId" to download.songId),
-            tag = download.songId,
-        )
+    private suspend fun fixUp(download: DownloadEntity, requeue: Boolean) {
+        if (requeue) downloads.requeue(download.songId) else downloads.cancel(download.songId)
     }
-
 }

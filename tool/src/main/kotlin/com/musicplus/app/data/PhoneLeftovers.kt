@@ -44,7 +44,7 @@ class PhoneLeftovers(
         dropFromQueue(serverId)
         // A download that has not finished cannot finish now; finished ones go unless they are being kept.
         for (row in downloadDao.getForServer(serverId)) {
-            if (!keepDownloads || row.status != DownloadStatus.COMPLETE) downloadRepository.cancel(lightContext, row.songId)
+            if (!keepDownloads || row.status != DownloadStatus.COMPLETE) downloadRepository.cancel(row.songId)
         }
         serverCleanupDao.pruneServer(serverId, keepDownloads = keepDownloads)
         deleteCachedFiles(serverId, includingArtAndLyrics = !keepDownloads)
@@ -53,7 +53,7 @@ class PhoneLeftovers(
     override suspend fun clearKept(serverId: String) {
         // Their files are about to go, so upcoming songs from this server can no longer play either.
         dropFromQueue(serverId)
-        for (row in downloadDao.getForServer(serverId)) downloadRepository.cancel(lightContext, row.songId)
+        for (row in downloadDao.getForServer(serverId)) downloadRepository.cancel(row.songId)
         serverCleanupDao.pruneServer(serverId, keepDownloads = false)
         deleteCachedFiles(serverId, includingArtAndLyrics = true)
     }

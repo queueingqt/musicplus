@@ -52,7 +52,7 @@ class TrackActions(
     private fun downloadItem(track: Track): ActionMenuItem {
         val downloads = graph.downloadRepository
         fun row(status: com.musicplus.app.data.DownloadStatus?) =
-            trackDownloadActionItem(status) { shown -> downloads.tap(lightContext, track, shown) }
+            trackDownloadActionItem(status) { shown -> downloads.tap(track, shown) }
         return row(track.downloadStatus).copy(liveUpdates = downloads.observeStatus(track.id).map { row(it?.status) })
     }
 }

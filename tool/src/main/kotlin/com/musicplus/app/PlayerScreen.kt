@@ -167,10 +167,10 @@ class PlayerScreenViewModel(
         .screenState(viewModelScope, null)
 
     /** Same tap as every list's per-track download row: see `DownloadRepository.tap` in DownloadStates.kt. */
-    fun toggleDownloadCurrentTrack(lightContext: SealedLightContext) {
+    fun toggleDownloadCurrentTrack() {
         val track = state.value.currentTrack ?: return
         val status = downloadStatus.value
-        viewModelScope.launch { downloadRepository.tap(lightContext, track, status) }
+        viewModelScope.launch { downloadRepository.tap(track, status) }
     }
 
     fun togglePlayPause() = playback.togglePlayPause()
@@ -471,7 +471,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
                             size = 1.5f,
                             contentDescription = downloadStatusLabel(downloadStatus),
                             modifier = Modifier
-                                .lightClickable { viewModel.toggleDownloadCurrentTrack(lightContext) }
+                                .lightClickable { viewModel.toggleDownloadCurrentTrack() }
                                 .padding(horizontal = 1f.gridUnitsAsDp()),
                         )
                     }

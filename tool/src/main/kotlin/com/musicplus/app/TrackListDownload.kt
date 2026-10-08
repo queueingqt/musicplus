@@ -41,7 +41,6 @@ fun observeTrackListDownloadState(
  * [TrackListDownloadState]'s own doc for why that distinction matters.
  */
 suspend fun toggleTrackListDownload(
-    lightContext: SealedLightContext,
     tracksFlow: Flow<List<Track>>,
     downloadRepository: DownloadRepository,
 ): TrackListDownloadState {
@@ -49,7 +48,7 @@ suspend fun toggleTrackListDownload(
     val currentState = observeTrackListDownloadState(tracksFlow, downloadRepository).first()
     return when (currentState) {
         TrackListDownloadState.ALL, TrackListDownloadState.IN_PROGRESS -> {
-            currentTracks.forEach { downloadRepository.cancel(lightContext, it.id) }
+            currentTracks.forEach { downloadRepository.cancel(it.id) }
             TrackListDownloadState.NONE
         }
         TrackListDownloadState.NONE, TrackListDownloadState.SOME -> {
@@ -57,7 +56,7 @@ suspend fun toggleTrackListDownload(
                 .filter { it.status == DownloadStatus.COMPLETE }
                 .map { it.songId }
                 .toSet()
-            currentTracks.filter { it.id !in completeIds }.forEach { downloadRepository.enqueue(lightContext, it) }
+            currentTracks.filter { it.id !in completeIds }.forEach { downloadRepository.enqueue(it) }
             TrackListDownloadState.IN_PROGRESS
         }
     }
@@ -102,7 +101,6 @@ fun trackListDownloadActionItem(
  * (Downloads screen, per-track glyphs elsewhere) once this enqueues them.
  */
 suspend fun downloadEntireArtist(
-    lightContext: SealedLightContext,
     libraryRepository: LibraryRepository,
     downloadRepository: DownloadRepository,
     artistId: String,
@@ -114,5 +112,5 @@ suspend fun downloadEntireArtist(
     val tracks = libraryRepository.observeAlbumsByArtist(artistId).first().flatMap { album ->
         SelfLoadingTrackList.forAlbum(libraryRepository, album.id).tracks()
     }
-    tracks.filter { it.id !in completeIds }.forEach { downloadRepository.enqueue(lightContext, it) }
+    tracks.filter { it.id !in completeIds }.forEach { downloadRepository.enqueue(it) }
 }

@@ -20,8 +20,8 @@ fun downloadTapStarts(status: DownloadStatus?): Boolean = status == null || stat
 fun statusAfterDownloadTap(status: DownloadStatus?): DownloadStatus? = if (downloadTapStarts(status)) DownloadStatus.QUEUED else null
 
 /** Carries out a tap on [track]'s download control (it was showing [status]) and returns what it shows now. `cancel` deletes the file and the row whatever the job's state, so it is also "remove the copy". */
-suspend fun DownloadRepository.tap(lightContext: SealedLightContext, track: Track, status: DownloadStatus?): DownloadStatus? {
-    if (downloadTapStarts(status)) enqueue(lightContext, track) else cancel(lightContext, track.id)
+suspend fun DownloadRepository.tap(track: Track, status: DownloadStatus?): DownloadStatus? {
+    if (downloadTapStarts(status)) enqueue(track) else cancel(track.id)
     return statusAfterDownloadTap(status)
 }
 

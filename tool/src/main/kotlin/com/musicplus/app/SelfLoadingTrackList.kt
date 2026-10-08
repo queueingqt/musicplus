@@ -60,9 +60,9 @@ class SelfLoadingTrackList private constructor(
         observeTrackListDownloadState(tracksFlow, downloadRepository)
 
     /** See TrackListDownload.kt's [toggleTrackListDownload]. */
-    suspend fun toggleDownload(lightContext: SealedLightContext, downloadRepository: DownloadRepository): TrackListDownloadState {
+    suspend fun toggleDownload(downloadRepository: DownloadRepository): TrackListDownloadState {
         refresh()
-        return toggleTrackListDownload(lightContext, tracksFlow, downloadRepository)
+        return toggleTrackListDownload(tracksFlow, downloadRepository)
     }
 
     /** The tracks themselves, refreshed first — e.g. "Add album to queue" needs the real list, not just whatever happened to already be cached. */

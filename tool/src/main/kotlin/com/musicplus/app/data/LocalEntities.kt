@@ -70,6 +70,10 @@ data class PlaylistTrackEntity(
     val songId: String,
 )
 
+/**
+ * DOWNLOADING is a display state only: the download job keeps a row QUEUED while it runs (and the id-scope migration still maps an old
+ * DOWNLOADING row to FAILED). The screens treat both as "in progress".
+ */
 enum class DownloadStatus { QUEUED, DOWNLOADING, COMPLETE, FAILED }
 
 @Entity(tableName = "downloads")

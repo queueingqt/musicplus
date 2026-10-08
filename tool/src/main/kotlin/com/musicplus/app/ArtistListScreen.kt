@@ -44,8 +44,8 @@ class ArtistListScreenViewModel(
     suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
 
     /** See [downloadEntireArtist] (TrackListDownload.kt) — moved here from a standalone row on ArtistDetailScreen itself (reported live, 2026-09-18). */
-    fun downloadEntireArtist(lightContext: SealedLightContext, artistId: String) {
-        viewModelScope.launch { downloadEntireArtist(lightContext, libraryRepository, downloadRepository, artistId) }
+    fun downloadEntireArtist(artistId: String) {
+        viewModelScope.launch { downloadEntireArtist(libraryRepository, downloadRepository, artistId) }
     }
 }
 
@@ -98,7 +98,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
                                             confirmMessage = "Downloads every track across ${artist.albumCount} " +
                                                 (if (artist.albumCount == 1) "album" else "albums") + " to this device.",
                                             confirmContentDescription = "Download entire artist",
-                                            onConfirm = { viewModel.downloadEntireArtist(lightContext, artist.id) },
+                                            onConfirm = { viewModel.downloadEntireArtist(artist.id) },
                                         ),
                                     ),
                                 )

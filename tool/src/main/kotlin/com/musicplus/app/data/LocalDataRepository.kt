@@ -40,7 +40,7 @@ class LocalDataRepository(
 
         streamCache.clear()
         albumArtRepository.clear()
-        for (dirName in listOf("downloads", "lyrics")) {
+        for (dirName in listOf(DownloadRepository.DIRECTORY, "lyrics")) {
             File(filesDir, dirName).deleteRecursively()
         }
 

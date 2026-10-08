@@ -49,7 +49,7 @@ internal object IdScopeMigration {
                 val trackIds = strings(db, "SELECT id FROM tracks")
 
                 // Paths and files first: they are keyed by the ids as they are now.
-                scopeDownloadedFiles(db, prefix, File(filesDir, "downloads"), renames)
+                scopeDownloadedFiles(db, prefix, File(filesDir, DownloadRepository.DIRECTORY), renames)
 
                 scopeColumns(db, prefix, "artists", "id", "coverArtId")
                 scopeColumns(db, prefix, "albums", "id", "artistId", "coverArtId")

@@ -35,7 +35,7 @@ class AlbumActions(
     private fun menuItems(albumId: String, isFavorite: Boolean): List<ActionMenuItem> {
         val songs = SelfLoadingTrackList.forAlbum(graph.libraryRepository, albumId)
         fun download(state: TrackListDownloadState) =
-            trackListDownloadActionItem("album", state) { songs.toggleDownload(lightContext, graph.downloadRepository) }
+            trackListDownloadActionItem("album", state) { songs.toggleDownload(graph.downloadRepository) }
         return listOf(
             favoriteActionItem(isFavorite) { favorite -> graph.syncQueueRepository.setAlbumFavorite(albumId, favorite) },
             download(TrackListDownloadState.NONE).copy(liveUpdates = songs.observeDownloadState(graph.downloadRepository).map { download(it) }),
@@ -69,7 +69,7 @@ class PlaylistActions(
     private fun menuItems(playlistId: String, name: String, editOrder: () -> Unit, onDeleted: () -> Unit): List<ActionMenuItem> {
         val songs = SelfLoadingTrackList.forPlaylist(graph.playlistRepository, playlistId)
         fun download(state: TrackListDownloadState) =
-            trackListDownloadActionItem("playlist", state) { songs.toggleDownload(lightContext, graph.downloadRepository) }
+            trackListDownloadActionItem("playlist", state) { songs.toggleDownload(graph.downloadRepository) }
         return listOf(
             addToQueueActionItem("Add to queue", playbackRepository(activity, lightContext)) { songs.tracks() },
             ActionMenuItem(

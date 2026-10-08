@@ -1,264 +1,186 @@
 package com.musicplus.app.data
 
 import com.musicplus.app.Track
-import com.thelightphone.sdk.LightJob
-import com.thelightphone.sdk.LightJobHandler
-import com.thelightphone.sdk.LightJobResult
-import com.thelightphone.sdk.LightWork
-import com.thelightphone.sdk.SealedLightContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import java.io.File
+import java.io.IOException
+
+/** What the download work needs to know about a song before fetching it. */
+data class DownloadTrack(val suffix: String?)
+
+/** How a download job is armed and stopped (WorkManager through [com.thelightphone.sdk.LightWork] on the phone, a recorder in a test). */
+interface DownloadScheduler {
+    suspend fun schedule(songId: String)
+    suspend fun cancel(songId: String)
+}
+
+/** Where a download looks things up: the song's row, the api of the server that owns it, and the chosen download quality. */
+interface DownloadSources {
+    suspend fun track(songId: String): DownloadTrack?
+    suspend fun api(songId: String): MusicApi?
+
+    /** The bit-rate cap for downloads, or null for the original file. */
+    suspend fun maxBitRateKbps(): Int?
+}
+
+/** The fetch scheduler a download goes through: priority order, and only as many at a time as the connection takes. */
+interface DownloadGate {
+    /** Runs [block] when a slot comes free; false if none did in time (a long backlog). [retried] is true for a song that already failed once. */
+    suspend fun run(songId: String, retried: Boolean, transcoding: Boolean, block: suspend (FetchGate.Lease?) -> Unit): Boolean
+
+    /** A transfer failed in a way that suggests the link is overloaded. */
+    fun onCongestion()
+}
+
+/** How one run of the download job ended, in the job's own terms. */
+sealed interface DownloadOutcome {
+    /** The file is on disk and the row says COMPLETE. */
+    data object Done : DownloadOutcome
+
+    /** Try again later: no slot came free, or a transient failure with attempts left. */
+    data object Retry : DownloadOutcome
+
+    /** Stop: retrying will not help, or the attempts ran out (the row says FAILED in the second case). */
+    data class Failed(val reason: String) : DownloadOutcome
+}
 
 /**
- * Download queue for offline listening. Enqueuing writes a QUEUED row immediately
- * (so DownloadsScreen has something to show right away) and hands the real work to
- * [LightWork] / WorkManager, which decides timing (this is background work, not
- * time-sensitive — see the SDK reference notes on LightWork's 15-minute periodic
- * floor and system-decided scheduling).
+ * Download queue for offline listening, and the one owner of what a download is from QUEUED to gone: the row's status transitions, the file's
+ * path and extension, scheduling and cancelling the job, and the work the job does ([run]). Enqueuing writes a QUEUED row at once (so the
+ * Downloads screen has something to show) and hands the work to the [scheduler].
+ *
+ * The job handler (`downloadTrack`, in DownloadJob.kt) only has to find the song id and pass the outcome back to the SDK; everything it
+ * used to decide lives here, so it is tested here with a fake api and a recorded scheduler.
  */
 class DownloadRepository(
     private val downloadDao: DownloadDao,
-    private val trackDao: TrackDao,
+    private val scheduler: DownloadScheduler,
+    private val sources: DownloadSources,
+    private val gate: DownloadGate,
+    private val downloadsDir: File,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     companion object {
         const val JOB_KEY = "download-track"
 
-        // Reported live: a download that hit a real, non-transient error (e.g. the
-        // server genuinely unreachable) looked identical to one still in progress
-        // forever — downloadTrack's catch block always returned Retry, and nothing
-        // ever wrote DownloadStatus.FAILED, so the UI's already-built "Failed — tap
-        // to retry" state was simply never reached. WorkManager's own Result.retry()
-        // has no built-in attempt ceiling (it backs off, capped at its own max
-        // delay, but keeps trying indefinitely) — giving up is something the job
-        // itself has to decide, tracked here since WorkManager passes no attempt
-        // count into the handler itself. 3 is enough to ride out a brief blip
-        // across a few backoff cycles without leaving something well and truly
-        // stuck look identical to "still trying" for hours.
+        // A download that hit a real error (the server genuinely unreachable) used to look the same as one still in progress forever,
+        // because WorkManager's own Result.retry() has no attempt ceiling. Giving up is the job's decision, and the count is kept on the
+        // row since WorkManager passes none into the handler. 3 rides out a brief blip across a few backoff cycles without leaving
+        // something well and truly stuck looking like "still trying" for hours.
         const val MAX_DOWNLOAD_ATTEMPTS = 3
+
+        /** The folder under the app's files directory that holds downloads. */
+        const val DIRECTORY = "downloads"
+
+        /**
+         * Whether a file can be compared with the byte length the server reports for the original song. A download at a capped quality is
+         * a transcode, always saved as `.mp3`, so only a file in the song's own format qualifies, and an mp3 source cannot be told from
+         * its transcode by name, so it never does.
+         */
+        fun comparableWithOriginal(file: File, suffix: String?): Boolean =
+            suffix != null && !suffix.equals("mp3", ignoreCase = true) && file.extension.equals(suffix, ignoreCase = true)
+
+        /** Whether a failed transfer says the link is overloaded (a timeout, a dropped connection) rather than that the server said no. */
+        fun looksLikeCongestion(e: Exception): Boolean =
+            e !is ServerRefusedException && (e is IOException || e.toString().contains("Timeout", ignoreCase = true))
     }
 
     fun observeAll(): Flow<List<DownloadEntity>> = downloadDao.observeAll()
     fun observeStatus(songId: String): Flow<DownloadEntity?> = downloadDao.observeBySongId(songId)
 
-    suspend fun enqueue(lightContext: SealedLightContext, track: Track) {
-        downloadDao.upsert(
-            DownloadEntity(
-                songId = track.id,
-                localFilePath = null,
-                status = DownloadStatus.QUEUED,
-                queuedAtEpochMs = System.currentTimeMillis(),
-                completedAtEpochMs = null,
-                attemptCount = 0,
-            ),
-        )
-        LightWork.enqueue(
-            lightContext = lightContext,
-            jobKey = JOB_KEY,
-            inputData = mapOf("songId" to track.id),
-            tag = track.id,
-        )
+    suspend fun enqueue(track: Track) = requeue(track.id)
+
+    /** Puts a song back in the queue with its attempts reset: a new download, a manual retry, or a file found cut short. */
+    suspend fun requeue(songId: String) {
+        downloadDao.upsert(row(songId, DownloadStatus.QUEUED, attempts = 0))
+        scheduler.schedule(songId)
     }
 
     /**
-     * Reads the real on-disk path off the entity's own [DownloadEntity.localFilePath]
-     * — not reconstructed by guessing an extension. Reported live: this used to call
-     * a [localFile] helper that always assumed `.mp3`, but [downloadTrack] only ever
-     * writes `.mp3` when a quality cap forces server-side transcoding; a track
-     * downloaded at "Original" quality (the default) is saved under its real source
-     * suffix (flac/ogg/m4a/wav/...). Cancelling one of those silently deleted the
-     * wrong (nonexistent) file, leaving the real audio orphaned on disk forever while
-     * the DB row — and therefore the UI — reported it as removed. The entity already
-     * has the one true path (written by [downloadTrack] on COMPLETE); this just reads
-     * it back instead of re-deriving a guess.
+     * Stops the job, deletes the file and drops the row. The file is read off the row's own path, never reconstructed by guessing an
+     * extension: a download at "Original" quality is saved under its real source suffix, and guessing `.mp3` once left the real audio
+     * orphaned on disk while the row reported it removed.
      */
-    suspend fun cancel(lightContext: SealedLightContext, songId: String) {
-        LightWork.cancel(lightContext, jobKeyOrTag = songId)
+    suspend fun cancel(songId: String) {
+        scheduler.cancel(songId)
         downloadDao.getBySongId(songId)?.localFilePath?.let { File(it).delete() }
         downloadDao.delete(songId)
     }
 
     /**
-     * Re-arms every download that gave up after [MAX_DOWNLOAD_ATTEMPTS] — called
-     * once per process start (see AppGraph.build()), same "give it a fresh shot
-     * every time the app reopens" behavior the sync queue already has via its
-     * own reconnect-triggered enqueue. Resets attemptCount back to 0 rather than
-     * continuing to count against the exhausted total, so a download that failed
-     * because of a since-resolved problem (server was down, Tailscale was
-     * disconnected, etc.) gets the same 3 fresh attempts as a brand new one,
-     * not zero.
+     * Re-arms every download that gave up after [MAX_DOWNLOAD_ATTEMPTS], once per process start: the same "a fresh shot every time the
+     * app reopens" the sync queue has. Attempts go back to 0, so a download that failed for a since-resolved reason gets three fresh
+     * tries, not none.
      */
-    suspend fun retryFailed(lightContext: SealedLightContext) {
-        for (entity in downloadDao.getByStatus(DownloadStatus.FAILED)) {
-            downloadDao.upsert(entity.copy(status = DownloadStatus.QUEUED, attemptCount = 0))
-            LightWork.enqueue(
-                lightContext = lightContext,
-                jobKey = JOB_KEY,
-                inputData = mapOf("songId" to entity.songId),
-                tag = entity.songId,
-            )
-        }
+    suspend fun retryFailed() {
+        for (entity in downloadDao.getByStatus(DownloadStatus.FAILED)) requeue(entity.songId)
     }
-}
 
-/**
- * The actual download job. Verified against the real `LightWork.kt` (not just
- * summarized notes): `@LightJob` has `SOURCE` retention, and its own doc comment
- * says it marks a "top-level `val`" — the KSP plugin scans for exactly that shape
- * at compile time to populate `LightSdkRegistry.jobs`, so this MUST be a true
- * top-level declaration, not nested in an `object` (an earlier draft nested it in
- * `object DownloadJobs`, which the processor would not have discovered).
- *
- * Builds its own network client rather than reusing `AppGraph`'s `apiHolder` —
- * WorkManager can run this in a fresh process with none of the app's in-memory
- * state warm, so it can't assume one exists. The database is the one exception
- * (see the `AppGraph.from(...)` call below): reusing the app's singleton when
- * the process IS already alive is what makes download progress actually show
- * up live instead of only after the screen is reopened.
- */
-@LightJob(DownloadRepository.JOB_KEY)
-val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
-        val tag = "MusicPlusDownload"
-        // input["songId"] comes back as the literal string "songId=<value>", not
-        // just "<value>" — confirmed on-device via logcat, 2026-09-17. Root cause is
-        // upstream: LightWork.kt's `Data.toStringMap()` does
-        // `keyValueMap.mapValues { it.toString() }`, but mapValues's lambda
-        // parameter is the Map.Entry, not the value, so `it.toString()` produces
-        // Java's default `"key=value"` Map.Entry format instead of the value alone.
-        // This is a Light SDK bug, not something fixable from a tool's own repo —
-        // worked around defensively here rather than trusting the value as-is.
-        val songId = input["songId"]?.removePrefix("songId=") ?: run {
-            android.util.Log.e(tag, "no songId in input: $input")
-            return@handler LightJobResult.Error(reason = "no songId in input")
+    /** The job's work: fetch [songId] into its file and record how it went. */
+    suspend fun run(songId: String): DownloadOutcome {
+        val track = sources.track(songId) ?: run {
+            AppLogger.e(TAG, "no track row for songId=$songId")
+            return DownloadOutcome.Failed("no track row for song")
         }
-
-        // AppGraph.from(...), not MusicPlusDatabase.create(...) directly — the
-        // latter builds a brand-new Room instance every time, and Room's Flow
-        // invalidation is tracked per-*instance*, not per underlying file: a
-        // write through a second instance never notifies Flows the app's own
-        // (already-open) instance is serving, so every download-status row
-        // this job wrote was correct on disk but the in-progress action menu
-        // never advanced past "Downloading" until the screen was reopened and
-        // re-queried fresh. Confirmed on-device, 2026-09-18. AppGraph.from is
-        // the same memoized singleton every screen already calls — reusing it
-        // here means this job shares the app's live instance whenever the
-        // app process is actually alive to observe it, and transparently
-        // builds its own fresh one (same as before) on the rare cold-process
-        // WorkManager run, since AppGraph.from()'s own singleton is per-process.
-        val db = AppGraph.from(lightContext).database
-        val track = db.trackDao().getById(songId) ?: run {
-            android.util.Log.e(tag, "no track row for songId=$songId")
-            AppLogger.e(tag, "no track row for songId=$songId")
-            return@handler LightJobResult.Error(reason = "no track row for song")
+        // The server that owns this song, which is not necessarily the active one. Its being gone or not set up will not change by retrying.
+        val api = sources.api(songId) ?: run {
+            AppLogger.e(TAG, "no server for songId=$songId")
+            return DownloadOutcome.Failed("no server for song")
         }
+        // A capped quality means the server transcodes, which stream.view returns as mp3 whatever the source, so the extension follows the
+        // cap and not the song's own suffix (the original format, wrong once transcoding happens). Null is the original file.
+        val maxBitRateKbps = sources.maxBitRateKbps()
+        val destination = fileFor(songId, track.suffix, maxBitRateKbps)
 
-        // The server that owns this song, which is not necessarily the active one.
-        val api = AppGraph.from(lightContext).apiHolder.forId(songId) ?: run {
-            android.util.Log.e(tag, "no server for songId=$songId")
-            AppLogger.e(tag, "no server for songId=$songId")
-            return@handler LightJobResult.Error(reason = "no server for song") // its server is gone or not set up — retrying won't help
-        }
-        // Preferences > Streaming quality's "Downloads" setting — null (the
-        // default) means the original file, same as this job's behavior
-        // before that setting existed. A non-null cap means the server
-        // transcodes on the fly, which per AppSettingsRepository.downloadQuality's
-        // doc Navidrome (and stream.view generally) returns as mp3 regardless
-        // of the source format — same convention PlaybackRepository.cachedStreamFile
-        // already uses for the same reason, so the extension has to be
-        // decided the same way here, not trusted from track.suffix (the
-        // *original* format, wrong once transcoding is actually happening).
-        val maxBitRateKbps = AppGraph.from(lightContext).appSettingsRepository.downloadQuality.first()
-        val destination = File(lightContext.filesDir, "downloads").apply { mkdirs() }
-            .let { File(it, "${ServerScope.fileKey(songId)}.${if (maxBitRateKbps != null) "mp3" else (track.suffix ?: "mp3")}") }
+        // Read before the attempt: a WorkManager retry is a fresh invocation, so the count has to be persisted, not held in a local.
+        val previousAttempts = downloadDao.getBySongId(songId)?.attemptCount ?: 0
 
-        // Read before the attempt, not in the catch block — a WorkManager retry is a
-        // fresh invocation of this same handler, so attemptCount has to be persisted
-        // between calls rather than tracked in a local var (nothing here survives
-        // across retries except what's written to the DB).
-        val previousAttempts = db.downloadDao().getBySongId(songId)?.attemptCount ?: 0
-
-        return@handler try {
-            // Ktor/CIO, not java.net.URL(...).openStream() — the latter goes through
-            // the platform's default HttpURLConnection, which (like OkHttp) enforces
-            // Android's cleartext-traffic block, undoing the whole point of switching
-            // SubsonicClient to CIO. An earlier version of this job used openStream()
-            // directly and downloads silently failed against a real http:// server —
-            // found via on-device testing + logcat, not caught by compiling.
-            //
-            // downloadToFile, not destination.writeBytes(api.downloadBytes(songId))
-            // — the latter briefly held the whole track as one in-memory
-            // ByteArray, which crashed the app outright (OutOfMemoryError) on a
-            // real ~30MB track, confirmed on-device 2026-09-18. See
-            // SubsonicClient.downloadToFile's doc.
-            //
-            // streamToFile (not downloadToFile) when a quality cap is set —
-            // download.view has no maxBitRate parameter at all (confirmed via
-            // SubsonicApi.downloadToFile's own doc: "original file" only), so
-            // getting a transcoded download means going through stream.view,
-            // same endpoint live playback already uses for this.
-            // Goes through FetchGate: served in priority order (the playing and up-next
-            // songs first) and only as many at a time as the connection can take.
-            val rank: () -> FetchGate.Priority = {
-                PlaybackRepositoryHolder.peek()?.priorityForSong(songId)
-                    ?: if (previousAttempts > 0) FetchGate.Priority.RETRY else FetchGate.Priority.DOWNLOAD
+        return try {
+            // download.view has no maxBitRate parameter (original file only), so a transcoded download goes through stream.view, the
+            // endpoint live playback uses for the same.
+            val fetched = gate.run(songId, retried = previousAttempts > 0, transcoding = maxBitRateKbps != null) { lease ->
+                if (maxBitRateKbps != null) api.streamToFile(songId, destination, maxBitRateKbps, lease) else api.downloadToFile(songId, destination, lease)
             }
-            val fetched = FetchGate.run(FetchGate.Lane.BULK, songId, rank, transcoding = maxBitRateKbps != null) { lease ->
-                if (maxBitRateKbps != null) {
-                    api.streamToFile(songId, destination, maxBitRateKbps, lease)
-                } else {
-                    api.downloadToFile(songId, destination, lease)
-                }
-            }
-            // No slot came free in time (a long backlog): try again later, and don't
-            // count it as a failed attempt.
-            if (fetched == null) return@handler LightJobResult.Retry
-            db.downloadDao().upsert(
-                DownloadEntity(
-                    songId = songId,
-                    localFilePath = destination.absolutePath,
-                    status = DownloadStatus.COMPLETE,
-                    queuedAtEpochMs = System.currentTimeMillis(),
-                    completedAtEpochMs = System.currentTimeMillis(),
-                ),
-            )
-            LightJobResult.Success(outputFilePath = null, message = null)
+            // No slot came free in time: try again later, and do not count it as a failed attempt.
+            if (!fetched) return DownloadOutcome.Retry
+            downloadDao.upsert(row(songId, DownloadStatus.COMPLETE, path = destination.absolutePath, completed = true))
+            DownloadOutcome.Done
         } catch (e: CancellationException) {
-            // WorkManager stopped the job (its time limit, or the work was cancelled): not a
-            // failed attempt, and nothing worth keeping of a half-written file.
+            // WorkManager stopped the job (its time limit, or the work was cancelled): not a failed attempt, and nothing worth keeping of a half-written file.
             destination.delete()
             throw e
         } catch (e: Exception) {
-            if (e.toString().contains("Timeout", ignoreCase = true) || e is java.io.IOException) FetchGate.onCongestion()
-            android.util.Log.e(tag, "download failed for songId=$songId", e)
-            AppLogger.e(tag, "download failed for songId=$songId", e)
+            if (looksLikeCongestion(e)) gate.onCongestion()
+            AppLogger.e(TAG, "download failed for songId=$songId", e)
             destination.delete()
 
             val attempt = previousAttempts + 1
-            if (attempt >= DownloadRepository.MAX_DOWNLOAD_ATTEMPTS) {
-                db.downloadDao().upsert(
-                    DownloadEntity(
-                        songId = songId,
-                        localFilePath = null,
-                        status = DownloadStatus.FAILED,
-                        queuedAtEpochMs = System.currentTimeMillis(),
-                        completedAtEpochMs = null,
-                        attemptCount = attempt,
-                    ),
-                )
-                LightJobResult.Error(reason = "download failed after retries") // exhausted — stop WorkManager's own retries too, let the user retry from the UI
+            if (attempt >= MAX_DOWNLOAD_ATTEMPTS) {
+                downloadDao.upsert(row(songId, DownloadStatus.FAILED, attempts = attempt))
+                DownloadOutcome.Failed("download failed after retries") // exhausted: stop WorkManager's own retries too, let the person retry from the UI
             } else {
-                db.downloadDao().upsert(
-                    DownloadEntity(
-                        songId = songId,
-                        localFilePath = null,
-                        status = DownloadStatus.QUEUED,
-                        queuedAtEpochMs = System.currentTimeMillis(),
-                        completedAtEpochMs = null,
-                        attemptCount = attempt,
-                    ),
-                )
-                LightJobResult.Retry // transient (network) failure — let WorkManager back off and retry
+                downloadDao.upsert(row(songId, DownloadStatus.QUEUED, attempts = attempt))
+                DownloadOutcome.Retry // transient: let WorkManager back off and retry
             }
         }
     }
+
+    /** Where a song's download lives: `downloads/<scoped key>.<ext>`, mp3 when a quality cap makes the server transcode. */
+    fun fileFor(songId: String, suffix: String?, maxBitRateKbps: Int?): File {
+        downloadsDir.mkdirs()
+        return File(downloadsDir, "${ServerScope.fileKey(songId)}.${if (maxBitRateKbps != null) "mp3" else (suffix ?: "mp3")}")
+    }
+
+    private fun row(songId: String, status: DownloadStatus, attempts: Int = 0, path: String? = null, completed: Boolean = false) =
+        DownloadEntity(
+            songId = songId,
+            localFilePath = path,
+            status = status,
+            queuedAtEpochMs = clock(),
+            completedAtEpochMs = if (completed) clock() else null,
+            attemptCount = attempts,
+        )
+}
+
+private const val TAG = "MusicPlusDownload"

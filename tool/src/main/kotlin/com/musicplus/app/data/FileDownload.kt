@@ -30,11 +30,11 @@ internal suspend fun HttpStatement.streamToFile(destination: File, lease: FetchG
     execute { response ->
         val expectedBytes = response.contentLength()
         AppLogger.d(TAG, "$what: got response ${response.status}, contentLength=$expectedBytes")
-        if (!response.status.isSuccess()) throw IOException("server answered ${response.status}")
+        if (!response.status.isSuccess()) throw ServerRefusedException("server answered ${response.status}")
         // A server can report an error as an ordinary 200 carrying a JSON, XML or text document, not as an audio file (Subsonic does).
         val type = response.contentType()
         if (type != null && (type.match(ContentType.Application.Json) || type.match(ContentType.Application.Xml) || type.match(ContentType.Text.Any))) {
-            throw IOException("server answered with $type instead of audio")
+            throw ServerRefusedException("server answered with $type instead of audio")
         }
         val channel = response.bodyAsChannel()
         var totalBytes = 0L
@@ -58,6 +58,9 @@ internal suspend fun HttpStatement.streamToFile(destination: File, lease: FetchG
         AppLogger.d(TAG, "$what: wrote $totalBytes bytes")
     }
 }
+
+/** The server answered, and said no (a status or a document where the audio should be). Not a sign that the connection is overloaded, unlike a drop or a timeout. */
+class ServerRefusedException(message: String) : IOException(message)
 
 private const val TAG = "FileDownload"
 private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024

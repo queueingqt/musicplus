@@ -131,7 +131,10 @@ object AppGraph {
         // why) to join live download status into every Track they hand out.
         val downloadRepository = DownloadRepository(
             downloadDao = database.downloadDao(),
-            trackDao = database.trackDao(),
+            scheduler = LightWorkDownloadScheduler(lightContext),
+            sources = AppDownloadSources(database.trackDao(), apiHolder, appSettingsRepository),
+            gate = FetchGateDownloadGate,
+            downloadsDir = File(lightContext.filesDir, DownloadRepository.DIRECTORY),
         )
         // One refresh runner for the library and the playlists, so a server that is removed is stopped in both at once.
         val serverRefresh = ServerRefresh(
@@ -219,7 +222,7 @@ object AppGraph {
         // backlog of failed albums would otherwise be pulled over the data plan
         // unasked. A tap on "download" still works on any network.
         appScope.launch {
-            if (connectivity.currentStatus.isWifi) downloadRepository.retryFailed(lightContext)
+            if (connectivity.currentStatus.isWifi) downloadRepository.retryFailed()
         }
         // Once per install (per MediaIntegrity.VERSION): find songs an earlier
         // version stored cut short and fetch them again. Waits for a connection
@@ -230,9 +233,9 @@ object AppGraph {
             if ((appSettingsRepository.mediaIntegrityCheckedVersion.first() ?: 0) >= MediaIntegrity.VERSION) return@launch
             connectivity.observeNetworkStatus().first { it.isConnected }
             if (apiHolder.get() == null) return@launch
-            val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), streamCache)
+            val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), streamCache, downloadRepository)
             val onWifi = connectivity.currentStatus.isWifi
-            if (integrity.repair(lightContext, apiHolder, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
+            if (integrity.repair(apiHolder, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
         }
         val albumArtRepository = AlbumArtRepository(
             apiHolder = apiHolder,
