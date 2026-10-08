@@ -39,7 +39,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [~] | 2 | #83 | Write queue: offline vs refused | introduces the failure classification #91 reuses | D7 |
 | [x] | 3 | #86 | Advance module (what plays next) | none; relates to #78 | D1 |
 | [x] | 4 | #87 | One "set favorite" behaviour | none | D2 |
-| [ ] | 5 | #82 | Server standing module | none | |
+| [x] | 5 | #82 | Server standing module | none | |
 | [ ] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
 | [ ] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
 | [ ] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
@@ -255,3 +255,9 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   the playing song from a Search-result menu filled Now Playing's star at once; un-starred after (starred 22, queue empty). **Open on
   purpose:** whether Track should keep carrying live facts (favorite, download status, path, server label) and data/ importing the
   UI-package Track.
+- 2026-10-08: **#82 done** `dbb01e9`. `ServerStanding` (+ `ServerStandingNow`) states usable / can / keepsFavorites / canHoldPlaylists / canScrobble /
+  nameOf once; the scattered copies ask it; `Capabilities` removed; Jellyfin's scrobble capability follows its scrobbler; the registry
+  checks what it last saved. 7 new tests (338 total). Phone: Favorites ("Phone Only" label), Playlists (server names) and the
+  new-playlist entry behave; nothing created. **Left for #89:** the screens' own reads of the warmed globals, `announce`'s hand-set
+  mirrors. **Unrelated finding:** the Jellyfin test server entry has returned 401 on every refresh since 2026-10-06 (expired login).
+  **Phone Only in the write path (the deferred half of #83) is now unblocked.**
