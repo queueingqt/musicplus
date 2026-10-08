@@ -26,7 +26,10 @@ data class JellyfinConfig(
     val userId: String,
 )
 
-class JellyfinApiException(val code: Int, message: String) : Exception(message)
+class JellyfinApiException(val code: Int, message: String) : Exception(message), ServerRefusal {
+    /** A 400 (malformed) or 404 (not there); a 401 or 403 can clear when the login or permission does. */
+    override val retryingCannotHelp: Boolean get() = code == 400 || code == 404
+}
 
 /**
  * Thin Jellyfin REST client (https://api.jellyfin.org). Structurally the Jellyfin-side twin of [SubsonicClient]: one

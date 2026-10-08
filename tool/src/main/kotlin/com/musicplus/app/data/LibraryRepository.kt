@@ -371,10 +371,10 @@ class LibraryRepository(
     }
 
     /** Everything hearted on [serverId] as (type, id), for [SyncQueueRepository.sendPhoneOnlyFavorites]. */
-    suspend fun localFavorites(serverId: String): List<Pair<String, String>> =
-        artistDao.getStarredIds(serverId).map { "artist" to it } +
-            albumDao.getStarredIds(serverId).map { "album" to it } +
-            trackDao.getStarredIds(serverId).map { "track" to it }
+    suspend fun localFavorites(serverId: String): List<Pair<FavoriteKind, String>> =
+        artistDao.getStarredIds(serverId).map { FavoriteKind.ARTIST to it } +
+            albumDao.getStarredIds(serverId).map { FavoriteKind.ALBUM to it } +
+            trackDao.getStarredIds(serverId).map { FavoriteKind.TRACK to it }
 
     private fun ApiArtist.toEntity() = ArtistEntity(id, name, coverArtId, albumCount, starred)
     private fun ApiAlbum.toEntity() = AlbumEntity(id, name, artistId, artist, coverArtId, songCount, durationSec, year, genre, starred)

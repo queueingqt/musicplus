@@ -99,9 +99,11 @@ fun streamQualityLabel(maxBitRateKbps: Int?): String = maxBitRateKbps?.let { "$i
  * [FAILED] (a configured server's call itself threw, e.g. offline or a
  * transient error) — only [FAILED] is worth queueing for a later retry;
  * there's nothing a background retry could do about there being no server to
- * reach at all. See [com.musicplus.app.data.SyncQueueRepository].
+ * reach at all. [REFUSED] is a server that answered and said no in a way
+ * that sending again cannot change (what it names is not there): nothing is
+ * queued. See [com.musicplus.app.data.SyncQueueRepository].
  */
-enum class WriteOutcome { SUCCESS, NOT_CONFIGURED, FAILED }
+enum class WriteOutcome { SUCCESS, NOT_CONFIGURED, FAILED, REFUSED }
 
 data class PlaybackState(
     val queue: List<Track> = emptyList(),

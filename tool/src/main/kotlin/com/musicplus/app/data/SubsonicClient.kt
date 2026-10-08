@@ -53,7 +53,10 @@ data class ServerProfile(
     fun toServerConfig() = ServerConfig(baseUrl = baseUrl, username = username, password = password)
 }
 
-class SubsonicApiException(val code: Int, message: String) : Exception(message)
+class SubsonicApiException(val code: Int, message: String) : Exception(message), ServerRefusal {
+    /** Subsonic's "required parameter is missing" (10) and "requested data was not found" (70). */
+    override val retryingCannotHelp: Boolean get() = code == 10 || code == 70
+}
 
 /**
  * Thin Subsonic REST client (https://www.subsonic.org/pages/api.jsp). Works against

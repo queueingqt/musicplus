@@ -48,7 +48,7 @@ class FakeLocalCopy : LocalCopy {
     val names = HashMap<String, String>()
     val members = HashMap<String, List<String>>()
 
-    override suspend fun setStarred(type: String, id: String, starred: Boolean) { this.starred[id] = starred }
+    override suspend fun setStarred(kind: FavoriteKind, id: String, starred: Boolean) { this.starred[id] = starred }
     override suspend fun playlistName(playlistId: String) = names[playlistId]
     override suspend fun renamePlaylist(playlistId: String, name: String) { if (playlistId in names) names[playlistId] = name }
     override suspend fun deletePlaylist(playlistId: String) { names.remove(playlistId); members.remove(playlistId) }
@@ -65,10 +65,13 @@ class FakeLocalCopy : LocalCopy {
 class RecordingServer(id: String) : StubMusicApi(id) {
     val calls = CopyOnWriteArrayList<String>()
     var offline = false
+    /** When set, every call is answered with this error (a server that understood and said no). */
+    var answerWith: Exception? = null
     private var created = 0
 
     private fun call(what: String) {
         if (offline) throw IOException("offline")
+        answerWith?.let { throw it }
         calls += what
     }
 
@@ -114,7 +117,7 @@ class LocalFirstWritesTest {
         local.members[id] = songs.toList()
     }
 
-    private fun favorite(on: Boolean) = PendingMutation.Favorite("track", on)
+    private fun favorite(on: Boolean) = PendingMutation.Favorite(FavoriteKind.TRACK, on)
 
     // ---- a write ----
 
@@ -315,5 +318,106 @@ class LocalFirstWritesTest {
         assertEquals(1, queue.rows.size)
         assertTrue(writes.drain())
         assertEquals(listOf("star one:song"), one.calls.toList())
+    }
+
+    // ---- a server that says no ----
+
+    private val notFound = SubsonicApiException(70, "Playlist not found")
+
+    @Test
+    fun aWriteTheServerRefusesIsNotQueuedAndSaysSo() = runBlocking<Unit> {
+        playlist("one:p", "one:a")
+        one.answerWith = notFound
+        val result = writes.write("one:p", PendingMutation.PlaylistRename("x"))
+        assertEquals(WriteOutcome.REFUSED, result.outcome)
+        assertTrue(queue.rows.isEmpty(), "retrying cannot change a 'not found'")
+    }
+
+    @Test
+    fun aRefusalThatCanClearIsQueuedLikeAnOutage() = runBlocking<Unit> {
+        playlist("one:p", "one:a")
+        one.answerWith = SubsonicApiException(40, "Wrong username or password")
+        assertEquals(WriteOutcome.FAILED, writes.write("one:p", PendingMutation.PlaylistRename("x")).outcome)
+        assertEquals(1, queue.rows.size)
+        one.answerWith = JellyfinApiException(401, "Unauthorized")
+        assertEquals(WriteOutcome.FAILED, writes.write("one:p", PendingMutation.PlaylistRename("y")).outcome)
+        assertEquals(2, queue.rows.size)
+    }
+
+    @Test
+    fun aQueuedWriteTheServerRefusesIsDroppedAndTheLineCarriesOn() = runBlocking<Unit> {
+        playlist("one:gone", "one:a")
+        playlist("one:here", "one:a")
+        one.offline = true
+        writes.write("one:gone", PendingMutation.PlaylistRename("x"))
+        writes.write("one:here", PendingMutation.PlaylistRename("y"))
+        one.offline = false
+        // The first was a playlist deleted elsewhere; the server refuses it, and the second must still go through.
+        val refusing = object : StubMusicApi("one") {
+            override suspend fun renamePlaylist(playlistId: String, name: String) {
+                if (playlistId == "one:gone") throw notFound
+                one.calls += "rename $playlistId $name"
+            }
+        }
+        servers["one"] = refusing
+        assertTrue(writes.drain(), "a refused row does not leave the queue undrained")
+        assertTrue(queue.rows.isEmpty())
+        assertEquals(listOf("rename one:here y"), one.calls.toList())
+    }
+
+    @Test
+    fun deletingAPlaylistMadeOfflineSendsNothingToTheServer() = runBlocking<Unit> {
+        one.offline = true
+        val created = writes.write("one:pending:abc", PendingMutation.PlaylistCreate("mix"))
+        writes.write(created.target, PendingMutation.PlaylistAddTrack("one:a"))
+        assertEquals(2, queue.rows.size)
+        one.offline = false
+
+        val result = writes.write("one:pending:abc", PendingMutation.PlaylistDelete)
+        assertEquals(WriteOutcome.NOT_CONFIGURED, result.outcome)
+        assertTrue(queue.rows.isEmpty(), "the create and the add went with it, and no delete was queued")
+        assertTrue(one.calls.isEmpty(), "the server never heard of this playlist")
+        assertNull(local.names["one:pending:abc"])
+    }
+
+    @Test
+    fun anEditOfAPlaylistWhoseCreateHasNotArrivedWaitsInsteadOfNamingAnUnknownId() = runBlocking<Unit> {
+        one.offline = true
+        writes.write("one:pending:abc", PendingMutation.PlaylistCreate("mix"))
+        one.offline = false
+        // The server is back, but the create is still ahead of this edit in the line: the edit must not be sent on its own.
+        val outcome = writes.write("one:pending:abc", PendingMutation.PlaylistRename("mix 2")).outcome
+        assertEquals(WriteOutcome.FAILED, outcome)
+        assertTrue(one.calls.isEmpty())
+        assertEquals(2, queue.rows.size)
+    }
+
+    @Test
+    fun aCreateTheServerRefusesTakesThePlaylistAndItsEditsOffThePhone() = runBlocking<Unit> {
+        one.offline = true
+        writes.write("one:pending:abc", PendingMutation.PlaylistCreate("???"))
+        writes.write("one:pending:abc", PendingMutation.PlaylistAddTrack("one:a"))
+        one.offline = false
+        one.answerWith = SubsonicApiException(10, "Required parameter is missing")
+        assertTrue(writes.drain())
+        assertTrue(queue.rows.isEmpty())
+        assertNull(local.names["one:pending:abc"], "no ghost playlist is left on the phone")
+    }
+
+    @Test
+    fun rowsLeftByAnOlderVersionForAPlaylistThatWasNeverCreatedAreDroppedInsteadOfBlockingTheLine() = runBlocking<Unit> {
+        // What an older version queued after deleting an offline-made playlist: a delete naming a placeholder, with its create gone.
+        writes.enqueue("one:pending:old", PendingMutation.PlaylistDelete)
+        writes.enqueue("one:song", favorite(true))
+        assertTrue(writes.drain())
+        assertTrue(queue.rows.isEmpty())
+        assertEquals(listOf("star one:song"), one.calls.toList(), "the favorite behind it still went")
+    }
+
+    @Test
+    fun aQueuedFavoriteStillDecodesFromTheLowercaseNameItHasAlwaysBeenStoredUnder() {
+        val old = """{"type":"FAVORITE","favoriteType":"album","favorite":true}"""
+        assertEquals(PendingMutation.Favorite(FavoriteKind.ALBUM, true), Json.decodeFromString<PendingMutation>(old))
+        assertEquals("""{"type":"FAVORITE","favoriteType":"track","favorite":false}""", Json.encodeToString<PendingMutation>(PendingMutation.Favorite(FavoriteKind.TRACK, false)))
     }
 }

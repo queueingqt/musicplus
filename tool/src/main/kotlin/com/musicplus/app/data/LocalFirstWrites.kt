@@ -27,7 +27,7 @@ suspend fun PendingMutationDao.pendingFavoriteIds(): Set<String> = getTargetIdsB
 sealed class PendingMutation {
     @Serializable
     @SerialName("FAVORITE")
-    data class Favorite(val favoriteType: String, val favorite: Boolean) : PendingMutation()
+    data class Favorite(val favoriteType: FavoriteKind, val favorite: Boolean) : PendingMutation()
 
     @Serializable
     @SerialName("PLAYLIST_CREATE")
@@ -55,6 +55,14 @@ sealed class PendingMutation {
     data class PlaylistReorder(val songIds: List<String>) : PendingMutation()
 }
 
+/** What a heart can be on. Stored under the lowercase names a queued favorite has always used, so rows queued before this was a type still decode. */
+@Serializable
+enum class FavoriteKind {
+    @SerialName("artist") ARTIST,
+    @SerialName("album") ALBUM,
+    @SerialName("track") TRACK,
+}
+
 /** A second exhaustive `when` rather than serialization's own discriminator, so a query like [LocalFirstWrites.isFavoritePending] can filter by type in the database without decoding JSON. */
 private val PendingMutation.typeTag: String
     get() = when (this) {
@@ -72,7 +80,7 @@ private val PendingMutation.typeTag: String
  * ([RoomLocalCopy]); a test supplies an in-memory one. Every method is a plain local effect: nothing here talks to a server.
  */
 interface LocalCopy {
-    suspend fun setStarred(type: String, id: String, starred: Boolean)
+    suspend fun setStarred(kind: FavoriteKind, id: String, starred: Boolean)
 
     suspend fun playlistName(playlistId: String): String?
     suspend fun renamePlaylist(playlistId: String, name: String)
@@ -140,9 +148,15 @@ class LocalFirstWrites(
         if (!applyLocally(target, mutation)) return WriteResult(WriteOutcome.NOT_CONFIGURED, target)
         // The playlist is gone from the phone whatever the server says, so anything still queued against it is pointless to replay,
         // whether or not the delete itself ends up queued below.
-        if (mutation == PendingMutation.PlaylistDelete) queue.deleteForTarget(target)
+        if (mutation == PendingMutation.PlaylistDelete) {
+            queue.deleteForTarget(target)
+            // A playlist made offline that was never created on the server has nothing there to delete: its create and edits are gone
+            // with the line above, and sending the delete would only name an id the server has never heard of.
+            if (isPlaceholder(target)) return WriteResult(WriteOutcome.NOT_CONFIGURED, target)
+        }
         val sent = send(target, mutation)
         if (sent.outcome == WriteOutcome.FAILED) enqueue(sent.target, mutation)
+        if (sent.outcome == WriteOutcome.REFUSED) AppLogger.d(TAG, "${mutation.typeTag} for $target was refused and will not be retried")
         return WriteResult(sent.outcome, sent.target)
     }
 
@@ -187,6 +201,9 @@ class LocalFirstWrites(
         if (serverId == null || serverId == ServerScope.PHONE) return Sent(WriteOutcome.NOT_CONFIGURED, target)
         if (mutation is PendingMutation.Favorite && !keepsFavorites(serverId)) return Sent(WriteOutcome.NOT_CONFIGURED, target)
         val api = apis.forId(target) ?: return Sent(WriteOutcome.NOT_CONFIGURED, target)
+        // An edit of a playlist whose create has not reached the server names an id it does not know: it waits for the create (the line is
+        // FIFO, so the create goes first and the id is swapped before this is sent).
+        if (isPlaceholder(target) && mutation !is PendingMutation.PlaylistCreate) return Sent(WriteOutcome.FAILED, target)
         return try {
             when (mutation) {
                 is PendingMutation.Favorite -> {
@@ -231,9 +248,12 @@ class LocalFirstWrites(
             throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "sending ${mutation.typeTag} for $target failed", e)
-            Sent(WriteOutcome.FAILED, target)
+            // The server understood and said no in a way a second try cannot change: not queued, and never allowed to stand at the head of its line.
+            if (e is ServerRefusal && e.retryingCannotHelp) Sent(WriteOutcome.REFUSED, target) else Sent(WriteOutcome.FAILED, target)
         }
     }
+
+    private fun isPlaceholder(target: String) = ServerScope.nativeOf(target).startsWith(PLACEHOLDER_PREFIX)
 
     /** A playlist can only hold songs from its own server; anything else is kept on the phone and never sent. */
     private fun holdsOnly(playlistId: String, songIds: List<String>): Boolean {
@@ -255,7 +275,13 @@ class LocalFirstWrites(
     suspend fun drain(): Boolean {
         val on = enabledServerIds.first()
         var drained = true
-        val perServer = queue.getAllInOrder().groupBy { ServerScope.serverOf(it.targetId) }
+        val all = queue.getAllInOrder()
+        val perServer = all.groupBy { ServerScope.serverOf(it.targetId) }
+        // A placeholder playlist whose create is not in the queue can never get a real id: edits against it (queued by an older version
+        // that sent a delete for it) are dropped below instead of standing at the head of their line for ever.
+        val pendingCreates = all.filter { it.type == "PLAYLIST_CREATE" }.mapTo(HashSet()) { it.targetId }
+        // Targets whose create the server refused: the playlist goes from the phone and so does everything queued against it.
+        val abandoned = HashSet<String>()
         // The rows were read once, above. A create that succeeds retargets the rest of the queue in the database, but not the rows this
         // pass already holds, so the ids that changed are remembered and applied to the rows still to come: without it the edits made
         // against a placeholder were sent to it, failed, and only went through on the next pass.
@@ -276,8 +302,22 @@ class LocalFirstWrites(
                     continue
                 }
                 val target = renamed[row.targetId] ?: row.targetId
+                if (row.targetId in abandoned || (isPlaceholder(target) && mutation !is PendingMutation.PlaylistCreate && target !in pendingCreates)) {
+                    AppLogger.d(TAG, "row ${row.id} (${row.type}) is for a playlist that was never created, dropping")
+                    queue.delete(row.id)
+                    continue
+                }
                 val sent = send(target, mutation)
                 if (sent.target != target) renamed[row.targetId] = sent.target
+                if (sent.outcome == WriteOutcome.REFUSED) {
+                    queue.delete(row.id)
+                    if (mutation is PendingMutation.PlaylistCreate) {
+                        abandoned += row.targetId
+                        local.deletePlaylist(row.targetId)
+                        queue.deleteForTarget(row.targetId)
+                    }
+                    continue
+                }
                 if (sent.outcome == WriteOutcome.FAILED) {
                     queue.recordFailure(row.id, "attempt ${row.attemptCount + 1} failed")
                     drained = false

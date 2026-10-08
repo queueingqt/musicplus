@@ -7,10 +7,10 @@ class RoomLocalCopy(
     private val trackDao: TrackDao,
     private val playlistDao: PlaylistDao,
 ) : LocalCopy {
-    override suspend fun setStarred(type: String, id: String, starred: Boolean) = when (type) {
-        "artist" -> artistDao.setStarred(id, starred)
-        "album" -> albumDao.setStarred(id, starred)
-        else -> trackDao.setStarred(id, starred)
+    override suspend fun setStarred(kind: FavoriteKind, id: String, starred: Boolean) = when (kind) {
+        FavoriteKind.ARTIST -> artistDao.setStarred(id, starred)
+        FavoriteKind.ALBUM -> albumDao.setStarred(id, starred)
+        FavoriteKind.TRACK -> trackDao.setStarred(id, starred)
     }
 
     override suspend fun playlistName(playlistId: String): String? = playlistDao.getById(playlistId)?.name

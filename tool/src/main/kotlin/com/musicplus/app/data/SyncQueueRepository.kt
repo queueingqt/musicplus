@@ -31,11 +31,11 @@ class SyncQueueRepository(
 
     fun isFavoritePending(id: String): Flow<Boolean> = writes.isFavoritePending(id)
 
-    suspend fun setArtistFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite("artist", favorite)) }
+    suspend fun setArtistFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite(FavoriteKind.ARTIST, favorite)) }
 
-    suspend fun setAlbumFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite("album", favorite)) }
+    suspend fun setAlbumFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite(FavoriteKind.ALBUM, favorite)) }
 
-    suspend fun setTrackFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite("track", favorite)) }
+    suspend fun setTrackFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite(FavoriteKind.TRACK, favorite)) }
 
     /**
      * Makes a playlist at [home]: a server id, or [ServerScope.PHONE] for one that lives only on the phone (nothing is sent or queued
