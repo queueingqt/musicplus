@@ -331,3 +331,10 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   fixable at the screen level; it is the safe way. Three screens use it (`PlaylistDetailScreen`, `ServerEditScreen`, `SearchScreen`).
   **Decision: leave it.** A shared helper would only save about four lines per screen; if a fourth screen needs it, extract a
   `@Composable` helper then, and keep the rule "never call `goBack()` from `onScreenShow`/`willShow`".
+- 2026-10-08: **Cold-run flakiness, partly explained.** Twice, the first run after deleting the build directory failed one test: first
+  `StreamCacheTest.aRefreshThatFindsSomethingNew...` (a pre-existing test), then `SettingsTest.theWarmCopyFollowsWhatIsStored` (mine: a 3 s
+  wait that a cold JVM, slow class loading and a first DataStore start, can exceed; it also changed the app's global `downloadedOnly` warm
+  copy for the tests after it). Fixed in `615e4e3`: every `withTimeout(3_000)` in the tests is now 15 s (it only matters when something is
+  already wrong), and that test uses a `Setting` of its own. After the fix, two cold runs passed (427 tests, 0 failures). The
+  `StreamCacheTest` failure was NOT reproduced since and its root cause is not known; it is the first suspect if a cold run fails again.
+  Final state: 427 tests, the server-style unsigned release build passes, `~/github/light-sdk` clean, nothing pushed.
