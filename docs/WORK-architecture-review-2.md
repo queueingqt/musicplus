@@ -187,12 +187,12 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
 
 ### S5. Small singletons with hidden dependencies (resolved 2026-10-08)
 
-- **What it was.** , , , , and the open Light-submission questions.
-- **Settled.**  and its toggle were removed; debug logging is debug-builds-only (#93); the app **update checker was removed**
+- **What it was.** `VersionCheckRepository`, `CrashReporter`, `AppLogger`, `TrackAvailability`, and the open Light-submission questions.
+- **Settled.** `CrashReporter` and its toggle were removed; debug logging is debug-builds-only (#93); the app **update checker was removed**
   (it was the last request that was not to the person's own server) together with its Settings row, the Home "Settings *" marker, its
-  screen, its stored setting and its tests, so D6 (its throttle bug) and the shared  constant are moot; the missing
+  screen, its stored setting and its tests, so D6 (its throttle bug) and the shared `queueingqt/musicplus` constant are moot; the missing
   **LICENSE** was added (MIT, as Light's SDK, copyright line "lexxrexx", the git author name); the README now says what leaves the device.
-- **Left.**  is still a global that must be called before use (a hidden-dependency smell, tiny, no
+- **Left.** `TrackAvailability.init(cache)` is still a global that must be called before use (a hidden-dependency smell, tiny, no
   decision needed).
 - **Decision:** _done_
 
