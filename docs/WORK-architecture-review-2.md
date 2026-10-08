@@ -38,7 +38,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 1 | #81 | Downloads module | none | D3, D4 |
 | [~] | 2 | #83 | Write queue: offline vs refused | introduces the failure classification #91 reuses | D7 |
 | [x] | 3 | #86 | Advance module (what plays next) | none; relates to #78 | D1 |
-| [ ] | 4 | #87 | One "set favorite" behaviour | none | D2 |
+| [x] | 4 | #87 | One "set favorite" behaviour | none | D2 |
 | [ ] | 5 | #82 | Server standing module | none | |
 | [ ] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
 | [ ] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
@@ -73,7 +73,7 @@ them early (small, safe, and they shrink the diff of the bigger issues): do the 
 | Done | # | Where | Defect | Status before | Fixed by | First step |
 |---|---|---|---|---|---|---|
 | [x] | D1 | `PlaybackRepository.kt:145,159-163` | Error retry replays the queue snapshot taken before the 750 ms delay, overwriting a jump or edit made meanwhile. The retry also blocks `collect`, so a second error is missed until it ends. | verified | #86, **or standalone first** (re-read the snapshot after the delay) | Test with `FakePlayback`: error, jump during the delay, assert the jump survives |
-| [ ] | D2 | `PlayerScreen.kt:189`, `TrackActions.kt:42` | Favoriting the playing track from a list menu leaves Now Playing's star stale (`updateTrackFavorite` has one caller). | verified | #87 | Test: favorite the playing track via the menu path, assert the queue snapshot |
+| [x] | D2 | `PlayerScreen.kt:189`, `TrackActions.kt:42` | Favoriting the playing track from a list menu leaves Now Playing's star stale (`updateTrackFavorite` has one caller). | verified | #87 | Test: favorite the playing track via the menu path, assert the queue snapshot |
 | [x] | D3 | `MediaIntegrity.kt:67` | A capped-quality download is saved as `.mp3`; when the track's suffix is also `mp3` the transcoded file is compared with the original size, mismatches, and is deleted and re-queued. Runs once per install (`VERSION = 1`). | verified | #81 | Test: capped download of an mp3 track passes the check. Also decide: does this need a `VERSION` bump to repair files already wrongly discarded? (They were re-queued, so probably not; check on the phone.) |
 | [~] | D4 | `DownloadRepository.kt:232` | Every `IOException` counts as congestion and halves the FetchGate limit, including `server answered 404` and `cut short` from `streamToFile`. | verified | #81 then #85 | Test: a 404 does not call `onCongestion` |
 | [x] | D5 | `SubsonicClient.kt:205-209`, `CoverArtStore.kt:135-137` | `getBytes` never checks the status or the Subsonic error envelope (Jellyfin's does), and the store caches whatever came back as art, forever. | verified | #91, **or standalone first** (status check in `getBytes`, validate before writing) | Test with a stub that answers 200 + an error body; **also scan the phone's existing cover-art cache for non-image files** and clear any found |
@@ -250,3 +250,8 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   `PlayerErrorHandler` replaces PlaybackRepository's two watchers and skipUnavailable; 11 new tests (328 total). Phone: playback
   still starts and pauses; the error path was not provoked there (no downloaded song in the queue to fault-inject). **Not done:**
   removing PlaybackRepository's one-line delegations (touches every screen; left for after #92).
+- 2026-10-08: **#87 done, D2 fixed** `3871c09`. `Favorites.set` writes local-first and patches the playing queue's copy of a song;
+  `SyncQueueRepository` delegates to it and the player screen no longer patches by itself; 3 new tests (331 total). Phone: favoriting
+  the playing song from a Search-result menu filled Now Playing's star at once; un-starred after (starred 22, queue empty). **Open on
+  purpose:** whether Track should keep carrying live facts (favorite, download status, path, server label) and data/ importing the
+  UI-package Track.
