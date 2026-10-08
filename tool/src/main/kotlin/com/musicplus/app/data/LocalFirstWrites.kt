@@ -167,8 +167,9 @@ class LocalFirstWrites(
             if (isPlaceholder(target)) return WriteResult(WriteOutcome.NOT_CONFIGURED, target)
         }
         val sent = send(target, mutation)
-        if (sent.outcome == WriteOutcome.FAILED) enqueue(sent.target, mutation)
-        if (sent.outcome == WriteOutcome.REFUSED) AppLogger.d(TAG, "${mutation.typeTag} for $target was refused and will not be retried")
+        // A refusal is queued like an outage: a "not found" can come from a proxy or a server that is restarting, and only repeated
+        // refusals make [drain] give up (see [MAX_REFUSALS]).
+        if (sent.outcome == WriteOutcome.FAILED || sent.outcome == WriteOutcome.REFUSED) enqueue(sent.target, mutation)
         return WriteResult(sent.outcome, sent.target)
     }
 
@@ -322,6 +323,15 @@ class LocalFirstWrites(
                 val sent = send(target, mutation)
                 if (sent.target != target) renamed[row.targetId] = sent.target
                 if (sent.outcome == WriteOutcome.REFUSED) {
+                    val refusals = refusalsByRow.merge(row.id, 1, Int::plus) ?: 1
+                    if (refusals < MAX_REFUSALS) {
+                        // Not given up on yet, but it does not hold the line: the rows behind it are not waiting on a server that keeps saying no.
+                        queue.recordFailure(row.id, "refused (attempt $refusals of $MAX_REFUSALS)")
+                        drained = false
+                        continue
+                    }
+                    AppLogger.d(TAG, "row ${row.id} (${row.type}) refused $refusals times, giving up on it")
+                    refusalsByRow.remove(row.id)
                     queue.delete(row.id)
                     if (mutation is PendingMutation.PlaylistCreate) {
                         abandoned += row.targetId
@@ -335,13 +345,23 @@ class LocalFirstWrites(
                     drained = false
                     break // this server's line stops here; the other servers' lines carry on
                 }
+                refusalsByRow.remove(row.id)
                 queue.delete(row.id)
             }
         }
         return drained
     }
 
+    /**
+     * How many times in a row the server has refused each queued row, in memory and apart from the row's own attempt count (which also
+     * counts the times it could not be reached, and so says nothing about refusals). A restart forgets it, which only means more tries.
+     */
+    private val refusalsByRow = java.util.concurrent.ConcurrentHashMap<Long, Int>()
+
     private companion object {
+        /** A row the server refuses this many times in a row is given up on (and, for a create, the playlist leaves the phone). */
+        const val MAX_REFUSALS = 3
+
         const val TAG = "LocalFirstWrites"
     }
 }

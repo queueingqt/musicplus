@@ -12,6 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -325,12 +326,12 @@ class LocalFirstWritesTest {
     private val notFound = SubsonicApiException(70, "Playlist not found")
 
     @Test
-    fun aWriteTheServerRefusesIsNotQueuedAndSaysSo() = runBlocking<Unit> {
+    fun aWriteTheServerRefusesSaysSoAndIsQueuedInCaseTheRefusalClears() = runBlocking<Unit> {
         playlist("one:p", "one:a")
         one.answerWith = notFound
         val result = writes.write("one:p", PendingMutation.PlaylistRename("x"))
         assertEquals(WriteOutcome.REFUSED, result.outcome)
-        assertTrue(queue.rows.isEmpty(), "retrying cannot change a 'not found'")
+        assertEquals(1, queue.rows.size, "a 'not found' can come from a proxy or a restarting server, so it gets its tries")
     }
 
     @Test
@@ -342,6 +343,18 @@ class LocalFirstWritesTest {
         one.answerWith = JellyfinApiException(401, "Unauthorized")
         assertEquals(WriteOutcome.FAILED, writes.write("one:p", PendingMutation.PlaylistRename("y")).outcome)
         assertEquals(2, queue.rows.size)
+    }
+
+    @Test
+    fun aRefusalThatClearsBeforeTheLastTryLosesNothing() = runBlocking<Unit> {
+        playlist("one:p", "one:a")
+        one.answerWith = notFound
+        writes.write("one:p", PendingMutation.PlaylistRename("x"))
+        assertFalse(writes.drain())
+        one.answerWith = null
+        assertTrue(writes.drain())
+        assertTrue(queue.rows.isEmpty())
+        assertEquals(listOf("rename one:p x"), one.calls.toList())
     }
 
     @Test
@@ -360,7 +373,11 @@ class LocalFirstWritesTest {
             }
         }
         servers["one"] = refusing
-        assertTrue(writes.drain(), "a refused row does not leave the queue undrained")
+        assertFalse(writes.drain(), "a refused row is not given up on at once")
+        assertEquals(listOf("rename one:here y"), one.calls.toList(), "but it does not hold the row behind it")
+        assertEquals(1, queue.rows.size)
+        assertFalse(writes.drain())
+        assertTrue(writes.drain(), "the third refusal in a row ends it")
         assertTrue(queue.rows.isEmpty())
         assertEquals(listOf("rename one:here y"), one.calls.toList())
     }
@@ -399,6 +416,9 @@ class LocalFirstWritesTest {
         writes.write("one:pending:abc", PendingMutation.PlaylistAddTrack("one:a"))
         one.offline = false
         one.answerWith = SubsonicApiException(10, "Required parameter is missing")
+        assertFalse(writes.drain())
+        assertNotNull(local.names["one:pending:abc"], "still there while the refusal might clear")
+        assertFalse(writes.drain())
         assertTrue(writes.drain())
         assertTrue(queue.rows.isEmpty())
         assertNull(local.names["one:pending:abc"], "no ghost playlist is left on the phone")

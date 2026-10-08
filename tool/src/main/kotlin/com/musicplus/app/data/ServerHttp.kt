@@ -31,7 +31,7 @@ class ServerHttp(
         }
         if (response.status.value in 502..504) {
             onReachable(false)
-            throw IOException("server answered ${response.status}")
+            throw ServerDownException("server answered ${response.status}")
         }
         onReachable(true)
         return response
@@ -39,3 +39,6 @@ class ServerHttp(
 
     override fun close() = http.close()
 }
+
+/** A proxy in front of a server that is down answered for it (502-504). The server is out, which is not the same as a link that is overloaded. */
+class ServerDownException(message: String) : IOException(message)

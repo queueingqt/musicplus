@@ -16,7 +16,7 @@ import kotlin.concurrent.withLock
 /**
  * File-based error and debug log, independent of Logcat, for test and dev builds only: pullable with `adb run-as` from a debuggable build.
  * A release build (what Light builds and signs, and what people run) writes no log, keeps no file and installs no crash handler: every
- * function here does nothing when [BuildConfig.DEBUG] is false, and the compiler drops the code. Light's tool guidelines allow no collecting
+ * function here returns at once when [BuildConfig.DEBUG] is false. Light's tool guidelines allow no collecting
  * of user data, and a log of server names, ids and stack traces kept on the phone for no one's benefit is that.
  *
  * Where it does run, it also captures an uncaught crash. Rotates (keeping one prior generation as app.log.1) past MAX_LOG_BYTES or

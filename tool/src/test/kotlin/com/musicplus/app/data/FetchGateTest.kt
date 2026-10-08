@@ -135,5 +135,8 @@ class FetchGateTest {
         assertTrue(FetchGate.looksLikeCongestion(RuntimeException("HttpRequestTimeoutException")))
         assertTrue(!FetchGate.looksLikeCongestion(ServerRefusedException("server answered 404")))
         assertTrue(!FetchGate.looksLikeCongestion(IllegalStateException("no server configured")))
+        assertTrue(!FetchGate.looksLikeCongestion(ServerDownException("server answered 502")), "a down server is not a slow link")
+        assertTrue(!FetchGate.looksLikeCongestion(java.net.ConnectException("refused")))
+        assertTrue(!FetchGate.looksLikeCongestion(java.net.UnknownHostException("nope")))
     }
 }

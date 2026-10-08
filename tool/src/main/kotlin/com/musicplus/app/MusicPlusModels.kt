@@ -100,8 +100,9 @@ fun streamQualityLabel(maxBitRateKbps: Int?): String = maxBitRateKbps?.let { "$i
  * transient error) — only [FAILED] is worth queueing for a later retry;
  * there's nothing a background retry could do about there being no server to
  * reach at all. [REFUSED] is a server that answered and said no in a way
- * that sending again cannot change (what it names is not there): nothing is
- * queued. See [com.musicplus.app.data.SyncQueueRepository].
+ * that looks permanent (what it names is not there): it is queued like a
+ * failure but given up on if the server keeps refusing it. See
+ * [com.musicplus.app.data.SyncQueueRepository].
  */
 enum class WriteOutcome { SUCCESS, NOT_CONFIGURED, FAILED, REFUSED }
 

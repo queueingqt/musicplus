@@ -25,6 +25,7 @@ object ServerLabels {
         withLabel: (T, String) -> T,
     ): List<T> {
         if (items.isEmpty()) return items
+        val standing = ServerStandingNow.current()
         if (!always && items.mapNotNullTo(HashSet(), serverOf).size < 2) return items
         val serversByKey = HashMap<String, MutableSet<String>>()
         if (!always) {
@@ -34,7 +35,7 @@ object ServerLabels {
             }
         }
         return items.map { item ->
-            val name = nameOf(serverOf(item))
+            val name = standing.nameOf(serverOf(item))
             if (name != null && (always || (serversByKey[keyOf(item)]?.size ?: 0) > 1)) withLabel(item, name) else item
         }
     }
@@ -53,16 +54,17 @@ object ServerLabels {
      * Favorites of a server that cannot keep them are kept on the phone only, and say so: "Phone Only" replaces the
      * server's name on those rows.
      */
-    private fun phoneOnly(id: String) = !ServerStandingNow.current().keepsFavorites(ServerScope.serverOf(id))
+    private fun phoneOnly(standing: ServerStanding, id: String) = !standing.keepsFavorites(ServerScope.serverOf(id))
 
+    // One look at the servers' standing per list, not one per row.
     fun favoriteArtists(items: List<Artist>) =
-        artists(items).map { if (phoneOnly(it.id)) it.copy(serverLabel = ServerScope.PHONE_ONLY_LABEL) else it }
+        ServerStandingNow.current().let { standing -> artists(items).map { if (phoneOnly(standing, it.id)) it.copy(serverLabel = ServerScope.PHONE_ONLY_LABEL) else it } }
 
     fun favoriteAlbums(items: List<Album>) =
-        albums(items).map { if (phoneOnly(it.id)) it.copy(serverLabel = ServerScope.PHONE_ONLY_LABEL) else it }
+        ServerStandingNow.current().let { standing -> albums(items).map { if (phoneOnly(standing, it.id)) it.copy(serverLabel = ServerScope.PHONE_ONLY_LABEL) else it } }
 
     fun favoriteTracks(items: List<Track>) =
-        tracks(items).map { if (phoneOnly(it.id)) it.copy(serverLabel = ServerScope.PHONE_ONLY_LABEL) else it }
+        ServerStandingNow.current().let { standing -> tracks(items).map { if (phoneOnly(standing, it.id)) it.copy(serverLabel = ServerScope.PHONE_ONLY_LABEL) else it } }
 
     fun playlists(items: List<Playlist>) =
         label(items, true, { key(it.name) }, { ServerScope.serverOf(it.id) }) { p, n -> p.copy(serverLabel = n) }

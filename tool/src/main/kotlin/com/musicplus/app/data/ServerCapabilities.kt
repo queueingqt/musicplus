@@ -181,6 +181,9 @@ class CapabilityRegistry(
 
     /** Forgets a removed server. */
     override suspend fun forget(serverId: String) {
+        // What was kept in memory for the server goes too: a server re-added under the same id must be asked again, not trusted from before.
+        saved.remove(serverId)
+        lastDoubtProbeAt.remove(serverId)
         dataStore.edit { prefs ->
             val current = decode(prefs[key])
             if (serverId in current) prefs[key] = Json.encodeToString(serializer, current - serverId)

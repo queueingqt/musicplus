@@ -338,3 +338,11 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   already wrong), and that test uses a `Setting` of its own. After the fix, two cold runs passed (427 tests, 0 failures). The
   `StreamCacheTest` failure was NOT reproduced since and its root cause is not known; it is the first suspect if a cold run fails again.
   Final state: 427 tests, the server-style unsigned release build passes, `~/github/light-sdk` clean, nothing pushed.
+
+## Full review and test pass (2026-10-08)
+
+Full suite: 428 tests, cold + 5 warm runs green; lintRelease and a signed-style release build pass.
+Review fixes: 502-504 are a down server, not congestion (FetchGate classifier); `LocalStars` and `ServerLabels` take one
+standing snapshot per call; `ServerCapabilities.forget` clears the doubt-probe time; duplicate DB error logging removed;
+a refused write is queued and retried up to 3 refusals in a row (a refused create then leaves the phone), so a proxy's
+"not found" cannot lose a write; stray `one93.json` removed. Accepted trade-off: mp3 download integrity check.

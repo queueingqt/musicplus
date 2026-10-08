@@ -372,8 +372,16 @@ class FetchGate(
         private const val CHECK_EVERY_MS = 250L
 
 
-        /** Whether a failed transfer says the link is overloaded (a timeout, a dropped connection) rather than that the server said no. */
-        fun looksLikeCongestion(e: Exception): Boolean =
-            e !is ServerRefusedException && (e is java.io.IOException || e.toString().contains("Timeout", ignoreCase = true))
+        /**
+         * Whether a failed transfer says the link is overloaded (a timeout, a dropped connection) rather than that the server said no, or
+         * is not there at all. A server that refuses the connection, cannot be found, or answers 502-504 through a proxy is one server
+         * being out: halving the limit for every other, healthy server because of it would be the wrong lesson.
+         */
+        fun looksLikeCongestion(e: Exception): Boolean {
+            if (e is ServerRefusedException || e is ServerDownException) return false
+            if (e is java.net.ConnectException || e is java.net.UnknownHostException || e is java.net.NoRouteToHostException) return false
+            if (e is java.nio.channels.UnresolvedAddressException) return false
+            return e is java.io.IOException || e.toString().contains("Timeout", ignoreCase = true)
+        }
     }
 }

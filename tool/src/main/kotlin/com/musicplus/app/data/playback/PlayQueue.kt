@@ -482,14 +482,15 @@ class PlayQueue(
 
     // ---- editing the queue ----
 
+    /** Applies what [QueueEdits] worked out. */
+    private fun apply(edit: QueueEdit) = edit(edit.queue, edit.playingIndex)
+
     /**
      * Replaces the queue with [newQueue] keeping the song that is playing (at [explicitIndex] when the caller moved it, as a shuffle
      * does). The queue changes at once; the player follows through [requestSync]. If nothing has been given to the player there is
      * nothing to follow: editing a restored queue used to load the whole of it into the player (downloading every song) while
      * leaving the state as "not loaded", and to read the player's stale index 0 as the playing one.
      */
-    private fun apply(edit: QueueEdit) = edit(edit.queue, edit.playingIndex)
-
     private fun edit(newQueue: List<Track>, explicitIndex: Int? = null) {
         val before = session.value
         val currentIndex = explicitIndex ?: queueIndex().coerceIn(0, (newQueue.size - 1).coerceAtLeast(0))

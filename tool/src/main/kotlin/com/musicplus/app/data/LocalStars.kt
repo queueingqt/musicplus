@@ -10,8 +10,12 @@ package com.musicplus.app.data
  */
 class LocalStars(
     private val pending: Set<String>,
-    private val keepsFavorites: (serverId: String?) -> Boolean = { ServerStandingNow.current().keepsFavorites(it) },
+    keepsFavorites: ((serverId: String?) -> Boolean)? = null,
 ) {
+    // One look at the servers' standing for this whole pass (a refresh asks about every row), not one per row.
+    private val standing by lazy { ServerStandingNow.current() }
+    private val keepsFavorites: (serverId: String?) -> Boolean = keepsFavorites ?: { standing.keepsFavorites(it) }
+
     fun wins(id: String): Boolean = id in pending || !keepsFavorites(ServerScope.serverOf(id))
 
     /**
