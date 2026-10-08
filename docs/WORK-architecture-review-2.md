@@ -41,7 +41,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 4 | #87 | One "set favorite" behaviour | none | D2 |
 | [x] | 5 | #82 | Server standing module | none | |
 | [x] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
-| [ ] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
+| [x] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
 | [ ] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
 | [ ] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
 | [ ] | 10 | #89 | Settings declared once, read model | #82 helps | |
@@ -75,7 +75,7 @@ them early (small, safe, and they shrink the diff of the bigger issues): do the 
 | [x] | D1 | `PlaybackRepository.kt:145,159-163` | Error retry replays the queue snapshot taken before the 750 ms delay, overwriting a jump or edit made meanwhile. The retry also blocks `collect`, so a second error is missed until it ends. | verified | #86, **or standalone first** (re-read the snapshot after the delay) | Test with `FakePlayback`: error, jump during the delay, assert the jump survives |
 | [x] | D2 | `PlayerScreen.kt:189`, `TrackActions.kt:42` | Favoriting the playing track from a list menu leaves Now Playing's star stale (`updateTrackFavorite` has one caller). | verified | #87 | Test: favorite the playing track via the menu path, assert the queue snapshot |
 | [x] | D3 | `MediaIntegrity.kt:67` | A capped-quality download is saved as `.mp3`; when the track's suffix is also `mp3` the transcoded file is compared with the original size, mismatches, and is deleted and re-queued. Runs once per install (`VERSION = 1`). | verified | #81 | Test: capped download of an mp3 track passes the check. Also decide: does this need a `VERSION` bump to repair files already wrongly discarded? (They were re-queued, so probably not; check on the phone.) |
-| [~] | D4 | `DownloadRepository.kt:232` | Every `IOException` counts as congestion and halves the FetchGate limit, including `server answered 404` and `cut short` from `streamToFile`. | verified | #81 then #85 | Test: a 404 does not call `onCongestion` |
+| [x] | D4 | `DownloadRepository.kt:232` | Every `IOException` counts as congestion and halves the FetchGate limit, including `server answered 404` and `cut short` from `streamToFile`. | verified | #81 then #85 | Test: a 404 does not call `onCongestion` |
 | [x] | D5 | `SubsonicClient.kt:205-209`, `CoverArtStore.kt:135-137` | `getBytes` never checks the status or the Subsonic error envelope (Jellyfin's does), and the store caches whatever came back as art, forever. | verified | #91, **or standalone first** (status check in `getBytes`, validate before writing) | Test with a stub that answers 200 + an error body; **also scan the phone's existing cover-art cache for non-image files** and clear any found |
 | [x] | D6 | `VersionCheckRepository.kt:41-47`, `AppGraph.kt:208-214` | A failed check (offline at launch) returns Unit and `setLastVersionCheckAtMs(now)` runs anyway, suppressing the check for 24 h. `runCatching` also swallows `CancellationException`. | from reading | standalone | Test: a failing fetch leaves `lastCheckedAt` untouched; make `checkForUpdate` return success/failure |
 | [x] | D7 | `LocalFirstWrites.kt:139-147,255-290` | A permanently refused write (e.g. delete of an offline-created playlist: `deletePlaylist(<server>:pending:uuid)`) is queued and fails every drain, blocking all later edits for that server. | from reading | #83 | Test: the poison-head scenario with a fake server that throws a refusal; **then check the phone's real queue** (`PendingMutation` table, via adb run-as) for rows already stuck |
@@ -265,3 +265,8 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   artists/albums/songs/playlists are a spec each; `DownloadRepository.byId()` and `PendingMutationDao.localStars()` replace the repeated
   join and star rule. 7 new tests (345 total). Phone: a full refresh on the real server unchanged (47/1269/2277/11876, nothing
   written or removed). Detail refreshes and refreshFavorites left as they are.
+- 2026-10-08: **#85 done, D4 fully done** `ead0a02`. `FetchGate` is an instance (`isWifiNow`, `nowMs`, scope); it classifies congestion for both lanes and
+  answers "on Wi-Fi?" for fetch-ahead, stream quality, retry and integrity; `attach()` is gone; `FetchGateDownloadGate(gate)`,
+  `StreamCache(dir, gate)` and `PlaybackRepository(gate=...)` take it. 9 new tests (353 total). Phone: starts at 6 on Wi-Fi, a real
+  download ran through it and was removed (224 files). **Left:** rank has three suppliers (one authority, two fallbacks), rank lambdas
+  are still called under the gate's lock, the 3 s probe/hold adaptation is not under test.
