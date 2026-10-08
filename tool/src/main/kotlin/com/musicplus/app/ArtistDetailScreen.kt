@@ -29,8 +29,14 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** How long expanding Top songs waits for the artist's name when the screen has only just opened. */
+private const val ARTIST_NAME_WAIT_MS = 5_000L
 
 class ArtistDetailScreenViewModel(
     private val libraryRepository: LibraryRepository,
@@ -71,9 +77,11 @@ class ArtistDetailScreenViewModel(
     // SubsonicApi.getTopSongs's doc) — read from the already-observed
     // `artist` StateFlow rather than a second network round trip just to
     // resolve the name.
+    // Waits briefly for the artist if it has not been read yet (expanding straight after opening the screen); if it never
+    // arrives the fetch fails, which leaves the section expandable again rather than empty for the visit.
     val topSongsSection = LazyCollapsibleSection(viewModelScope) {
-        val name = artist.value?.name
-        if (name.isNullOrBlank()) emptyList() else libraryRepository.getTopSongs(artistId, name)
+        val name = withTimeoutOrNull(ARTIST_NAME_WAIT_MS) { artist.filterNotNull().first().name }
+        if (name.isNullOrBlank()) error("artist not loaded") else libraryRepository.getTopSongs(artistId, name)
     }
 }
 

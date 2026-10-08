@@ -1,5 +1,6 @@
 package com.musicplus.app
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,8 +38,17 @@ class LazyCollapsibleSection<T>(
             loaded = true
             _loading.value = true
             scope.launch {
-                _items.value = fetch()
-                _loading.value = false
+                try {
+                    _items.value = fetch()
+                } catch (e: CancellationException) {
+                    loaded = false
+                    throw e
+                } catch (e: Exception) {
+                    // Not loaded: expanding it again tries again, instead of an empty section for the rest of the visit.
+                    loaded = false
+                } finally {
+                    _loading.value = false
+                }
             }
         }
     }
