@@ -35,7 +35,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 
 | Done | Order | Issue | Fix | Depends on / pairs with | Defects fixed by it |
 |---|---|---|---|---|---|
-| [ ] | 1 | #81 | Downloads module | none | D3, D4 |
+| [x] | 1 | #81 | Downloads module | none | D3, D4 |
 | [ ] | 2 | #83 | Write queue: offline vs refused | introduces the failure classification #91 reuses | D7 |
 | [ ] | 3 | #86 | Advance module (what plays next) | none; relates to #78 | D1 |
 | [ ] | 4 | #87 | One "set favorite" behaviour | none | D2 |
@@ -74,8 +74,8 @@ them early (small, safe, and they shrink the diff of the bigger issues): do the 
 |---|---|---|---|---|---|---|
 | [x] | D1 | `PlaybackRepository.kt:145,159-163` | Error retry replays the queue snapshot taken before the 750 ms delay, overwriting a jump or edit made meanwhile. The retry also blocks `collect`, so a second error is missed until it ends. | verified | #86, **or standalone first** (re-read the snapshot after the delay) | Test with `FakePlayback`: error, jump during the delay, assert the jump survives |
 | [ ] | D2 | `PlayerScreen.kt:189`, `TrackActions.kt:42` | Favoriting the playing track from a list menu leaves Now Playing's star stale (`updateTrackFavorite` has one caller). | verified | #87 | Test: favorite the playing track via the menu path, assert the queue snapshot |
-| [ ] | D3 | `MediaIntegrity.kt:67` | A capped-quality download is saved as `.mp3`; when the track's suffix is also `mp3` the transcoded file is compared with the original size, mismatches, and is deleted and re-queued. Runs once per install (`VERSION = 1`). | verified | #81 | Test: capped download of an mp3 track passes the check. Also decide: does this need a `VERSION` bump to repair files already wrongly discarded? (They were re-queued, so probably not; check on the phone.) |
-| [ ] | D4 | `DownloadRepository.kt:232` | Every `IOException` counts as congestion and halves the FetchGate limit, including `server answered 404` and `cut short` from `streamToFile`. | verified | #81 then #85 | Test: a 404 does not call `onCongestion` |
+| [x] | D3 | `MediaIntegrity.kt:67` | A capped-quality download is saved as `.mp3`; when the track's suffix is also `mp3` the transcoded file is compared with the original size, mismatches, and is deleted and re-queued. Runs once per install (`VERSION = 1`). | verified | #81 | Test: capped download of an mp3 track passes the check. Also decide: does this need a `VERSION` bump to repair files already wrongly discarded? (They were re-queued, so probably not; check on the phone.) |
+| [~] | D4 | `DownloadRepository.kt:232` | Every `IOException` counts as congestion and halves the FetchGate limit, including `server answered 404` and `cut short` from `streamToFile`. | verified | #81 then #85 | Test: a 404 does not call `onCongestion` |
 | [x] | D5 | `SubsonicClient.kt:205-209`, `CoverArtStore.kt:135-137` | `getBytes` never checks the status or the Subsonic error envelope (Jellyfin's does), and the store caches whatever came back as art, forever. | verified | #91, **or standalone first** (status check in `getBytes`, validate before writing) | Test with a stub that answers 200 + an error body; **also scan the phone's existing cover-art cache for non-image files** and clear any found |
 | [x] | D6 | `VersionCheckRepository.kt:41-47`, `AppGraph.kt:208-214` | A failed check (offline at launch) returns Unit and `setLastVersionCheckAtMs(now)` runs anyway, suppressing the check for 24 h. `runCatching` also swallows `CancellationException`. | from reading | standalone | Test: a failing fetch leaves `lastCheckedAt` untouched; make `checkForUpdate` return success/failure |
 | [ ] | D7 | `LocalFirstWrites.kt:139-147,255-290` | A permanently refused write (e.g. delete of an offline-created playlist: `deletePlaylist(<server>:pending:uuid)`) is queued and fails every drain, blocking all later edits for that server. | from reading | #83 | Test: the poison-head scenario with a fake server that throws a refusal; **then check the phone's real queue** (`PendingMutation` table, via adb run-as) for rows already stuck |
@@ -233,3 +233,11 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   74 artists with none are artists with no albums of their own (not checked individually). The unrefreshed-artist case does not
   arise in practice.
 - All 298 JVM tests pass after the standalone fixes; the unsigned release build passes.
+- 2026-10-08: **#81 done** `54ca384`. `DownloadRepository` owns status transitions, the path rule, scheduling and the job's work
+  (`run` -> Done/Retry/Failed) behind `DownloadScheduler`, `DownloadSources`, `DownloadGate` and a clock; `downloadTrack` (now
+  `DownloadJob.kt`) is a thin adapter; callers no longer pass a `SealedLightContext`. 11 new tests (309 total). **D3 done**
+  (an mp3 source is never size-compared; only an own-format file is). **D4 half done**: `ServerRefusedException` keeps a 404 from
+  counting as congestion; playback fetches still never back off, which is #85. `DOWNLOADING` kept as a documented display state.
+  Phone: installed the debug build (0.7.2/12 over 0.7.1), downloaded and removed "(515)": row, file and counts as expected,
+  baseline restored (224 files, 224 COMPLETE, queue untouched). Not tried on the phone: a capped-quality download, the failure path.
+  Note: `lighttool.toml` now says `serverPackage = "com.lightos"`; the app ran fine as the debug build with it.
