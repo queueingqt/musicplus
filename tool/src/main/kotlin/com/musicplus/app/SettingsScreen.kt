@@ -10,7 +10,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.AppDebugPrefs
 import com.musicplus.app.data.AppDisplayPrefs
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppLibraryCache
@@ -78,12 +77,6 @@ class SettingsScreenViewModel(
         viewModelScope.launch { appSettingsRepository.setDownloadedOnly(!downloadedOnly.value) }
     }
 
-    val debugLoggingEnabled: StateFlow<Boolean> = AppDebugPrefs.debugLoggingEnabled.value
-
-    fun toggleDebugLogging() {
-        viewModelScope.launch { appSettingsRepository.setDebugLoggingEnabled(!debugLoggingEnabled.value) }
-    }
-
     val scrobblingEnabled: StateFlow<Boolean> = AppScrobblePrefs.scrobblingEnabled.value
 
     fun toggleScrobbling() {
@@ -113,7 +106,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
     override fun Content() {
         val showAlbumArtwork by viewModel.showAlbumArtwork.collectAsState()
         val downloadedOnly by viewModel.downloadedOnly.collectAsState()
-        val debugLoggingEnabled by viewModel.debugLoggingEnabled.collectAsState()
         val scrobblingEnabled by viewModel.scrobblingEnabled.collectAsState()
         val scrobblingError by viewModel.scrobblingError.collectAsState()
         val pendingSyncCount by viewModel.pendingSyncCount.collectAsState()
@@ -179,16 +171,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                     isOn = scrobblingEnabled,
                     onToggle = { viewModel.toggleScrobbling() },
                     subtitle = scrobblingError,
-                )
-                // Always last — the least likely to be touched day-to-day.
-                ToggleRow(
-                    // Also gates local debug logging (AppLogger), not just
-                    // CrashReporter (issue #41) — kept as one toggle/one
-                    // underlying setting (debugLoggingEnabled), just
-                    // relabeled per explicit request.
-                    label = "Report Crashes",
-                    isOn = debugLoggingEnabled,
-                    onToggle = { viewModel.toggleDebugLogging() },
                 )
                 // Not a toggle — a live, real count of writes (favorites,
                 // playlist edits) still waiting to reach the server, so a

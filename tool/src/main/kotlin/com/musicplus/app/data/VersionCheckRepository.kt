@@ -19,8 +19,8 @@ data class NewerVersion(val versionName: String, val releaseUrl: String)
 
 /**
  * Checks GitHub Releases for a version newer than what's installed — a public,
- * unauthenticated API call (this repo is public; no token needed, unlike
- * CrashReporter's write-scoped one), once per process start.
+ * unauthenticated API call (this repo is public; no token needed), once
+ * per process start.
  *
  * LightOS tools can't open a browser or trigger a package install from code —
  * the SDK build plugin (LightSdkPlugin.BLOCKED_CODE_PATTERNS) rejects any

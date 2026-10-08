@@ -186,21 +186,20 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
 
 ### S5. Small singletons with hidden dependencies (Speculative)
 
-- **What.** `VersionCheckRepository`, `CrashReporter`, `AppLogger`, `TrackAvailability`.
+- **What.** `VersionCheckRepository`, `AppLogger`, `TrackAvailability` (and `CrashReporter`, now removed).
 - **Evidence.** `VersionCheckRepository` and `CrashReporter` hold the same `queueingqt/musicplus` constants.
   `TrackAvailability.init(cache)` is a global that must be called before use. `CrashReporter` reads the log path
   `logs/app.log` by convention instead of asking `AppLogger` (`CrashReporter.kt:65-68`). `isNewer` is a pure helper with no
   test. The 24-hour-throttle bug in this area is D6.
-- **Open and not an architecture question.** Whether `CrashReporter` stays at all is a separate decision from the
-  Light-tool submission review: Light's guidelines say no tracking or data collection and clear disclosure of anything that
-  leaves the device; in Light's build the token is blank so it would never send, but the code and the "Report Crashes"
-  toggle would still ship, and the toggle also gates the local log. The same review noted the missing LICENSE file and the
-  once-per-launch GitHub release check. Settle those first; they decide what is left of this item.
-- **Options.** (a) After the submission decision, move the shared repo constants to one place and give `isNewer` a test.
-  (b) Leave.
-- **Recommendation.** Settle the CrashReporter and license questions first, then (a).
-- **Question.** Delete `CrashReporter` for submission (and relabel the toggle "Debug logging"), or keep it?
-- **Decision:** _open_
+- **Settled 2026-10-08.** `CrashReporter` and its "Report Crashes" toggle were removed (code, the `GITHUB_CRASH_TOKEN`
+  build field, the AppGraph wiring, the Settings row). Local debug logging (`AppLogger`) stays on its stored setting,
+  default on, with no UI to change it. The setting itself (`debugLoggingEnabled`) and its mirror remain, so #89 should
+  decide whether to keep a setting nobody can change. The LICENSE file and the once-per-launch GitHub release check
+  (disclose it in the README) are still open for the Light submission.
+- **Options now.** (a) Move the shared `queueingqt/musicplus` constant out of `VersionCheckRepository`, and give `isNewer`
+  a test. (b) Leave.
+- **Recommendation.** (a), after D6 (the throttle bug in `checkForUpdate`).
+- **Decision:** _CrashReporter removed; the rest open_
 
 ## Progress log
 

@@ -21,9 +21,7 @@ private const val IDLE_TIMEOUT_MS = 60_000L
  * Shared Ktor client construction. [SubsonicClient]'s long-lived instance and
  * [VersionCheckRepository]'s one-shot GitHub release check each independently
  * built this exact `HttpClient(CIO) { install(ContentNegotiation) { json(...) } }`
- * shape — confirmed live, 2026-09-18 architecture review. (`CrashReporter`'s own
- * HTTP calls are deliberately different — plain [java.net.HttpURLConnection],
- * not Ktor, since it must survive process teardown — and stay separate.)
+ * shape — confirmed live, 2026-09-18 architecture review.
  *
  * Engine is CIO, not OkHttp — see [SubsonicClient]'s own doc for why (Android's
  * cleartext-traffic block, no way to override it under this SDK).
