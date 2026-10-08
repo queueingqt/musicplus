@@ -85,4 +85,40 @@ class DownloadStatesTest {
         assertEquals(TrackListDownloadState.SOME, trackListDownloadState(listOf("a", "b"), mapOf("a" to DownloadStatus.COMPLETE)))
         assertEquals(TrackListDownloadState.NONE, trackListDownloadState(listOf("a"), mapOf("zzz" to DownloadStatus.COMPLETE)))
     }
+
+    @Test
+    fun aListsDownloadRowReadsTheSameWhicheverListItIsOn() {
+        assertEquals("Download album", trackListDownloadLabel("album", TrackListDownloadState.NONE))
+        assertEquals("Download playlist", trackListDownloadLabel("playlist", TrackListDownloadState.NONE))
+        assertEquals("Some tracks downloaded — download the rest", trackListDownloadLabel("album", TrackListDownloadState.SOME))
+        assertEquals("Downloading — tap to cancel", trackListDownloadLabel("album", TrackListDownloadState.IN_PROGRESS))
+        assertEquals("Downloaded — remove", trackListDownloadLabel("album", TrackListDownloadState.ALL))
+        assertEquals(downloadStatusIcon(DownloadStatus.COMPLETE), trackListDownloadIcon(TrackListDownloadState.ALL))
+        assertEquals(downloadStatusIcon(DownloadStatus.DOWNLOADING), trackListDownloadIcon(TrackListDownloadState.IN_PROGRESS))
+        assertEquals(downloadStatusIcon(null), trackListDownloadIcon(TrackListDownloadState.SOME))
+    }
+
+    @Test
+    fun aListRowRebuildsItselfFromWhatTheToggleReturns() = kotlinx.coroutines.runBlocking<Unit> {
+        val row = trackListDownloadActionItem("album", TrackListDownloadState.NONE) { TrackListDownloadState.IN_PROGRESS }
+        val next = (row.onSelect as ActionMenuSelection.Perform).action()!!
+        assertEquals("Downloading — tap to cancel", next.label)
+        assertEquals(row.key, next.key)
+    }
+
+    @Test
+    fun aSongsRowFollowsWhatTheTapReturns() = kotlinx.coroutines.runBlocking<Unit> {
+        val row = trackDownloadActionItem(null) { shown -> statusAfterDownloadTap(shown) }
+        assertEquals("Download", row.label)
+        val queued = (row.onSelect as ActionMenuSelection.Perform).action()!!
+        assertEquals(downloadStatusLabel(DownloadStatus.QUEUED), queued.label)
+        val stopped = (queued.onSelect as ActionMenuSelection.Perform).action()!!
+        assertEquals("Download", stopped.label, "a second tap stops it")
+    }
+
+    @Test
+    fun theWholeArtistDownloadSaysHowManyAlbumsItCovers() {
+        assertEquals("Downloads every track across 1 album to this device.", downloadEntireArtistMessage(1))
+        assertEquals("Downloads every track across 7 albums to this device.", downloadEntireArtistMessage(7))
+    }
 }

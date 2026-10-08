@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.first
  * / [PlaylistRepository.observeTracks] are pure Room-cache reads, and that
  * cache is only ever populated by a matching refreshAlbumDetail/
  * refreshPlaylistDetail call. That dependency isn't visible in
- * TrackListDownload.kt's Flow<List<Track>> signature at all, which is exactly
+ * DownloadStates.kt's Flow<List<Track>> signature at all, which is exactly
  * how 3 of 4 call sites shipped without it — each one had to independently
  * rediscover and hand-patch the same bug. Rather than trust every future
  * caller to remember the same tribal knowledge, refresh-then-read is baked
@@ -55,11 +55,11 @@ class SelfLoadingTrackList private constructor(
             )
     }
 
-    /** See TrackListDownload.kt's [observeTrackListDownloadState] — reads the cache as-is, no refresh (see the class doc for why: this is collected per-row in scrolling lists, and a refresh here means a network call on every row scrolled into view). May show NONE for an album/playlist that's never been refreshed, until [toggleDownload] actually runs. */
+    /** See DownloadStates.kt's [observeTrackListDownloadState] — reads the cache as-is, no refresh (see the class doc for why: this is collected per-row in scrolling lists, and a refresh here means a network call on every row scrolled into view). May show NONE for an album/playlist that's never been refreshed, until [toggleDownload] actually runs. */
     fun observeDownloadState(downloadRepository: DownloadRepository): Flow<TrackListDownloadState> =
         observeTrackListDownloadState(tracksFlow, downloadRepository)
 
-    /** See TrackListDownload.kt's [toggleTrackListDownload]. */
+    /** See DownloadStates.kt's [toggleTrackListDownload]. */
     suspend fun toggleDownload(downloadRepository: DownloadRepository): TrackListDownloadState {
         refresh()
         return toggleTrackListDownload(tracksFlow, downloadRepository)

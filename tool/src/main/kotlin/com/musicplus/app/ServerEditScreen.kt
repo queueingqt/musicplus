@@ -172,6 +172,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
         val kind by viewModel.kind.collectAsState()
         val testResult by viewModel.testResult.collectAsState()
         val saveMessage by viewModel.saveMessage.collectAsState()
+        val serverActions = rememberServerActions()
 
         // A deleted server has nothing to edit: leave, without drawing its form again. Same shape as PlaylistDetailScreen's `leaving`.
         val leaving = remember { viewModel.removed }
@@ -277,15 +278,7 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
                         variant = LightTextVariant.Copy,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .lightClickable {
-                                navigateTo({ a ->
-                                    ActionsMenuScreen(
-                                        activity = a,
-                                        subtitle = "Delete \"$name\"",
-                                        items = serverRemovalItems(name, viewModel.downloadSummary.value) { keep -> viewModel.remove(keep) },
-                                    )
-                                })
-                            }
+                            .lightClickable { serverActions.openRemovalMenu(name, viewModel.downloadSummary.value) { keep -> viewModel.remove(keep) } }
                             .padding(vertical = 1f.gridUnitsAsDp()),
                     )
                 }

@@ -101,6 +101,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
         val unreachable by viewModel.unreachable.collectAsState()
         val removedServers by viewModel.removedServers.collectAsState()
         val downloadSummaries by viewModel.downloadSummaries.collectAsState()
+        val serverActions = rememberServerActions()
 
         MusicPlusScaffold(
             screen = this,
@@ -146,20 +147,13 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                             },
                             onClick = { navigateTo({ a -> ServerEditScreen(a, serverId = server.id) }) },
                             onLongClick = {
-                                navigateTo({ a ->
-                                    ActionsMenuScreen(
-                                        activity = a,
-                                        subtitle = server.name,
-                                        items = buildList {
-                                            add(serverToggleItem(viewModel, server.id, isOn))
-                                            // The delete choices sit in this menu, not behind a second menu: the SDK reuses the
-                                            // first ActionsMenuScreen's items for one opened from it.
-                                            addAll(serverRemovalItems(server.name, downloadSummaries[server.id]) { keep ->
-                                                viewModel.remove(server.id, keep)
-                                            })
-                                        },
-                                    )
-                                })
+                                serverActions.openServerMenu(
+                                    server = server,
+                                    isOn = isOn,
+                                    downloads = downloadSummaries[server.id],
+                                    setEnabled = { on -> viewModel.setEnabled(server.id, on) },
+                                    remove = { keep -> viewModel.remove(server.id, keep) },
+                                )
                             },
                         )
                     }
@@ -168,25 +162,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
                         RemovedServerRow(
                             server = gone,
                             summary = summary,
-                            onLongClick = {
-                                navigateTo({ a ->
-                                    ActionsMenuScreen(
-                                        activity = a,
-                                        subtitle = "${gone.name} (removed)",
-                                        items = listOf(
-                                            confirmActionItem(
-                                                icon = LightIcons.TRASH,
-                                                label = "Delete downloads",
-                                                confirmTitle = "Delete downloads?",
-                                                confirmMessage = "Removes " + (summary?.let { "${songsText(it.songs)} (${sizeText(it.bytes)})" } ?: "the songs") +
-                                                    " that came from \"${gone.name}\" from this phone. This can't be undone.",
-                                                confirmContentDescription = "Delete downloads",
-                                                onConfirm = { viewModel.deleteKeptDownloads(gone.id) },
-                                            ),
-                                        ),
-                                    )
-                                })
-                            },
+                            onLongClick = { serverActions.openRemovedMenu(gone, summary) { viewModel.deleteKeptDownloads(gone.id) } },
                         )
                     }
                 }
@@ -194,20 +170,6 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
         }
     }
 }
-
-/**
- * Turn on / Turn off. Once it has run it returns the opposite item, so the row flips in place instead of
- * disappearing (returning null would drop it, and leave whatever is below it, Delete, under the person's thumb).
- */
-private fun serverToggleItem(viewModel: ServerSettingsScreenViewModel, serverId: String, isOn: Boolean): ActionMenuItem =
-    ActionMenuItem(
-        icon = if (isOn) LightIcons.SELECT_OFF else LightIcons.SELECT_ON,
-        label = if (isOn) "Turn off" else "Turn on",
-        onSelect = ActionMenuSelection.Perform {
-            viewModel.setEnabled(serverId, !isOn)
-            serverToggleItem(viewModel, serverId, !isOn)
-        },
-    )
 
 @Composable
 private fun ServerRow(server: ServerProfile, isOn: Boolean, status: String, onClick: () -> Unit, onLongClick: () -> Unit) {
@@ -237,45 +199,6 @@ private fun ServerRow(server: ServerProfile, isOn: Boolean, status: String, onCl
             LightText(text = status, variant = LightTextVariant.Fine, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
-}
-
-/**
- * What deleting a server offers. With downloaded songs on the phone the person chooses: keep them (they stay listed and
- * playable, and a new login for the same address picks them up again) or delete them too; the size is in the confirm so
- * it is a real choice. Without any, there is one option. Shared by the Servers list and the edit screen.
- */
-internal fun serverRemovalItems(name: String, downloads: DownloadSummary?, onRemove: (keepDownloads: Boolean) -> Unit): List<ActionMenuItem> {
-    if (downloads == null || downloads.songs == 0) {
-        return listOf(
-            confirmActionItem(
-                icon = LightIcons.TRASH,
-                label = "Delete",
-                confirmTitle = "Delete \"$name\"?",
-                confirmMessage = "Its library leaves this phone. Nothing on the server is touched.",
-                confirmContentDescription = "Delete server",
-                onConfirm = { onRemove(false) },
-            ),
-        )
-    }
-    val songs = songsText(downloads.songs) + " (${sizeText(downloads.bytes)})"
-    return listOf(
-        confirmActionItem(
-            icon = LightIcons.TRASH,
-            label = "Delete, keep downloads",
-            confirmTitle = "Delete \"$name\"?",
-            confirmMessage = "Its library leaves this phone. The $songs you downloaded " + (if (downloads.songs == 1) "stays" else "stay") + " listed and playable.",
-            confirmContentDescription = "Delete server, keep downloads",
-            onConfirm = { onRemove(true) },
-        ),
-        confirmActionItem(
-            icon = LightIcons.TRASH,
-            label = "Delete with downloads",
-            confirmTitle = "Delete \"$name\" and its downloads?",
-            confirmMessage = "This also removes $songs from this phone. It can't be undone.",
-            confirmContentDescription = "Delete server and downloads",
-            onConfirm = { onRemove(false) },
-        ),
-    )
 }
 
 /** A removed server whose downloads were kept: no dot (it has no login), its name and what is still on the phone. */

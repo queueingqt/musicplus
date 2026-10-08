@@ -45,6 +45,43 @@ class AlbumActions(
 }
 
 /**
+ * What an artist does when it is long-pressed: favorite it, and (from the Artists list) download every track of every album it has. The
+ * Favorites page offers only the favorite row, to take the artist off the list. "Download entire artist" runs on [scope], the ViewModel's:
+ * it is started from a confirm dialog while this screen is not composed, and a scope tied to the composition would be cancelled by then.
+ * There is deliberately no aggregate download state for an artist, so the row is a plain confirm, not a self-updating one.
+ */
+class ArtistActions(
+    private val screen: SimpleLightScreen<*>,
+    private val lightContext: SealedLightContext,
+    private val scope: CoroutineScope,
+) {
+    private val graph get() = AppGraph.from(lightContext)
+
+    /** [albumCount] is the artist's album count when "Download entire artist" is offered; null leaves that row out. */
+    fun openMenu(artistId: String, name: String, isFavorite: Boolean, albumCount: Int? = null) {
+        screen.navigateTo({ a -> ActionsMenuScreen(activity = a, subtitle = name, items = menuItems(artistId, isFavorite, albumCount)) })
+    }
+
+    private fun menuItems(artistId: String, isFavorite: Boolean, albumCount: Int?): List<ActionMenuItem> = listOfNotNull(
+        favoriteActionItem(isFavorite) { favorite -> graph.syncQueueRepository.setArtistFavorite(artistId, favorite) },
+        albumCount?.let {
+            confirmActionItem(
+                icon = LightIcons.DOWNLOAD_ARROW,
+                label = "Download entire artist",
+                confirmTitle = "Download entire artist?",
+                confirmMessage = downloadEntireArtistMessage(it),
+                confirmContentDescription = "Download entire artist",
+                onConfirm = { scope.launch { downloadEntireArtist(graph.libraryRepository, graph.downloadRepository, artistId) } },
+            )
+        },
+    )
+}
+
+/** What the "Download entire artist" confirm says: how many albums it covers. */
+internal fun downloadEntireArtistMessage(albumCount: Int): String =
+    "Downloads every track across $albumCount " + (if (albumCount == 1) "album" else "albums") + " to this device."
+
+/**
  * What a playlist does when it is long-pressed, the same in the playlist list and inside the playlist: add it to the queue, rename it,
  * edit its order, download it, delete it. (The list's menu and the playlist's own had drifted: the playlist's had no "Add to queue".)
  * Renaming and deleting run on [scope], the ViewModel's: they are started from a result callback, and while the editor is on top the
@@ -105,3 +142,8 @@ fun SimpleLightScreen<*>.rememberAlbumActions(activity: SealedLightActivity, lig
 @Composable
 fun SimpleLightScreen<*>.rememberPlaylistActions(activity: SealedLightActivity, lightContext: SealedLightContext, scope: CoroutineScope): PlaylistActions =
     remember(this) { PlaylistActions(this, activity, lightContext, scope) }
+
+/** The [ArtistActions] of the screen this is composed in, downloading on [scope] (the ViewModel's). */
+@Composable
+fun SimpleLightScreen<*>.rememberArtistActions(lightContext: SealedLightContext, scope: CoroutineScope): ArtistActions =
+    remember(this) { ArtistActions(this, lightContext, scope) }

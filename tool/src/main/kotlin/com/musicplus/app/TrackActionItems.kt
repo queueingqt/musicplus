@@ -1,6 +1,5 @@
 package com.musicplus.app
 
-import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
 import com.thelightphone.sdk.ui.LightIcons
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -74,29 +73,3 @@ private fun alreadyInQueueMessage(tracks: List<Track>, alreadyQueued: Int): Stri
     alreadyQueued == tracks.size -> "All ${tracks.size} songs are already in the queue. Add them anyway?"
     else -> "$alreadyQueued of ${tracks.size} songs are already in the queue. Add them all anyway?"
 }
-
-/**
- * Per-track counterpart to [trackListDownloadActionItem] (TrackListDownload.kt)
- * — same self-updating shape (the row rebuilds itself from whatever [toggle]
- * returns), but for one track's own [DownloadStatus] rather than a whole
- * album/playlist's aggregate state. [toggle] receives the status this row was
- * just showing and returns the new one — the same contract as each screen's
- * own `toggleDownload(lightContext, track, currentStatus)`, which stays put
- * on each ViewModel rather than moving here, since it's the one part of this
- * that actually needs repository/lightContext access. Callers wanting this
- * row to also track a live status (the same `liveUpdates` pattern
- * [trackListDownloadActionItem] uses) attach it themselves, e.g.
- * `trackDownloadActionItem(status, toggle).copy(liveUpdates = statusFlow.map
- * { trackDownloadActionItem(it, toggle) })`.
- */
-fun trackDownloadActionItem(
-    status: DownloadStatus?,
-    toggle: suspend (DownloadStatus?) -> DownloadStatus?,
-): ActionMenuItem = ActionMenuItem(
-    key = "download",
-    icon = downloadStatusIcon(status),
-    label = downloadStatusLabel(status),
-    onSelect = ActionMenuSelection.Perform {
-        trackDownloadActionItem(toggle(status), toggle)
-    },
-)

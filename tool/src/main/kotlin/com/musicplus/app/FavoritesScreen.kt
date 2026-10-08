@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppAvailability
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.ListRefresher
-import com.musicplus.app.data.SyncQueueRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
@@ -16,7 +15,6 @@ import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 
 class FavoritesScreenViewModel(
-    private val syncQueueRepository: SyncQueueRepository,
     listRefresher: ListRefresher,
 ) : CachedListViewModel(listRefresher, ListRefresher.Target.FAVORITES) {
 
@@ -29,7 +27,6 @@ class FavoritesScreenViewModel(
 
     // Unfavoriting here naturally drops the row from the lists above — each is derived from observeFavorite*(), which only ever includes
     // starred items — so there's no separate "remove from this list" step beyond the same favorite toggle every other screen uses.
-    suspend fun setArtistFavorite(id: String, favorite: Boolean) = syncQueueRepository.setArtistFavorite(id, favorite)
 }
 
 class FavoritesScreen(private val activity: SealedLightActivity) :
@@ -39,7 +36,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
 
     override fun createViewModel(): FavoritesScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return FavoritesScreenViewModel(graph.syncQueueRepository, graph.listRefresher)
+        return FavoritesScreenViewModel(graph.listRefresher)
     }
 
     @Composable
@@ -50,6 +47,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
         val filter by viewModel.filter.query.collectAsState()
         val trackActions = rememberTrackActions(activity, lightContext)
         val albumActions = rememberAlbumActions(activity, lightContext)
+        val artistActions = rememberArtistActions(lightContext, viewModel.viewModelScope)
 
         MusicPlusScaffold(
             screen = this,
@@ -70,19 +68,7 @@ class FavoritesScreen(private val activity: SealedLightActivity) :
                         unavailable = unavailable,
                         onClick = { navigateTo({ a -> ArtistDetailScreen(a, artist.id) }) },
                         // Long-press for the way to remove it from favorites.
-                        onLongClick = {
-                            navigateTo({ a ->
-                                ActionsMenuScreen(
-                                    activity = a,
-                                    subtitle = artist.name,
-                                    items = listOf(
-                                        favoriteActionItem(isFavorite = true) { favorite ->
-                                            viewModel.setArtistFavorite(artist.id, favorite)
-                                        },
-                                    ),
-                                )
-                            })
-                        },
+                        onLongClick = { artistActions.openMenu(artist.id, artist.name, isFavorite = true) },
                     )
                 }
                 item { SectionHeader("Albums") }
