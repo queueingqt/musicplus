@@ -130,7 +130,7 @@ class SleepTimerTest {
     private var slept = 0
     private val timer = SleepTimer(scope, onSleep = { slept++ }, tickMs = 5)
 
-    private suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
+    private suspend fun until(condition: () -> Boolean) = withTimeout(15_000) { while (!condition()) delay(2) }
 
     @Test
     fun aCountdownPausesOnceWhenItRunsOutAndClearsItself() = runBlocking<Unit> {

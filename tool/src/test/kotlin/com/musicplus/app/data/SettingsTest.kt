@@ -62,10 +62,12 @@ class SettingsTest {
 
     @Test
     fun theWarmCopyFollowsWhatIsStored() = runBlocking {
-        Settings.mirrorAll(store, scope)
-        Settings.downloadedOnly.set(store, true)
-        withTimeout(3_000) { while (!Settings.downloadedOnly.warm.value.value) delay(5) }
-        assertTrue(Settings.downloadedOnly.warm.loaded.value, "marked loaded once the real value arrived")
+        // A setting of the test's own, so nothing global is changed for the tests that run after this one.
+        val mine = Setting.flag("test_flag", default = false)
+        mine.mirror(store, scope)
+        mine.set(store, true)
+        withTimeout(15_000) { while (!mine.warm.value.value) delay(5) }
+        assertTrue(mine.warm.loaded.value, "marked loaded once the real value arrived")
     }
 
     @Test

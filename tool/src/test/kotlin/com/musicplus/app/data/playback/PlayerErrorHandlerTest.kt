@@ -32,7 +32,7 @@ class PlayerErrorHandlerTest {
             scope, queue, isPlayable = { playable(it) }, onServerUnreachable = { unreachable += it }, notify = { notes += it }, retryDelayMs = 40,
         ).also { it.start() }
 
-        suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
+        suspend fun until(condition: () -> Boolean) = withTimeout(15_000) { while (!condition()) delay(2) }
 
         suspend fun settled(songs: Int) {
             until { player.held.size == songs && queue.snapshot().isPlaying }

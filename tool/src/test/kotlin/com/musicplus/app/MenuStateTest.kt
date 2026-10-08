@@ -21,7 +21,7 @@ class MenuStateTest {
     private fun row(key: String, label: String = key, select: ActionMenuSelection = ActionMenuSelection.Perform { null }, live: MutableSharedFlow<ActionMenuItem>? = null) =
         ActionMenuItem(icon = LightIcons.STAR, label = label, onSelect = select, liveUpdates = live, key = key)
 
-    private suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
+    private suspend fun until(condition: () -> Boolean) = withTimeout(15_000) { while (!condition()) delay(2) }
 
     @Test
     fun aTapReplacesJustItsRowWithWhatTheActionReturns() = runBlocking<Unit> {

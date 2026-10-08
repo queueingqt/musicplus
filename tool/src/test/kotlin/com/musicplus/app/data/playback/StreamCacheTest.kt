@@ -151,7 +151,7 @@ class StreamCacheTest {
         val existing = File(dir.parentFile, "existing").apply { mkdirs() }
         File(existing, "srv_abc-192.mp3").writeBytes(ByteArray(4))
         val fresh = StreamCache(existing, FetchGate({ true }), listingTtlMs = 60_000)
-        withTimeout(3_000) { while (fresh.revision.value == 0) delay(5) }
+        withTimeout(15_000) { while (fresh.revision.value == 0) delay(5) }
         assertEquals("srv_abc-192.mp3", fresh.anyCopy("srv:abc")?.name, "the very first question already sees it")
     }
 

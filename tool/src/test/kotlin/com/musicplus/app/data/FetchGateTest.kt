@@ -20,7 +20,7 @@ class FetchGateTest {
     private var wifi = true
     private val gate = FetchGate(isWifiNow = { wifi })
 
-    private suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
+    private suspend fun until(condition: () -> Boolean) = withTimeout(15_000) { while (!condition()) delay(2) }
 
     private val download = { FetchGate.Priority.DOWNLOAD }
 

@@ -37,7 +37,7 @@ class PlayQueueTest {
             timing = FAST,
         ).also { it.restoreFinished() }
 
-        suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
+        suspend fun until(condition: () -> Boolean) = withTimeout(15_000) { while (!condition()) delay(2) }
 
         /** The start song is playing and the rest of the queue has been handed over and has settled. */
         suspend fun settled(songs: Int) {

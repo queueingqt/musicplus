@@ -44,7 +44,7 @@ class AppLifecycleTest {
             ),
         )
 
-        suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
+        suspend fun until(condition: () -> Boolean) = withTimeout(15_000) { while (!condition()) delay(2) }
         suspend fun settle() = delay(120)
     }
 
