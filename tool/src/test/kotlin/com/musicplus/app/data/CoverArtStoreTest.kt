@@ -57,7 +57,8 @@ class CoverArtStoreTest {
         root.deleteRecursively()
     }
 
-    private fun bytes(count: Int, seed: Int) = ByteArray(count) { (seed + it).toByte() }
+    /** A picture: starts like a JPEG, which is what the store requires of anything it keeps. */
+    private fun bytes(count: Int, seed: Int) = ByteArray(count) { if (it < 3) byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())[it] else (seed + it).toByte() }
 
     @Test
     fun aSubsonicIdAndAJellyfinIdBothComeBackAsBytes() = runBlocking<Unit> {
@@ -185,5 +186,25 @@ class CoverArtStoreTest {
         val answers = List(4) { async { store.refreshedIfStock("sub:al-1", 300) } }.awaitAll()
         assertEquals(1, subsonic.asked.size)
         assertTrue(answers.all { it != null && it.contentEquals(bytes(10, 1)) })
+    }
+
+    @Test
+    fun anErrorBodyIsReturnedButNeverKeptAsTheArt() = runBlocking {
+        val body = """{"subsonic-response":{"status":"failed"}}""".toByteArray()
+        val flaky = FakeServer(mapOf("sub:al-9" to body))
+        val withFlaky = CoverArtStore(dir, { flaky }, { false }, { now }, 0, 500)
+        withFlaky.bytes("sub:al-9")
+        assertTrue(dir.listFiles().orEmpty().isEmpty(), "nothing that is not a picture is written to disk")
+    }
+
+    @Test
+    fun aNonPictureAlreadyOnDiskIsDroppedAndAskedForAgain() = runBlocking {
+        val store = store()
+        val first = store.bytes("sub:al-1")
+        val file = dir.listFiles().orEmpty().single()
+        file.writeText("<html>502 Bad Gateway</html>")
+        val again = store.bytes("sub:al-1")
+        assertContentEquals(first, again, "the real picture replaces the bad file")
+        assertEquals(2, subsonic.asked.size, "the server was asked a second time")
     }
 }

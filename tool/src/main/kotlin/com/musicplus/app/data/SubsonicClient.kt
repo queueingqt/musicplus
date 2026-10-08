@@ -204,6 +204,12 @@ class SubsonicClient(
         }
         onReachable(response.status.value !in 502..504)
         AppLogger.d("SubsonicClient", "getBytes($method): got response ${response.status}, contentLength=${response.contentLength()}")
+        if (!response.status.isSuccess()) throw IOException("server answered ${response.status}")
+        // A Subsonic server reports a failure (unknown id, no such art) as a 200 whose body is the error envelope, not as a status.
+        val type = response.contentType()
+        if (type != null && (type.match(ContentType.Application.Json) || type.match(ContentType.Application.Xml) || type.match(ContentType.Text.Any))) {
+            throw SubsonicApiException(-1, "$method answered ${type.withoutParameters()} instead of a file")
+        }
         val bytes: ByteArray = response.body()
         AppLogger.d("SubsonicClient", "getBytes($method): read ${bytes.size} bytes")
         return bytes

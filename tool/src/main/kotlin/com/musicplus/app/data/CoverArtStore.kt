@@ -127,14 +127,22 @@ class CoverArtStore(
 
     private fun readFromDisk(coverArtId: String, size: Int): ByteArray? {
         val file = fileFor(coverArtId, size)
-        return if (file.exists()) file.readBytes() else null
+        if (!file.exists()) return null
+        val bytes = file.readBytes()
+        // Something that is not a picture (a server's error page, saved by an older version) is not art: drop it and ask again.
+        if (!looksLikeImage(bytes)) {
+            file.delete()
+            return null
+        }
+        return bytes
     }
 
     private suspend fun fetchFromNetwork(coverArtId: String, size: Int): ByteArray {
         val source = sourceFor(coverArtId) ?: throw IllegalStateException("no server configured")
         val bytes = source.coverArtBytes(coverArtId, size)
-        // Best-effort: a disk-cache write failure should not fail the result.
-        runCatching { fileFor(coverArtId, size).writeBytes(bytes) }
+        // Best-effort: a disk-cache write failure should not fail the result. Only a picture is kept, so an error body is never
+        // served from disk as the art for this id.
+        if (looksLikeImage(bytes)) runCatching { fileFor(coverArtId, size).writeBytes(bytes) }
         return bytes
     }
 
@@ -157,6 +165,19 @@ class CoverArtStore(
         java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     companion object {
+        /** Whether [bytes] start like a picture a server would serve as art: JPEG, PNG, GIF, WebP or BMP. */
+        fun looksLikeImage(bytes: ByteArray): Boolean {
+            fun at(i: Int) = if (i < bytes.size) bytes[i].toInt() and 0xFF else -1
+            return when {
+                at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF -> true
+                at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 -> true
+                at(0) == 0x47 && at(1) == 0x49 && at(2) == 0x46 && at(3) == 0x38 -> true
+                at(0) == 0x42 && at(1) == 0x4D -> true
+                at(0) == 0x52 && at(1) == 0x49 && at(2) == 0x46 && at(3) == 0x46 && at(8) == 0x57 && at(9) == 0x45 && at(10) == 0x42 && at(11) == 0x50 -> true
+                else -> false
+            }
+        }
+
         /** The directory the store keeps its files in, under the app's files dir. */
         const val DIR_NAME = "albumart"
 
