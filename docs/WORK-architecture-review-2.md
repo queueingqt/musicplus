@@ -44,7 +44,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
 | [x] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
 | [x] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
-| [ ] | 10 | #89 | Settings declared once, read model | #82 helps | |
+| [~] | 10 | #89 | Settings declared once, read model | #82 helps | |
 | [ ] | 11 | #88 | Action-menu state holder | none | D9 |
 | [ ] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
 | [x] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
@@ -285,3 +285,8 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   it to decide); the migration's `android.util.Log` calls use `AppLogger`. 2 new tests (364 total). Phone: the debug build still logs; a
   release build was not installed (it would replace the debuggable build). **Still open for the Light submission:** disclose the
   once-per-launch GitHub release check in the README, and the missing LICENSE.
+- 2026-10-08: **#89 partly done** `2706b4c`. `Setting<T>`/`Settings` declare the six displayed settings once (key, default, warm copy); the `*Prefs`
+  objects and per-setting mirror lines are gone; `AppLifecycle` owns the update-check throttle, the Wi-Fi-only download retry, the
+  one-time media repair and the reconnect trigger, with 17 new tests (381 total). Phone: values and the launch fan-out verified.
+  **Not done, needs a decision:** the UI read model that replaces screens' direct reads of global WarmedFlows and the 22
+  `AppGraph.from` calls (and `HomeScreen`'s discarded warm-up call); and `announce`'s hand-set mirrors. Box stays `[~]`.
