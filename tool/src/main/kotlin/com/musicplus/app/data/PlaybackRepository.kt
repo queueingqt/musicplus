@@ -5,17 +5,13 @@ import com.musicplus.app.PlaybackState
 import com.musicplus.app.RepeatMode
 import com.musicplus.app.Track
 import com.musicplus.app.data.playback.AlbumArtHint
-import com.musicplus.app.data.playback.ErrorRecovery
 import com.musicplus.app.data.playback.PlayReportSink
 import com.musicplus.app.data.playback.LightQueuePlayer
 import com.musicplus.app.data.playback.ListenReporting
 import com.musicplus.app.data.playback.PlayQueue
+import com.musicplus.app.data.playback.PlayerErrorHandler
 import com.musicplus.app.data.playback.PlaybackPersistence
-import com.musicplus.app.data.playback.PlayerFault
-import com.musicplus.app.data.playback.RETRY_DELAY_MS
-import com.musicplus.app.data.playback.Recovery
 import com.musicplus.app.data.playback.ScrobbleSink
-import com.musicplus.app.data.playback.SkipMove
 import com.musicplus.app.data.playback.SleepTimer
 import com.musicplus.app.data.playback.StreamCache
 import com.musicplus.app.data.playback.TrackEnd
@@ -115,7 +111,7 @@ class PlaybackRepository(
         state.collect { s ->
             when (trackEnd.observe(s, s.repeatMode, sleepTimer.endOfTrackArmed)) {
                 TrackEndAction.RESTART_TRACK -> playQueue.restartTrack()
-                TrackEndAction.WRAP_QUEUE -> playQueue.playAsync(s.queue, 0)
+                TrackEndAction.WRAP_QUEUE -> playQueue.wrapToStart()
                 TrackEndAction.SLEEP -> sleepTimer.fire()
                 null -> {}
             }
@@ -137,56 +133,15 @@ class PlaybackRepository(
         ),
     ).also { it.start(state) }
 
-    // Player errors (issues #47/#50): what to retry and what to skip is ErrorRecovery's policy; this carries it out.
-    private val errorRecovery = ErrorRecovery()
-    private val playerErrorWatcher = scope.launch {
-        playQueue.playerError.collect { err ->
-            if (err == null) return@collect
-            val s = currentSnapshot()
-            val track = s.currentTrack
-            AppLogger.e(
-                "PlaybackRepository",
-                "player error ${err.kind}: ${err.diagnostic} (item ${err.itemIndex}); track=${track?.id} " +
-                    "\"${track?.title}\" queueIndex=${s.currentIndex} of ${s.queue.size} position=${s.positionMs}ms",
-            )
-            val fault = PlayerFault(isSourceError = err.kind == LightAudioErrorKind.Source, diagnostic = err.diagnostic)
-            if (track != null && errorRecovery.indicatesUnreachableServer(fault)) {
-                ServerScope.serverOf(track.id)?.let(onServerUnreachable)
-            }
-            when (val recovery = errorRecovery.decide(fault, s, s.repeatMode, { TrackAvailability.isPlayable(it) }, System.currentTimeMillis())) {
-                Recovery.None -> {}
-                is Recovery.Skip -> skipUnavailable(recovery, s)
-                Recovery.Retry -> {
-                    AppLogger.d("PlaybackRepository", "auto-retrying ${track?.id} once after ${err.diagnostic}")
-                    // Launched, so the next error is not held up behind the delay; the queue is read again afterwards, so a jump or
-                    // edit made in the meantime is not overwritten by the queue as it was when the error came.
-                    scope.launch {
-                        delay(RETRY_DELAY_MS)
-                        val now = currentSnapshot()
-                        if (ErrorRecovery.retryStillApplies(s, now)) playQueue.playAsync(now.queue, now.currentIndex)
-                    }
-                }
-            }
-        }
-    }
-
-    private val skipStreakReset = scope.launch { playQueue.isPlaying.collect { if (it) errorRecovery.onPlaying() } }
-
-    /** The song that just failed cannot be played (its server is off or unreachable and the phone has no copy): say so briefly and carry out the move. */
-    private fun skipUnavailable(skip: Recovery.Skip, s: PlaybackState) {
-        when (val move = skip.move) {
-            SkipMove.Stop -> {
-                AppLogger.d("PlaybackRepository", "nothing left to play in the queue, stopping")
-                playQueue.pause()
-                NoteModal.show("Server not reachable")
-            }
-            is SkipMove.To, is SkipMove.WrapTo -> {
-                AppLogger.d("PlaybackRepository", "skipping \"${skip.track.title}\" (${skip.track.id}): its server is not reachable")
-                NoteModal.show("Skipped \"${skip.track.title}\": server not reachable")
-                if (move is SkipMove.To) playQueue.jumpToAsync(move.index) else playQueue.playAsync(s.queue, (move as SkipMove.WrapTo).index)
-            }
-        }
-    }
+    // Player errors (issues #47/#50): what to retry and what to skip is ErrorRecovery's policy, where to go is Advance's, and carrying it
+    // out is PlayerErrorHandler's.
+    private val playerErrors = PlayerErrorHandler(
+        scope = scope,
+        queue = playQueue,
+        isPlayable = { TrackAvailability.isPlayable(it) },
+        onServerUnreachable = onServerUnreachable,
+        notify = { NoteModal.show(it) },
+    ).also { it.start() }
 
     // Saving and restoring the queue and playback state across a restart is PlaybackPersistence's; this only applies what it restored.
     // Restore must finish before the queue writer starts (see its doc), and both run in this one coroutine, in that order.

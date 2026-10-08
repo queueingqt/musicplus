@@ -73,13 +73,15 @@ class ErrorRecovery {
 
     private fun skipMove(s: PlaybackState, repeat: RepeatMode, playable: (Track) -> Boolean): SkipMove {
         skipStreak++
-        val next = s.queue.indices.firstOrNull { it > s.currentIndex && playable(s.queue[it]) }
-        val wrapTo = if (next == null && repeat == RepeatMode.REPEAT_QUEUE) s.queue.indexOfFirst(playable).takeIf { it >= 0 } else null
-        if ((next == null && wrapTo == null) || skipStreak > s.queue.size) {
+        val step = Advance.after(s.queue, s.currentIndex, repeat, playable)
+        if (step == null || skipStreak > s.queue.size) {
             skipStreak = 0
             return SkipMove.Stop
         }
-        return if (next != null) SkipMove.To(next) else SkipMove.WrapTo(wrapTo!!)
+        return when (step) {
+            is Step.To -> SkipMove.To(step.index)
+            is Step.WrapTo -> SkipMove.WrapTo(step.index)
+        }
     }
 
     companion object {

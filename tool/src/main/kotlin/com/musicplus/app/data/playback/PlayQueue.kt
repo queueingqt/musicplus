@@ -694,10 +694,19 @@ class PlayQueue(
         val s = session.value
         val index = queueIndex()
         when {
-            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == s.queue.lastIndex -> playAsync(s.queue, 0)
+            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == s.queue.lastIndex -> wrapToStart()
             s.hold != Hold.WHOLE -> if (index + 1 in s.queue.indices) playAsync(s.queue, index + 1)
             else -> player.skipToNext()
         }
+    }
+
+    /**
+     * Repeat-all came round (the last song ended, or next was pressed on it): play the queue again from the first song that plays.
+     * Nothing happens when no song in it does.
+     */
+    fun wrapToStart() {
+        val s = session.value
+        (Advance.after(s.queue, s.queue.lastIndex, RepeatMode.REPEAT_QUEUE, isPlayable) as? Step.WrapTo)?.let { playAsync(s.queue, it.index) }
     }
 
     /** The other direction: "previous" on the first song under repeat-all wraps to the last, and while the player holds only part of the queue it goes back a song, or restarts this one when it is well into it, as the player's own skip does. */
@@ -705,7 +714,7 @@ class PlayQueue(
         val s = session.value
         val index = queueIndex()
         when {
-            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == 0 -> playAsync(s.queue, s.queue.lastIndex)
+            s.repeatMode == RepeatMode.REPEAT_QUEUE && index == 0 -> (Advance.before(s.queue, index, s.repeatMode, isPlayable) as? Step.WrapTo)?.let { playAsync(s.queue, it.index) }
             s.hold != Hold.WHOLE -> {
                 val wellIn = player.positionMs.value > PREVIOUS_RESTARTS_AFTER_MS && currentSongCanSeek()
                 if (wellIn || index == 0) player.seekTo(0) else playAsync(s.queue, index - 1)
