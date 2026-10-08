@@ -45,7 +45,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
 | [x] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
 | [~] | 10 | #89 | Settings declared once, read model | #82 helps | |
-| [~] | 11 | #88 | Action-menu state holder | none | D9 |
+| [x] | 11 | #88 | Action-menu state holder | none | D9 |
 | [x] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
 | [x] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
 
@@ -301,3 +301,8 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
 - 2026-10-08: **#83 completed** `04e123a`. The Phone Only half: `LocalCopy.createPhonePlaylist` (adopt + setSongIds) is the one way a phone playlist is
   made; the DAO-level duplicate in `PlaylistRepository` is a delegate. 2 new tests (401 total). Phone: created and deleted a throwaway
   Phone Only playlist, no leftovers. `copyToPhone`, `uniquePhoneName`, `PlaylistHomes` and the SQL recount stay where they are.
+- 2026-10-08: **#88 completed** `2e885c7`. `ArtistActions` and `ServerActions` replace the hand-listed artist and server menus; `TrackListDownload.kt`
+  merged into `DownloadStates.kt` with the song row moved there and the list row's icon/label made pure. 10 new tests (412 total). Phone:
+  artist menu, favorite round trip, download dialog (cancelled), favorites menu and the server menu looked at; no server row tapped. The
+  player's download control is already `DownloadRepository.tap` and the artist screen's star is a top-bar button on the shared favorite
+  path, so they stay.
