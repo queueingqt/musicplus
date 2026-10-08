@@ -86,10 +86,10 @@ Albums, Artists, Songs, Search, Favorites, and Playlists.
 ## Project layout
 
 ```
-lighttool.toml                 tool manifest (id, permissions, capabilities)
-build.gradle.kts               module build file (see SETUP.md — this repo is NOT
+tool/lighttool.toml            tool manifest (id, permissions, capabilities)
+tool/build.gradle.kts          module build file (see SETUP.md — this repo is NOT
                                 independently buildable, see below)
-src/main/kotlin/com/musicplus/app/
+tool/src/main/kotlin/com/musicplus/app/
   MusicPlusEntryPoint.kt        SDK entry point
   MusicPlusModels.kt            UI-facing domain models (Artist/Album/Track/...)
   MusicPlusScaffold.kt          shared top bar / mini-player / bottom bar shell

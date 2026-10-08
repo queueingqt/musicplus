@@ -8,10 +8,9 @@ import android.security.NetworkSecurityPolicy
  *
  * media3 inside `LightAudioPlayer` goes through `HttpURLConnection`, which refuses plain `http://`
  * unless the app's manifest sets `usesCleartextTraffic` (the app's own Ktor/CIO client is not
- * subject to that, which is why API calls work over `http://` regardless). The SDK's manifest
- * generator has no field for it, so `src/debug` and `src/release` carry an overlay that sets it for
- * the APKs built here; a build without the overlay (the SDK's own builder only reads `src/main`)
- * gets `false` for an `http://` server and falls back to download-then-play. Asked of the platform
+ * subject to that, which is why API calls work over `http://` regardless). The `cleartext-http` capability in
+ * lighttool.toml sets it; a build without that capability gets `false` for an `http://` server and
+ * falls back to download-then-play. Asked of the platform
  * rather than assumed, so it stays right whichever way a given build was made.
  */
 internal fun playerCanFetch(url: String): Boolean {

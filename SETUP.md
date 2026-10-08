@@ -31,7 +31,7 @@ than something `git clone` alone gives you.
    module ends up at a different depth than `tool/` was):
    ```
    rm -rf light-sdk/tool
-   cp -r musicplus light-sdk/tool
+   cp -r musicplus/tool light-sdk/tool
    ```
 3. Build:
    ```
@@ -62,7 +62,7 @@ build/sign them server-side.
 per-app release key (not the shared SDK dev key), tags the commit, and
 publishes a GitHub Release with the APK attached.
 
-Before building, the script copies this repo's `src/` **and** `lighttool.toml`
+Before building, the script copies this repo's `tool/src/` **and** `tool/lighttool.toml`
 into the `light-sdk` checkout: the SDK build takes the app's id, version and
 permissions from the checkout's own `tool/lighttool.toml`, so a stale copy there
 makes the APK report the wrong version (v0.5.0 and v0.5.1 both shipped as

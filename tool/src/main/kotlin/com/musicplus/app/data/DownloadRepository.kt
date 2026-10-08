@@ -130,7 +130,7 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
         // worked around defensively here rather than trusting the value as-is.
         val songId = input["songId"]?.removePrefix("songId=") ?: run {
             android.util.Log.e(tag, "no songId in input: $input")
-            return@handler LightJobResult.Error()
+            return@handler LightJobResult.Error(reason = "no songId in input")
         }
 
         // AppGraph.from(...), not MusicPlusDatabase.create(...) directly — the
@@ -150,14 +150,14 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
         val track = db.trackDao().getById(songId) ?: run {
             android.util.Log.e(tag, "no track row for songId=$songId")
             AppLogger.e(tag, "no track row for songId=$songId")
-            return@handler LightJobResult.Error()
+            return@handler LightJobResult.Error(reason = "no track row for song")
         }
 
         // The server that owns this song, which is not necessarily the active one.
         val api = AppGraph.from(lightContext).apiHolder.forId(songId) ?: run {
             android.util.Log.e(tag, "no server for songId=$songId")
             AppLogger.e(tag, "no server for songId=$songId")
-            return@handler LightJobResult.Error() // its server is gone or not set up — retrying won't help
+            return@handler LightJobResult.Error(reason = "no server for song") // its server is gone or not set up — retrying won't help
         }
         // Preferences > Streaming quality's "Downloads" setting — null (the
         // default) means the original file, same as this job's behavior
@@ -222,7 +222,7 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
                     completedAtEpochMs = System.currentTimeMillis(),
                 ),
             )
-            LightJobResult.Success()
+            LightJobResult.Success(outputFilePath = null, message = null)
         } catch (e: CancellationException) {
             // WorkManager stopped the job (its time limit, or the work was cancelled): not a
             // failed attempt, and nothing worth keeping of a half-written file.
@@ -246,7 +246,7 @@ val downloadTrack: LightJobHandler = handler@{ lightContext, input ->
                         attemptCount = attempt,
                     ),
                 )
-                LightJobResult.Error() // exhausted — stop WorkManager's own retries too, let the user retry from the UI
+                LightJobResult.Error(reason = "download failed after retries") // exhausted — stop WorkManager's own retries too, let the user retry from the UI
             } else {
                 db.downloadDao().upsert(
                     DownloadEntity(

@@ -113,14 +113,14 @@ val syncPendingMutations: LightJobHandler = handler@{ lightContext, _ ->
     // genuinely nowhere for a queued mutation to ever sync to.
     if (graph.serverConfigRepository.serverConfig.first() == null) {
         AppLogger.d("SyncQueueJob", "no server configured, exiting")
-        return@handler LightJobResult.Success()
+        return@handler LightJobResult.Success(outputFilePath = null, message = null)
     }
 
     val count = graph.database.pendingMutationDao().observeCount().first()
     AppLogger.d("SyncQueueJob", "pending count = $count")
-    if (count == 0) return@handler LightJobResult.Success()
+    if (count == 0) return@handler LightJobResult.Success(outputFilePath = null, message = null)
 
-    if (graph.syncQueueRepository.drainQueue()) LightJobResult.Success() else LightJobResult.Retry
+    if (graph.syncQueueRepository.drainQueue()) LightJobResult.Success(outputFilePath = null, message = null) else LightJobResult.Retry
 }
 
 /** Registers the periodic backstop schedule — see AppGraph.build(). The opportunistic reconnect-triggered one-shot (also wired there) is what makes this feel near-instant in the common case; this is just the floor for when the app isn't in foreground to observe that. */

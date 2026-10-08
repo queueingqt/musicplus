@@ -11,11 +11,13 @@ versionName   = "0.7.2"
 # generates those automatically; declaring them manually fails the build.
 permissions   = ["android.permission.INTERNET"]
 
-# Required for background/locked-screen playback via LightAudioPlayback.Detached.
-capabilities  = ["detached-audio"]
+# detached-audio: background/locked-screen playback via LightAudioPlayback.Detached.
+# cleartext-http: the user's own Navidrome/Subsonic server is usually plain http:// on
+# their LAN or tailnet, which Android blocks by default.
+capabilities  = ["detached-audio", "cleartext-http"]
 
 orientation   = "portrait"
 
-# com.thelightphone.sdk.emulator for local dev against the SDK emulator;
-# switch to "com.lightos" when building for a real device.
-serverPackage = "com.thelightphone.sdk.emulator"
+# "com.lightos" for the real device (and for Light's build server). Switch to
+# "com.thelightphone.sdk.emulator" only for local dev against the SDK emulator.
+serverPackage = "com.lightos"

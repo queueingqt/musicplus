@@ -5,11 +5,11 @@
 #
 # What it does, in order:
 #   1. Sanity-checks the working tree is clean and the version is well-formed.
-#   2. Bumps lighttool.toml's versionName/versionCode.
+#   2. Bumps tool/lighttool.toml's versionName/versionCode.
 #   3. Commits that bump.
 #   4. Pulls the release keystore password from macOS Keychain (never
 #      hardcoded — see build.gradle.kts's signingConfigs block).
-#   5. Syncs this repo's source and lighttool.toml into a light-sdk checkout
+#   5. Syncs this repo's source and tool/lighttool.toml into a light-sdk checkout
 #      and builds a signed release APK via ./gradlew :tool:assembleRelease
 #      (see SETUP.md for why this repo can't build standalone). The APK's own
 #      manifest is then read back, and the release stops here if it doesn't
@@ -53,16 +53,16 @@ if [[ -z "$AAPT2" ]]; then
   exit 1
 fi
 
-CURRENT_VERSION_NAME=$(grep '^versionName' lighttool.toml | sed -E 's/.*"([^"]+)".*/\1/')
-CURRENT_VERSION_CODE=$(grep '^versionCode' lighttool.toml | grep -oE '[0-9]+')
+CURRENT_VERSION_NAME=$(grep '^versionName' tool/lighttool.toml | sed -E 's/.*"([^"]+)".*/\1/')
+CURRENT_VERSION_CODE=$(grep '^versionCode' tool/lighttool.toml | grep -oE '[0-9]+')
 NEW_VERSION_CODE=$((CURRENT_VERSION_CODE + 1))
 
 echo "Bumping $CURRENT_VERSION_NAME (code $CURRENT_VERSION_CODE) -> $NEW_VERSION (code $NEW_VERSION_CODE)"
 
-sed -i '' -E "s/^versionCode( *)=.*/versionCode\1= $NEW_VERSION_CODE/" lighttool.toml
-sed -i '' -E "s/^versionName( *)=.*/versionName\1= \"$NEW_VERSION\"/" lighttool.toml
+sed -i '' -E "s/^versionCode( *)=.*/versionCode\1= $NEW_VERSION_CODE/" tool/lighttool.toml
+sed -i '' -E "s/^versionName( *)=.*/versionName\1= \"$NEW_VERSION\"/" tool/lighttool.toml
 
-git add lighttool.toml
+git add tool/lighttool.toml
 git commit -m "Release v$NEW_VERSION"
 
 echo "Reading release keystore password from Keychain..."
@@ -71,13 +71,13 @@ export MUSICPLUS_RELEASE_KEYSTORE_PASSWORD
 MUSICPLUS_RELEASE_KEYSTORE_PASSWORD="$(security find-generic-password -a musicplus-release -s musicplus-release-keystore-password -w)"
 
 echo "Syncing source and manifest into $LIGHT_SDK_PATH/tool..."
-rsync -a --delete "$REPO_ROOT/src/" "$LIGHT_SDK_PATH/tool/src/"
+rsync -a --delete "$REPO_ROOT/tool/src/" "$LIGHT_SDK_PATH/tool/src/"
 # The light-sdk build plugin takes the manifest (id, version, permissions,
 # capabilities) from the checkout's own tool/lighttool.toml, not from this
 # repo's. That copy was made once, at setup, and never refreshed, so every
 # release APK up to v0.5.1 carried versionCode 1 / "0.1.0" whatever this
 # repo's toml said.
-cp "$REPO_ROOT/lighttool.toml" "$LIGHT_SDK_PATH/tool/lighttool.toml"
+cp "$REPO_ROOT/tool/lighttool.toml" "$LIGHT_SDK_PATH/tool/lighttool.toml"
 
 echo "Building signed release APK..."
 JAVA_HOME="$(/usr/libexec/java_home -v 21)" \
