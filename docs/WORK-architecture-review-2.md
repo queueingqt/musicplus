@@ -46,7 +46,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
 | [~] | 10 | #89 | Settings declared once, read model | #82 helps | |
 | [~] | 11 | #88 | Action-menu state holder | none | D9 |
-| [ ] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
+| [x] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
 | [x] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
 
 Per issue, the loop is:
@@ -295,3 +295,6 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   hand-written confirmation dialogs. Phone: favorite and download rows flip in place, removal restores the baseline. **Not done:** artist /
   server menus still hand-listed (no `ArtistActions`), download behaviour still in four files, and the Clear-all-data message
   builder (S1).
+- 2026-10-08: **#92 done** `c3c3fde`. `QueueEdits` (pure functions: append, clear, removeAt, removeServer, move, shuffle, unshuffle) split out of `PlayQueue`, which
+  keeps hand-over and transport; `PlayQueueTest` unchanged and green; 9 new tests (399 total). Phone: shuffle on then off with the
+  restored 18-song queue returned the saved order exactly.
