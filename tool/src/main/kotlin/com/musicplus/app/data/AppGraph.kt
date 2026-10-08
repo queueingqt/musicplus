@@ -210,8 +210,8 @@ object AppGraph {
             writes = localFirstWrites,
             favorites = Favorites(localFirstWrites) { id, favorite -> PlaybackRepositoryHolder.peek()?.updateTrackFavorite(id, favorite) },
             local = localCopy,
-            libraryRepository = libraryRepository,
-            playlistRepository = playlistRepository,
+            localFavorites = libraryRepository::localFavorites,
+            copyToPhone = playlistRepository::copyToPhone,
             apis = apiHolder,
         )
         val localDataRepository = LocalDataRepository(
@@ -228,18 +228,15 @@ object AppGraph {
         scheduleSyncQueueJob(lightContext)
 
         // The near-instant path for the common case (the app is open when connectivity comes back) is AppLifecycle's: on every change to a
-        // connected network it asks this to run. Distinct `tag` from the periodic schedule above, even though both point at the same job:
-        // `LightWork.enqueue`'s one-time request uses `ExistingWorkPolicy.REPLACE` on whatever uniqueness slot it is given, and the periodic
-        // schedule lives under the plain job-key slot. Sharing it would mean every reconnect replaces (destroys) the periodic backstop with a
-        // one-time job. Each list refreshes on its own coroutine, so none makes the others (or the next reconnect) wait; list pages also
-        // refresh when opened and ListRefresher skips a list already being refreshed, so the two do not double up.
+        // connected network it asks this to run. Each list refreshes on its own coroutine, so none makes the others (or the next reconnect)
+        // wait; list pages also refresh when opened and ListRefresher skips a list already being refreshed, so the two do not double up.
         val lifecycle = AppLifecycle(
             scope = appScope,
             networkStatuses = connectivity.observeNetworkStatus(),
             isWifi = fetchGate::isWifi,
             onReconnected = {
                 reachability.recheckNow()
-                LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
+                syncSoonAfterReconnect(lightContext)
                 listRefresher.refreshAll()
             },
             retryFailedDownloads = downloadRepository::retryFailed,
@@ -257,7 +254,7 @@ object AppGraph {
         capabilityRegistry.onStarGained = { serverId ->
             appScope.launch {
                 syncQueueRepository.sendPhoneOnlyFavorites(serverId)
-                LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-favorites")
+                syncSoonAfterFavoritesGained(lightContext)
             }
         }
         capabilityRegistry.watch(serverConfigRepository.enabledServers)

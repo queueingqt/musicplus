@@ -20,8 +20,10 @@ class SyncQueueRepository(
     private val writes: LocalFirstWrites,
     private val favorites: Favorites,
     private val local: LocalCopy,
-    private val libraryRepository: LibraryRepository,
-    private val playlistRepository: PlaylistRepository,
+    /** The hearts kept on the phone for [serverId] (the library knows them). */
+    private val localFavorites: suspend (serverId: String) -> List<Pair<FavoriteKind, String>>,
+    /** A Phone Only copy of a server's playlist with a song added; null when the original could not be read in full. */
+    private val copyToPhone: suspend (playlistId: String, songId: String) -> String?,
     private val apis: ApiLookup,
 ) {
     companion object {
@@ -51,15 +53,14 @@ class SyncQueueRepository(
     }
 
     /** A new Phone Only copy of [playlistId] with [songId] added; the server's playlist stays exactly as it was. Returns the copy's id, or null if the original could not be read in full. */
-    suspend fun addToPhoneCopy(playlistId: String, songId: String): String? =
-        playlistRepository.copyToPhone(playlistId, songId)
+    suspend fun addToPhoneCopy(playlistId: String, songId: String): String? = copyToPhone(playlistId, songId)
 
     /**
      * A server that did not keep favorites now does: the hearts made on the phone in the meantime are sent to it. A heart already
      * there is simply set again. Queued directly: the phone already holds them.
      */
     suspend fun sendPhoneOnlyFavorites(serverId: String) {
-        for ((type, id) in libraryRepository.localFavorites(serverId)) {
+        for ((type, id) in localFavorites(serverId)) {
             writes.enqueue(id, PendingMutation.Favorite(type, true))
         }
     }
@@ -122,6 +123,20 @@ val syncPendingMutations: LightJobHandler = handler@{ lightContext, _ ->
     if (count == 0) return@handler LightJobResult.Success(outputFilePath = null, message = null)
 
     if (graph.syncQueueRepository.drainQueue()) LightJobResult.Success(outputFilePath = null, message = null) else LightJobResult.Retry
+}
+
+/**
+ * Asks for one sync now, because the network came back. A tag of its own, not the periodic schedule's slot: `LightWork.enqueue`'s one-time
+ * request uses `ExistingWorkPolicy.REPLACE` on whatever uniqueness slot it is given, and the periodic backstop lives under the plain job-key
+ * slot, so sharing it would have every reconnect replace (destroy) the periodic job with a one-time one.
+ */
+fun syncSoonAfterReconnect(lightContext: SealedLightContext) {
+    LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
+}
+
+/** Asks for one sync now, because a server that kept no favorites now does and its hearts were just queued. Its own tag, for the reason given at [syncSoonAfterReconnect]. */
+fun syncSoonAfterFavoritesGained(lightContext: SealedLightContext) {
+    LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-favorites")
 }
 
 /** Registers the periodic backstop schedule — see AppGraph.build(). The opportunistic reconnect-triggered one-shot (also wired there) is what makes this feel near-instant in the common case; this is just the floor for when the app isn't in foreground to observe that. */
