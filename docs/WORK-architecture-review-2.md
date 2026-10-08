@@ -47,7 +47,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [ ] | 10 | #89 | Settings declared once, read model | #82 helps | |
 | [ ] | 11 | #88 | Action-menu state holder | none | D9 |
 | [ ] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
-| [ ] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
+| [x] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
 
 Per issue, the loop is:
 
@@ -280,3 +280,8 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   the store. **Incident:** while checking, a blind tap on the mini-player landed on a Songs row and replaced the restored queue with
   "(B)"; I rebuilt it by playing "Human: The Double Album" from its last track, and the saved queue is identical (18 songs, same
   order, "By Your Grace" current), but its position is 0:11 instead of 0:08.
+- 2026-10-08: **#93 done** `ec5512a`. `AppLogger` is a no-op unless `BuildConfig.DEBUG`; verified in the release APK's dex (0 of the log strings vs
+  present in debug); the `debugLoggingEnabled` setting, its mirror, `AppDebugPrefs` and `setEnabled` are deleted (so #89 no longer has
+  it to decide); the migration's `android.util.Log` calls use `AppLogger`. 2 new tests (364 total). Phone: the debug build still logs; a
+  release build was not installed (it would replace the debuggable build). **Still open for the Light submission:** disclose the
+  once-per-launch GitHub release check in the README, and the missing LICENSE.
