@@ -45,7 +45,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
 | [x] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
 | [~] | 10 | #89 | Settings declared once, read model | #82 helps | |
-| [ ] | 11 | #88 | Action-menu state holder | none | D9 |
+| [~] | 11 | #88 | Action-menu state holder | none | D9 |
 | [ ] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
 | [x] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
 
@@ -80,7 +80,7 @@ them early (small, safe, and they shrink the diff of the bigger issues): do the 
 | [x] | D6 | `VersionCheckRepository.kt:41-47`, `AppGraph.kt:208-214` | A failed check (offline at launch) returns Unit and `setLastVersionCheckAtMs(now)` runs anyway, suppressing the check for 24 h. `runCatching` also swallows `CancellationException`. | from reading | standalone | Test: a failing fetch leaves `lastCheckedAt` untouched; make `checkForUpdate` return success/failure |
 | [x] | D7 | `LocalFirstWrites.kt:139-147,255-290` | A permanently refused write (e.g. delete of an offline-created playlist: `deletePlaylist(<server>:pending:uuid)`) is queued and fails every drain, blocking all later edits for that server. | from reading | #83 | Test: the poison-head scenario with a fake server that throws a refusal; **then check the phone's real queue** (`PendingMutation` table, via adb run-as) for rows already stuck |
 | [x] | D8 | `LazyCollapsibleSection.kt:34-44`, `ArtistDetailScreen.kt:74-77` | `loaded = true` and `_loading = true` are set before `fetch()` with no try/finally, so a throwing fetch leaves "Loading…" forever and the exception escapes `viewModelScope.launch`. Top-songs reads `artist.value?.name` at expand time; if the artist has not emitted it returns empty, and because `loaded` is already true it never retries. | from reading | standalone | Test the section with a throwing fetch; phone: expand Top Songs immediately on opening an artist |
-| [ ] | D9 | `ActionsMenuScreen.kt:248-257` | `busy = true` with no try/finally; a throwing `Perform` leaves every row dead until back, and the throw has no handler. A `liveUpdates` emission that replaces the row during the action drops the result (`it === item`). | from reading | #88 | Reproduce with a throwing action on the phone or in the holder's test once it exists |
+| [x] | D9 | `ActionsMenuScreen.kt:248-257` | `busy = true` with no try/finally; a throwing `Perform` leaves every row dead until back, and the throw has no handler. A `liveUpdates` emission that replaces the row during the action drops the result (`it === item`). | from reading | #88 | Reproduce with a throwing action on the phone or in the holder's test once it exists |
 | [x] | D10 | `ServerEditScreen.kt:262-270`, `data/ServerLifecycle.kt:93-105` | After the menu's delete nothing navigates back; the screen stays with Save active, and `save(existingId, ...)` would call `addOrUpdate` and re-add the deleted server. | from reading, unverified at runtime | standalone | Phone: delete a server from its edit screen, then press Save. If it re-adds, navigate back after remove and guard `save` |
 | [x] | D11 | `TrackListDownload.kt:114` | `downloadEntireArtist` uses `observeAlbumsByArtist(artistId).first()` without `refreshArtistDetail` first; the caller (`ArtistListScreen`) does not refresh, unlike `ArtistDetailScreen.onScreenShow`. May silently do nothing. | unconfirmed | standalone | Phone: long-press an artist in the list that was never opened, choose download, see whether anything queues |
 | [x] | D12 | `MaskedTextInputEditor.kt:86`, `MaskedTextEditScreen.kt`, `TextEditScreen.kt`, `PlayerScreen.kt:169` | Stale comments: the masked editor is described as "only used by SettingsScreen" but `ServerEditScreen.kt:233` uses it; `PlayerScreen.kt:169` says "see [tap]" which is actually `DownloadStates.kt`'s `DownloadRepository.tap`. | verified | standalone | Fix the comments |
@@ -290,3 +290,8 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   one-time media repair and the reconnect trigger, with 17 new tests (381 total). Phone: values and the launch fan-out verified.
   **Not done, needs a decision:** the UI read model that replaces screens' direct reads of global WarmedFlows and the 22
   `AppGraph.from` calls (and `HomeScreen`'s discarded warm-up call); and `announce`'s hand-set mirrors. Box stays `[~]`.
+- 2026-10-08: **#88 partly done, D9 fixed** `c31bc2d`. `MenuState` (rows, close latch, one-action latch, live updates matched by key) is extracted from
+  `ActionsMenuScreen.Content()` with 9 tests (390 total); a throwing action no longer leaves the menu dead; `confirm()` replaces five
+  hand-written confirmation dialogs. Phone: favorite and download rows flip in place, removal restores the baseline. **Not done:** artist /
+  server menus still hand-listed (no `ArtistActions`), download behaviour still in four files, and the Clear-all-data message
+  builder (S1).
