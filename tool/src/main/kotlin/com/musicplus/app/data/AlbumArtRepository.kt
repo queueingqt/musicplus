@@ -29,7 +29,7 @@ class AlbumArtRepository(
     private val store: CoverArtStore = CoverArtStore(
         dir = File(filesDir, CoverArtStore.DIR_NAME),
         sourceFor = { apiHolder.forId(it) },
-        serverUnreachable = { it in AppServerPrefs.unreachableServerIds.value.value },
+        serverUnreachable = { it in ServerStandingNow.current().unreachable },
     ),
 ) {
     // Reported live: after a long session touching many albums/artists/playlists, scrolling got severely stuttery: "Slow UI thread"

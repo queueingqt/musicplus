@@ -62,16 +62,6 @@ data class ServerCapabilities(
     }
 }
 
-/** Reads what is known about a server from the warmed copy, so it can be asked from anywhere, on any thread. */
-object Capabilities {
-    /** True unless the server is known not to offer it. */
-    fun can(serverId: String?, capability: Capability): Boolean =
-        serverId == null || AppServerPrefs.capabilities.value.value[serverId]?.get(capability) != false
-
-    /** True only when the server is known not to offer it. */
-    fun cannot(serverId: String?, capability: Capability): Boolean = !can(serverId, capability)
-}
-
 /** How a real request reports back to the [CapabilityRegistry]. */
 interface CapabilityLearner {
     /** A real request for [capability] worked. */
@@ -109,6 +99,9 @@ class CapabilityRegistry(
 
     /** Called with a server's id when it did not offer favorites before and now does; AppGraph sends the hearts kept on the phone to it. */
     var onStarGained: (String) -> Unit = {}
+
+    /** What this registry last wrote per server: the warmed copy of the saved capabilities lags the write. */
+    private val saved = ConcurrentHashMap<String, ServerCapabilities>()
 
     private val probing = ConcurrentHashMap.newKeySet<String>()
     private val lastDoubtProbeAt = ConcurrentHashMap<String, Long>()
@@ -169,7 +162,9 @@ class CapabilityRegistry(
     }
 
     override fun worked(serverId: String, capability: Capability) {
-        if (AppServerPrefs.capabilities.value.value[serverId]?.get(capability) == true) return
+        // What this registry last saved, not only the warmed copy, which follows the DataStore write a moment later.
+        val known = saved[serverId] ?: AppServerPrefs.capabilities.value.value[serverId]
+        if (known?.get(capability) == true) return
         scope.launch { work.run(serverId) { save(serverId) { it.with(capability, true) } } }
         AppLogger.d("Capabilities", "${describe(serverId)}: ${capability.name.lowercase()} worked, marking it as offered")
     }
@@ -200,12 +195,13 @@ class CapabilityRegistry(
             val after = change(before)
             if (before.star == false && after.star == true) starGained = true
             if (after != before || serverId !in current) prefs[key] = Json.encodeToString(serializer, current + (serverId to after))
+            saved[serverId] = after
         }
         if (starGained) onStarGained(serverId)
     }
 
     private fun describe(serverId: String) =
-        "server \"${AppServerPrefs.servers.value.value.find { it.id == serverId }?.name ?: serverId}\""
+        "server \"${ServerStandingNow.current().nameOf(serverId) ?: serverId}\""
 
     private fun decode(stored: String?): Map<String, ServerCapabilities> =
         stored?.let { runCatching { Json.decodeFromString(serializer, it) }.getOrNull() } ?: emptyMap()

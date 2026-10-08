@@ -32,7 +32,8 @@ class JellyfinApi(
      */
     override suspend fun probeCapabilities(): Map<Capability, Support> = mapOf(
         Capability.STAR to Support.YES,
-        Capability.SCROBBLE to Support.NO,
+        // Follows [scrobbler] (null here), so the two cannot disagree.
+        Capability.SCROBBLE to if (scrobbler == null) Support.NO else Support.YES,
         Capability.LYRICS to Support.YES,
         Capability.PLAYLIST_WRITE to Support.YES,
     )

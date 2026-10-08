@@ -3,14 +3,11 @@ package com.musicplus.app.data.playback
 import com.musicplus.app.data.ApiLookup
 import com.musicplus.app.data.AppLogger
 import com.musicplus.app.data.AppScrobblePrefs
-import com.musicplus.app.data.AppServerPrefs
-import com.musicplus.app.data.Capabilities
-import com.musicplus.app.data.Capability
 import com.musicplus.app.data.ServerScope
+import com.musicplus.app.data.ServerStandingNow
 
 /** Whether [serverId] is on and offers scrobbling. Read from the warmed copies, so it can be asked from anywhere. */
-private fun serverCanScrobble(serverId: String?): Boolean =
-    serverId != null && serverId in AppServerPrefs.enabledServerIds.value.value && Capabilities.can(serverId, Capability.SCROBBLE)
+private fun serverCanScrobble(serverId: String?): Boolean = ServerStandingNow.current().canScrobble(serverId)
 
 /**
  * Counts a listen on a server that offers scrobbling. Off by default (see `AppSettingsRepository.scrobblingEnabled`): "now

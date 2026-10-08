@@ -10,7 +10,7 @@ package com.musicplus.app.data
  */
 class LocalStars(
     private val pending: Set<String>,
-    private val keepsFavorites: (serverId: String?) -> Boolean = { Capabilities.can(it, Capability.STAR) },
+    private val keepsFavorites: (serverId: String?) -> Boolean = { ServerStandingNow.current().keepsFavorites(it) },
 ) {
     fun wins(id: String): Boolean = id in pending || !keepsFavorites(ServerScope.serverOf(id))
 

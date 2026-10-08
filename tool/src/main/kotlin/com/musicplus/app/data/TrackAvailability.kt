@@ -31,17 +31,9 @@ object TrackAvailability {
      * side reads the current values through the overload below.
      */
     fun serverUsable(serverId: String?, anyServerKnown: Boolean, enabled: Set<String>, unreachable: Set<String>): Boolean =
-        serverId == null ||
-            // Nothing is known about any server yet (the saved list has not been read): assume it is fine rather than grey everything out.
-            !anyServerKnown ||
-            (serverId in enabled && serverId !in unreachable)
+        ServerStanding.usable(serverId, anyServerKnown, enabled, unreachable)
 
-    fun serverUsable(serverId: String?): Boolean = serverUsable(
-        serverId,
-        anyServerKnown = AppServerPrefs.servers.value.value.isNotEmpty(),
-        enabled = AppServerPrefs.enabledServerIds.value.value,
-        unreachable = AppServerPrefs.unreachableServerIds.value.value,
-    )
+    fun serverUsable(serverId: String?): Boolean = ServerStandingNow.current().usable(serverId)
 
     /** True when the phone holds the song's audio: a finished download whose file is there, or a streamed copy kept in the cache. */
     fun hasAudioOnPhone(track: Track): Boolean = hasDownload(track) || streamCopy(track.id) != null

@@ -14,12 +14,7 @@ import kotlinx.coroutines.flow.combine
  * A server removed with its downloads kept reads "<name> (removed)".
  */
 object ServerLabels {
-    fun nameOf(serverId: String?): String? {
-        if (serverId == null) return null
-        if (serverId == ServerScope.PHONE) return ServerScope.PHONE_ONLY_LABEL
-        AppServerPrefs.servers.value.value.find { it.id == serverId }?.let { return it.name }
-        return AppServerPrefs.removedServers.value.value.find { it.id == serverId }?.let { "${it.name} (removed)" }
-    }
+    fun nameOf(serverId: String?): String? = ServerStandingNow.current().nameOf(serverId)
 
     /** [items] with their server labels filled in as described above. Cheap when only one server's rows are shown. */
     private fun <T> label(
@@ -58,7 +53,7 @@ object ServerLabels {
      * Favorites of a server that cannot keep them are kept on the phone only, and say so: "Phone Only" replaces the
      * server's name on those rows.
      */
-    private fun phoneOnly(id: String) = Capabilities.cannot(ServerScope.serverOf(id), Capability.STAR)
+    private fun phoneOnly(id: String) = !ServerStandingNow.current().keepsFavorites(ServerScope.serverOf(id))
 
     fun favoriteArtists(items: List<Artist>) =
         artists(items).map { if (phoneOnly(it.id)) it.copy(serverLabel = ServerScope.PHONE_ONLY_LABEL) else it }
@@ -77,5 +72,5 @@ object ServerLabels {
      * flow that labels its rows has to be re-run then, not only when its rows change.
      */
     fun <T> Flow<List<T>>.labelledBy(labeler: (List<T>) -> List<T>): Flow<List<T>> =
-        combine(this, AppServerPrefs.servers.value, AppServerPrefs.removedServers.value, AppServerPrefs.capabilities.value) { items, _, _, _ -> labeler(items) }
+        combine(this, ServerStandingNow.changes) { items, _ -> labeler(items) }
 }

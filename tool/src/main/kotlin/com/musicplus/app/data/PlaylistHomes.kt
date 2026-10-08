@@ -9,20 +9,17 @@ object PlaylistHomes {
     data class Home(val id: String, val name: String)
 
     /** True when [serverId] is on and can keep playlists (a server not yet known to lack it counts as able). */
-    fun canHold(serverId: String?): Boolean =
-        serverId != null &&
-            serverId != ServerScope.PHONE &&
-            serverId in AppServerPrefs.enabledServerIds.value.value &&
-            Capabilities.can(serverId, Capability.PLAYLIST_WRITE)
+    fun canHold(serverId: String?): Boolean = ServerStandingNow.current().canHoldPlaylists(serverId)
 
     /** Where a playlist that starts from [songId] goes: that song's own server, or the phone when that server cannot keep playlists. */
     fun homeOfSong(songId: String): String = ServerScope.serverOf(songId)?.takeIf(::canHold) ?: ServerScope.PHONE
 
     /** What "Save to" offers for a playlist that starts from nothing: every server that is on and can keep playlists, then Phone Only. */
-    fun choices(): List<Home> =
-        AppServerPrefs.servers.value.value
-            .filter { canHold(it.id) }
+    fun choices(): List<Home> = ServerStandingNow.current().let { standing ->
+        standing.servers
+            .filter { standing.canHoldPlaylists(it.id) }
             .map { Home(it.id, it.name) } + Home(ServerScope.PHONE, ServerScope.PHONE_ONLY_LABEL)
+    }
 
     /**
      * True when [songId] can be added to [playlistId] as it is: the playlist is Phone Only (it holds anything), or it is on

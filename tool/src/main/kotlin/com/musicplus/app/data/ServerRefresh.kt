@@ -26,7 +26,7 @@ class ServerRefresh(
     /** Each refresh runs under its server, so removing the server stops it before it can write anything more. */
     private val work: ServerWork,
     /** The ids of the servers that are still saved. */
-    private val savedServerIds: () -> Set<String> = { AppServerPrefs.servers.value.value.mapTo(HashSet()) { it.id } },
+    private val savedServerIds: () -> Set<String> = { ServerStandingNow.current().servers.mapTo(HashSet()) { it.id } },
 ) {
     /**
      * Runs [action] against the api that owns [ownerId] (a refresh of one artist or album), or, with no owner, against every server that

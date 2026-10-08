@@ -63,7 +63,7 @@ class ServerReachability(
 
     private suspend fun recheck(serverId: String) {
         // Turned off or removed while down: nothing to wait for.
-        if (serverId !in AppServerPrefs.enabledServerIds.value.value) {
+        if (serverId !in ServerStandingNow.current().enabled) {
             report(serverId, reachable = true)
             return
         }

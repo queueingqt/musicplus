@@ -250,7 +250,7 @@ object AppGraph {
             local = localCopy,
             apis = apiHolder,
             enabledServerIds = serverConfigRepository.enabledServerIds,
-            keepsFavorites = { Capabilities.can(it, Capability.STAR) },
+            keepsFavorites = { ServerStandingNow.current().keepsFavorites(it) },
             reconcile = { playlistRepository.refreshPlaylistDetail(it) },
         )
         val syncQueueRepository = SyncQueueRepository(

@@ -214,7 +214,7 @@ class LibraryRepository(
     suspend fun refreshFavorites() = refresh("refreshFavorites") { api ->
         // A server without favorites has nothing to bring down, and its hearts live on the phone only: mirroring an
         // empty (or unanswerable) list would erase them.
-        if (Capabilities.cannot(api.serverId, Capability.STAR)) return@refresh
+        if (!ServerStandingNow.current().keepsFavorites(api.serverId)) return@refresh
         val starred = api.getStarred()
         val pending = pendingMutationDao.pendingFavoriteIds()
         mirrorStarred(
