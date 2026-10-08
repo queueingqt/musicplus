@@ -42,7 +42,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 5 | #82 | Server standing module | none | |
 | [x] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
 | [x] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
-| [ ] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
+| [x] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
 | [ ] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
 | [ ] | 10 | #89 | Settings declared once, read model | #82 helps | |
 | [ ] | 11 | #88 | Action-menu state holder | none | D9 |
@@ -270,3 +270,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   `StreamCache(dir, gate)` and `PlaybackRepository(gate=...)` take it. 9 new tests (353 total). Phone: starts at 6 on Wi-Fi, a real
   download ran through it and was removed (224 files). **Left:** rank has three suppliers (one authority, two fallbacks), rank lambdas
   are still called under the gate's lock, the 3 s probe/hold adaptation is not under test.
+- 2026-10-08: **#91 done** `c7ea8b4`. `ServerHttp` (send / reachability / 502-504 / close) replaces six copies in the two clients; the engine is injectable;
+  clients and apis are closeable and closed on remove/edit and after one-off login checks. 6 new contract tests running the same
+  scenarios on both clients against a local server (359 total). Phone: full refresh unchanged, art renders. **Left:** the two
+  exception types are still two (they share `ServerRefusal`), and `isUnreachable()` still has a "Timeout" string fallback.
