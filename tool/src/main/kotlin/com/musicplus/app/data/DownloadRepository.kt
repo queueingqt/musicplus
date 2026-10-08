@@ -58,7 +58,7 @@ class DownloadRepository(
     private val gate: DownloadGate,
     private val downloadsDir: File,
     private val clock: () -> Long = System::currentTimeMillis,
-) {
+) : KeptFiles {
     companion object {
         const val JOB_KEY = "download-track"
 
@@ -161,6 +161,17 @@ class DownloadRepository(
                 DownloadOutcome.Retry // transient: let WorkManager back off and retry
             }
         }
+    }
+
+    /** Deletes the downloaded files of [serverId]'s songs. Rows are not touched: whoever removes a server settles those (see [cancel]). */
+    override fun deleteForServer(serverId: String) {
+        val prefix = serverFilePrefix(serverId)
+        downloadsDir.listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
+    }
+
+    /** Deletes every downloaded file. The rows go with [DownloadDao.deleteAll]. */
+    override fun clear() {
+        downloadsDir.deleteRecursively()
     }
 
     /** Where a song's download lives: `downloads/<scoped key>.<ext>`, mp3 when a quality cap makes the server transcode. */

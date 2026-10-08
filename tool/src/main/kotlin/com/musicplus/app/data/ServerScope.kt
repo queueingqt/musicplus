@@ -34,6 +34,15 @@ object ServerScope {
      */
     const val SQL_SERVER_OF_ID = "substr(id, 1, instr(id, ':') - 1)"
 
+    /** The same for the other columns that hold a scoped id. */
+    const val SQL_SERVER_OF_SONG_ID = "substr(songId, 1, instr(songId, ':') - 1)"
+    const val SQL_SERVER_OF_PLAYLIST_ID = "substr(playlistId, 1, instr(playlistId, ':') - 1)"
+    const val SQL_SERVER_OF_TARGET_ID = "substr(targetId, 1, instr(targetId, ':') - 1)"
+
+    /** Rows whose id belongs to the phone itself (Phone Only playlists), by column. */
+    const val SQL_ID_IS_PHONE = "id LIKE '$PHONE:%'"
+    const val SQL_PLAYLIST_ID_IS_PHONE = "playlistId LIKE '$PHONE:%'"
+
     fun scope(serverId: String, id: String): String = "$serverId$SEPARATOR$id"
 
     /** The server an id belongs to, or null for an id that was never scoped. */

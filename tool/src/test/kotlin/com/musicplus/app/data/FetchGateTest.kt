@@ -40,7 +40,8 @@ class FetchGateTest {
         val jobs = List(5) {
             async(Dispatchers.Default) {
                 gate.run(FetchGate.Lane.BULK, "s$it", download) {
-                    peak.updateAndGet { p -> maxOf(p, running.incrementAndGet()) }
+                    val now = running.incrementAndGet()
+                    peak.updateAndGet { p -> maxOf(p, now) }
                     release.await()
                     running.decrementAndGet()
                 }
@@ -58,14 +59,21 @@ class FetchGateTest {
     fun theMoreImportantWaiterIsServedFirstWhateverTheArrivalOrder() = runBlocking<Unit> {
         val gate = FetchGate({ false }) // limit 2
         val order = CopyOnWriteArrayList<String>()
-        val release = CompletableDeferred<Unit>()
-        val holders = List(2) { async(Dispatchers.Default) { gate.run(FetchGate.Lane.BULK, "hold$it", download) { release.await() } } }
+        val releaseFirst = CompletableDeferred<Unit>()
+        val releaseSecond = CompletableDeferred<Unit>()
+        val holders = listOf(
+            async(Dispatchers.Default) { gate.run(FetchGate.Lane.BULK, "hold0", download) { releaseFirst.await() } },
+            async(Dispatchers.Default) { gate.run(FetchGate.Lane.BULK, "hold1", download) { releaseSecond.await() } },
+        )
         delay(100)
-        val late = async(Dispatchers.Default) { gate.run(FetchGate.Lane.BULK, "retry", { FetchGate.Priority.RETRY }) { order += "retry" } }
+        val late = async(Dispatchers.Default) { gate.run(FetchGate.Lane.BULK, "retry", { FetchGate.Priority.RETRY }) { order += "retry"; releaseSecond.await() } }
         delay(30)
         val important = async(Dispatchers.Default) { gate.run(FetchGate.Lane.BULK, "queued", { FetchGate.Priority.QUEUE }) { order += "queued" } }
         delay(100)
-        release.complete(Unit)
+        releaseFirst.complete(Unit) // one slot comes free: it must go to the more important of the two waiting
+        until { order.isNotEmpty() }
+        assertEquals("queued", order.first())
+        releaseSecond.complete(Unit)
         (holders + late + important).forEach { it.await() }
         assertEquals(listOf("queued", "retry"), order.toList())
     }

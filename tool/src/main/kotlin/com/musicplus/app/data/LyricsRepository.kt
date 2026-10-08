@@ -4,7 +4,6 @@ import com.musicplus.app.LyricLine
 import com.musicplus.app.LyricsState
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.io.File
 
 @Serializable
 private data class CachedLyrics(
@@ -38,10 +37,8 @@ private fun CachedLyrics.toState(): LyricsState = when (kind) {
  */
 class LyricsRepository(
     private val apiHolder: ApiLookup,
-    filesDir: File,
+    private val store: LyricsStore,
 ) {
-    private val diskCacheDir = File(filesDir, "lyrics").apply { mkdirs() }
-
     suspend fun getLyrics(trackId: String): LyricsState {
         readFromDisk(trackId)?.let { return it.toState() }
         // A server known not to offer lyrics is not asked: it would only answer with an error.
@@ -73,10 +70,9 @@ class LyricsRepository(
     }
 
     private fun readFromDisk(trackId: String): CachedLyrics? {
-        val file = diskCacheFile(trackId)
-        if (!file.exists()) return null
+        val text = store.read(trackId) ?: return null
         return try {
-            Json.decodeFromString<CachedLyrics>(file.readText())
+            Json.decodeFromString<CachedLyrics>(text)
         } catch (e: Exception) {
             // A corrupt/unreadable cache entry shouldn't block re-fetching —
             // treat it the same as a cache miss.
@@ -84,13 +80,5 @@ class LyricsRepository(
         }
     }
 
-    private fun writeToDisk(trackId: String, cached: CachedLyrics) {
-        // Best-effort: a disk-cache write failure shouldn't fail the result
-        // that's already been resolved for this call.
-        runCatching { diskCacheFile(trackId).writeText(Json.encodeToString(cached)) }
-    }
-
-    private fun diskCacheFile(trackId: String): File {
-        return File(diskCacheDir, "${ServerScope.fileKey(trackId)}.json")
-    }
+    private fun writeToDisk(trackId: String, cached: CachedLyrics) = store.write(trackId, Json.encodeToString(cached))
 }

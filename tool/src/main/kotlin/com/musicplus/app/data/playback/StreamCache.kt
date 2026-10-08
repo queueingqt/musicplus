@@ -2,6 +2,8 @@ package com.musicplus.app.data.playback
 
 import com.musicplus.app.data.AppLogger
 import com.musicplus.app.data.FetchGate
+import com.musicplus.app.data.KeptFiles
+import com.musicplus.app.data.serverFilePrefix
 import com.musicplus.app.data.ServerScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +39,7 @@ class StreamCache(
     private val gate: FetchGate,
     private val listingTtlMs: Long = LISTING_TTL_MS,
     private val ioScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-) {
+) : KeptFiles {
     private val locks = ConcurrentHashMap<String, Mutex>()
 
     /** Where the finished copy of [songId] at [maxBitRateKbps] (null: the original) lives. Whether it exists is [has]. */
@@ -157,15 +159,15 @@ class StreamCache(
     }
 
     /** Deletes every copy (and leftover part) kept for songs of [serverId]. Files are named after the scoped id, so a server's are the ones starting with its file-safe scope. */
-    fun deleteForServer(serverId: String) {
-        val prefix = ServerScope.fileKey(ServerScope.scope(serverId, ""))
+    override fun deleteForServer(serverId: String) {
+        val prefix = serverFilePrefix(serverId)
         dir.listFiles()?.filter { it.name.startsWith(prefix) }?.forEach { it.delete() }
         publish(names.filterNot { it.startsWith(prefix) }.toSet())
         listedAtMs = 0L
     }
 
     /** Deletes everything. */
-    fun clear() {
+    override fun clear() {
         dir.deleteRecursively()
         publish(emptySet())
         listedAtMs = 0L
@@ -180,6 +182,7 @@ class StreamCache(
     }
 
     companion object {
+        const val DIR_NAME = "streamcache"
         private const val TAG = "StreamCache"
         private const val ORIGINAL = "orig"
         private const val LISTING_TTL_MS = 5_000L

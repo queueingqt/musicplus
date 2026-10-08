@@ -31,7 +31,7 @@ class AlbumArtRepository(
         sourceFor = { apiHolder.forId(it) },
         serverUnreachable = { it in ServerStandingNow.current().unreachable },
     ),
-) {
+) : KeptFiles {
     // Reported live: after a long session touching many albums/artists/playlists, scrolling got severely stuttery: "Slow UI thread"
     // dominated the frame stats (dumpsys gfxinfo), and the GPU texture cache had grown to tens of MB across only a few dozen cached
     // images. Root cause: this was an unbounded ConcurrentHashMap that held every full decoded Bitmap ever fetched for the life of
@@ -76,10 +76,10 @@ class AlbumArtRepository(
     }
 
     /** Deletes the art kept for [serverId] (its files on disk; what is in memory ages out). */
-    fun deleteForServer(serverId: String) = store.deleteForServer(serverId)
+    override fun deleteForServer(serverId: String) = store.deleteForServer(serverId)
 
     /** Deletes every picture kept on disk and forgets the ones in memory. */
-    fun clear() {
+    override fun clear() {
         store.clear()
         memoryCache.evictAll()
         failedKeys.clear()

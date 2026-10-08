@@ -304,7 +304,7 @@ interface PendingMutationDao {
     suspend fun recordFailure(id: Long, error: String?)
 
     /** Drops one server's still-pending edits (it was removed, so they can never be sent). */
-    @Query("DELETE FROM pending_mutations WHERE substr(targetId, 1, instr(targetId, ':') - 1) = :serverId")
+    @Query("DELETE FROM pending_mutations WHERE ${ServerScope.SQL_SERVER_OF_TARGET_ID} = :serverId")
     suspend fun deleteForServer(serverId: String)
 
     /** Discards every still-pending mutation, synced or not — see LocalDataRepository's doc for why callers must warn about this first. */
@@ -325,7 +325,7 @@ interface DownloadDao {
 
     /** Used by DownloadRepository.retryFailed() — every download that gave up after MAX_DOWNLOAD_ATTEMPTS, re-armed on the next app start. */
     /** Every download row of one server, whatever its state. */
-    @Query("SELECT * FROM downloads WHERE substr(songId, 1, instr(songId, ':') - 1) = :serverId")
+    @Query("SELECT * FROM downloads WHERE ${ServerScope.SQL_SERVER_OF_SONG_ID} = :serverId")
     suspend fun getForServer(serverId: String): List<DownloadEntity>
 
     @Query("SELECT * FROM downloads WHERE status = :status")
@@ -353,7 +353,7 @@ interface QueueDao {
     }
 
     /** One server's queued songs after [position] (the ones not yet played), for when the server is removed. */
-    @Query("DELETE FROM queue_items WHERE position > :position AND substr(songId, 1, instr(songId, ':') - 1) = :serverId")
+    @Query("DELETE FROM queue_items WHERE position > :position AND ${ServerScope.SQL_SERVER_OF_SONG_ID} = :serverId")
     suspend fun deleteAfter(serverId: String, position: Int)
 
     @Query("DELETE FROM queue_items")
@@ -385,7 +385,7 @@ interface ServerCleanupDao {
         recountPhonePlaylists()
     }
 
-    @Query("DELETE FROM playlist_tracks WHERE playlistId LIKE 'phone:%' AND songId NOT IN (SELECT id FROM tracks)")
+    @Query("DELETE FROM playlist_tracks WHERE ${ServerScope.SQL_PLAYLIST_ID_IS_PHONE} AND songId NOT IN (SELECT id FROM tracks)")
     suspend fun deleteOrphanedPhonePlaylistTracks()
 
     @Query(
@@ -393,7 +393,7 @@ interface ServerCleanupDao {
             "songCount = (SELECT COUNT(*) FROM playlist_tracks WHERE playlist_tracks.playlistId = playlists.id), " +
             "durationSec = COALESCE((SELECT SUM(tracks.durationSec) FROM playlist_tracks JOIN tracks ON tracks.id = playlist_tracks.songId " +
             "WHERE playlist_tracks.playlistId = playlists.id), 0) " +
-            "WHERE id LIKE 'phone:%'",
+            "WHERE ${ServerScope.SQL_ID_IS_PHONE}",
     )
     suspend fun recountPhonePlaylists()
 
@@ -402,7 +402,7 @@ interface ServerCleanupDao {
 
     @Query(
         "DELETE FROM tracks WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId AND id NOT IN " +
-            "(SELECT songId FROM downloads WHERE status = 'COMPLETE' AND substr(songId, 1, instr(songId, ':') - 1) = :serverId)",
+            "(SELECT songId FROM downloads WHERE status = 'COMPLETE' AND ${ServerScope.SQL_SERVER_OF_SONG_ID} = :serverId)",
     )
     suspend fun deleteTracksWithoutDownload(serverId: String)
 
@@ -412,7 +412,7 @@ interface ServerCleanupDao {
     @Query("DELETE FROM artists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId AND id NOT IN (SELECT artistId FROM tracks WHERE artistId IS NOT NULL)")
     suspend fun deleteUnusedArtists(serverId: String)
 
-    @Query("DELETE FROM playlist_tracks WHERE substr(playlistId, 1, instr(playlistId, ':') - 1) = :serverId")
+    @Query("DELETE FROM playlist_tracks WHERE ${ServerScope.SQL_SERVER_OF_PLAYLIST_ID} = :serverId")
     suspend fun deletePlaylistTracks(serverId: String)
 
     @Query("DELETE FROM playlists WHERE ${ServerScope.SQL_SERVER_OF_ID} = :serverId")

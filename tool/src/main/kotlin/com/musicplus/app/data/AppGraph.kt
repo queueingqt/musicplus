@@ -125,7 +125,7 @@ object AppGraph {
         mirrorInto(capabilityRegistry.all, AppServerPrefs.capabilities::set)
         // Chooses how many transfers run at once (few on cellular, many on Wi-Fi) and in what order, and is where "are we on Wi-Fi" is answered.
         val fetchGate = FetchGate(isWifiNow = { connectivity.currentStatus.isWifi })
-        val streamCache = StreamCache(File(lightContext.filesDir, "streamcache"), fetchGate)
+        val streamCache = StreamCache(File(lightContext.filesDir, StreamCache.DIR_NAME), fetchGate)
         TrackAvailability.init(streamCache)
         // Built before libraryRepository/playlistRepository — both now take
         // this as a dependency (see LibraryRepository's own class doc for
@@ -242,9 +242,10 @@ object AppGraph {
             apiHolder = apiHolder,
             filesDir = lightContext.filesDir,
         )
+        val lyricsStore = LyricsStore(File(lightContext.filesDir, LyricsStore.DIR_NAME))
         val lyricsRepository = LyricsRepository(
             apiHolder = apiHolder,
-            filesDir = lightContext.filesDir,
+            store = lyricsStore,
         )
         val localFirstWrites = LocalFirstWrites(
             queue = database.pendingMutationDao(),
@@ -265,9 +266,7 @@ object AppGraph {
         val localDataRepository = LocalDataRepository(
             database = database,
             playbackStateRepository = playbackStateRepository,
-            filesDir = lightContext.filesDir,
-            streamCache = streamCache,
-            albumArtRepository = albumArtRepository,
+            files = listOf(streamCache, albumArtRepository, lyricsStore, downloadRepository),
         )
 
         // Periodic backstop (WorkManager's own 15-minute floor — see
@@ -344,16 +343,14 @@ object AppGraph {
             // Everything that holds state per server. A new holder is added here once, and forgetting a server reaches it.
             holders = listOf(apiHolder, serverSyncStatus, capabilityRegistry, reachability),
             leftovers = PhoneLeftovers(
-                lightContext = lightContext,
                 playbackStateRepository = playbackStateRepository,
                 downloadRepository = downloadRepository,
                 serverCleanupDao = database.serverCleanupDao(),
                 downloadDao = database.downloadDao(),
                 pendingMutationDao = database.pendingMutationDao(),
                 queueDao = database.queueDao(),
-                filesDir = lightContext.filesDir,
-                streamCache = streamCache,
-                albumArtRepository = albumArtRepository,
+                streamCopies = streamCache,
+                withTheServer = listOf(albumArtRepository, lyricsStore),
             ),
             // Set ahead of the DataStore mirror, because the list refresh that follows reads these and would otherwise still see the servers
             // as they were a moment ago (the lists themselves already follow the servers that are on; this brings a newly shown one up to date).

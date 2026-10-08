@@ -68,7 +68,7 @@ internal object IdScopeMigration {
                 verify(db, prefix, before)
 
                 renameCached(File(filesDir, CoverArtStore.DIR_NAME), ART_FILE, coverArtIds, prefix, renames)
-                renameCached(File(filesDir, "lyrics"), LYRICS_FILE, trackIds, prefix, renames)
+                renameCached(File(filesDir, LyricsStore.DIR_NAME), LYRICS_FILE, trackIds, prefix, renames)
 
                 db.version = newVersion
                 db.setTransactionSuccessful()
@@ -210,6 +210,6 @@ internal object IdScopeMigration {
 
     /** Streams cached under the old names would never be found again; it is only a cache. */
     private fun clearStreamCache(filesDir: File) {
-        File(filesDir, "streamcache").deleteRecursively()
+        File(filesDir, StreamCache.DIR_NAME).deleteRecursively()
     }
 }

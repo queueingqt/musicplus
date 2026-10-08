@@ -1,7 +1,5 @@
 package com.musicplus.app.data
 
-import com.musicplus.app.data.playback.StreamCache
-import java.io.File
 
 /**
  * Wipes everything the app has cached or downloaded locally — library
@@ -23,9 +21,8 @@ import java.io.File
 class LocalDataRepository(
     private val database: MusicPlusDatabase,
     private val playbackStateRepository: PlaybackStateRepository,
-    private val filesDir: File,
-    private val streamCache: StreamCache,
-    private val albumArtRepository: AlbumArtRepository,
+    /** Every kind of file the phone keeps (streamed copies, art, lyrics, downloads). */
+    private val files: List<KeptFiles>,
 ) {
     suspend fun clearAll() {
         database.artistDao().deleteAll()
@@ -38,11 +35,7 @@ class LocalDataRepository(
 
         playbackStateRepository.clear()
 
-        streamCache.clear()
-        albumArtRepository.clear()
-        for (dirName in listOf(DownloadRepository.DIRECTORY, "lyrics")) {
-            File(filesDir, dirName).deleteRecursively()
-        }
+        files.forEach { it.clear() }
 
         // A live PlaybackRepository instance (if one exists) still has its own
         // in-memory queue/state from before the wipe — reset that too so the
