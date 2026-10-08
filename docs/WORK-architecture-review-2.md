@@ -37,7 +37,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 |---|---|---|---|---|---|
 | [x] | 1 | #81 | Downloads module | none | D3, D4 |
 | [~] | 2 | #83 | Write queue: offline vs refused | introduces the failure classification #91 reuses | D7 |
-| [ ] | 3 | #86 | Advance module (what plays next) | none; relates to #78 | D1 |
+| [x] | 3 | #86 | Advance module (what plays next) | none; relates to #78 | D1 |
 | [ ] | 4 | #87 | One "set favorite" behaviour | none | D2 |
 | [ ] | 5 | #82 | Server standing module | none | |
 | [ ] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
@@ -246,3 +246,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   (starred 1 then 0, queue empty both times, starred total back to 22). **Deferred: Phone Only as a first-class home in the write
   path.** It spans `PlaylistRepository`, `RoomLocalCopy`, `PlaylistHomes` and `ServerCleanupDao` and depends on #82 (server standing),
   so it is done after #82; the #83 box stays `[~]` until then. No attempt cap: an outage must keep retrying.
+- 2026-10-08: **#86 done** `be57eb0`. `Advance` (one next/previous rule, wrap to the first playable) used by track end, skip and error;
+  `PlayerErrorHandler` replaces PlaybackRepository's two watchers and skipUnavailable; 11 new tests (328 total). Phone: playback
+  still starts and pauses; the error path was not provoked there (no downloaded song in the queue to fault-inject). **Not done:**
+  removing PlaybackRepository's one-line delegations (touches every screen; left for after #92).
