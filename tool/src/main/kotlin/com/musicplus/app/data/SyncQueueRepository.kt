@@ -18,6 +18,7 @@ import kotlin.time.Duration.Companion.minutes
  */
 class SyncQueueRepository(
     private val writes: LocalFirstWrites,
+    private val favorites: Favorites,
     private val local: LocalCopy,
     private val libraryRepository: LibraryRepository,
     private val playlistRepository: PlaylistRepository,
@@ -31,11 +32,11 @@ class SyncQueueRepository(
 
     fun isFavoritePending(id: String): Flow<Boolean> = writes.isFavoritePending(id)
 
-    suspend fun setArtistFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite(FavoriteKind.ARTIST, favorite)) }
+    suspend fun setArtistFavorite(id: String, favorite: Boolean) = favorites.set(FavoriteKind.ARTIST, id, favorite)
 
-    suspend fun setAlbumFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite(FavoriteKind.ALBUM, favorite)) }
+    suspend fun setAlbumFavorite(id: String, favorite: Boolean) = favorites.set(FavoriteKind.ALBUM, id, favorite)
 
-    suspend fun setTrackFavorite(id: String, favorite: Boolean) { writes.write(id, PendingMutation.Favorite(FavoriteKind.TRACK, favorite)) }
+    suspend fun setTrackFavorite(id: String, favorite: Boolean) = favorites.set(FavoriteKind.TRACK, id, favorite)
 
     /**
      * Makes a playlist at [home]: a server id, or [ServerScope.PHONE] for one that lives only on the phone (nothing is sent or queued

@@ -255,6 +255,7 @@ object AppGraph {
         )
         val syncQueueRepository = SyncQueueRepository(
             writes = localFirstWrites,
+            favorites = Favorites(localFirstWrites) { id, favorite -> PlaybackRepositoryHolder.peek()?.updateTrackFavorite(id, favorite) },
             local = localCopy,
             libraryRepository = libraryRepository,
             playlistRepository = playlistRepository,
