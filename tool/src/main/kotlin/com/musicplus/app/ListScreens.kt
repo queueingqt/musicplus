@@ -4,7 +4,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import com.musicplus.app.data.AppAvailability
+import com.musicplus.app.data.AvailabilityState
 import com.musicplus.app.data.AvailableSplit
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightViewModel
@@ -53,7 +53,7 @@ class ListFilter(private val scope: CoroutineScope) {
         filteredBy(source, _query, matches).screenState(scope, emptyList())
 
     /**
-     * A list already cut by whether each row can be played right now ([source], one of [AppAvailability]'s), narrowed by the current query
+     * A list already cut by whether each row can be played right now ([source], one of [AvailabilityState]'s), narrowed by the current query
      * within both halves. Starts from [source]'s current value, not from an empty list: an empty first value is drawn as "No albums yet" until the
      * real rows arrive a few frames later. A row still moves without the screen being reopened, since [source] follows the servers and "Downloaded only".
      */

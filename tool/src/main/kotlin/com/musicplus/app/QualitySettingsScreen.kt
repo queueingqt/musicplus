@@ -8,8 +8,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.Settings
 import com.musicplus.app.data.AppSettingsRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
  */
 class QualitySettingsScreenViewModel(
     private val appSettingsRepository: AppSettingsRepository,
+    appState: AppState,
 ) : LightViewModel<Unit>() {
 
     // The warm copies in Settings, not appSettingsRepository's raw Flow — this screen gets a
@@ -55,9 +56,9 @@ class QualitySettingsScreenViewModel(
     // as the settings "glitching" on open. Settings warms them once at app
     // start (see AppGraph.build), so by the time this screen mounts it already
     // reflects the real values — same fix already used for the other settings.
-    val wifiQuality: StateFlow<Int?> = Settings.streamQualityWifi.warm.value
-    val cellularQuality: StateFlow<Int?> = Settings.streamQualityCellular.warm.value
-    val downloadQuality: StateFlow<Int?> = Settings.downloadQuality.warm.value
+    val wifiQuality: StateFlow<Int?> = appState.settings.streamQualityWifi.value
+    val cellularQuality: StateFlow<Int?> = appState.settings.streamQualityCellular.value
+    val downloadQuality: StateFlow<Int?> = appState.settings.downloadQuality.value
 
     fun setWifiQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityWifi(maxBitRateKbps) }
     fun setCellularQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityCellular(maxBitRateKbps) }
@@ -69,7 +70,7 @@ class QualitySettingsScreen(activity: SealedLightActivity) :
 
     override val viewModelClass = QualitySettingsScreenViewModel::class.java
 
-    override fun createViewModel() = QualitySettingsScreenViewModel(AppGraph.from(lightContext).appSettingsRepository)
+    override fun createViewModel() = AppGraph.from(lightContext).let { QualitySettingsScreenViewModel(it.appSettingsRepository, it.appState) }
 
     @Composable
     override fun Content() {

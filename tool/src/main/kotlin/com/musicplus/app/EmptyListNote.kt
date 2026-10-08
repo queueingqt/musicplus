@@ -1,5 +1,6 @@
 package com.musicplus.app
 
+import com.musicplus.app.data.LocalAppState
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -10,8 +11,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.musicplus.app.data.Settings
-import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.ServerProfile
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -32,11 +31,12 @@ fun EmptyListNote(what: String, filter: String = "", loaded: Boolean = true) {
         LoadingNote()
         return
     }
-    val configured by AppServerPrefs.isConfigured.value.collectAsState()
-    val enabled by AppServerPrefs.enabledServerIds.value.collectAsState()
-    val servers by AppServerPrefs.servers.value.collectAsState()
-    val synced by AppServerPrefs.lastSyncedAt.value.collectAsState()
-    val downloadedOnly by Settings.downloadedOnly.warm.value.collectAsState()
+    val state = LocalAppState.current
+    val configured by state.servers.isConfigured.value.collectAsState()
+    val enabled by state.servers.enabledServerIds.value.collectAsState()
+    val servers by state.servers.servers.value.collectAsState()
+    val synced by state.servers.lastSyncedAt.value.collectAsState()
+    val downloadedOnly by state.settings.downloadedOnly.value.collectAsState()
     LightText(
         text = emptyListText(what, filter, configured, enabled, servers, synced, downloadedOnly),
         variant = LightTextVariant.Fine,

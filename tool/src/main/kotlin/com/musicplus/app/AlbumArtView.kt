@@ -1,5 +1,6 @@
 package com.musicplus.app
 
+import com.musicplus.app.data.LocalAppState
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
-import com.musicplus.app.data.Settings
 import com.musicplus.app.data.AppGraph
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.ui.LightIcon
@@ -48,11 +48,11 @@ fun AlbumArt(
     placeholderIconSize: Float = 2f,
 ) {
     val graph = remember(lightContext) { AppGraph.from(lightContext) }
-    // Settings.showAlbumArtwork.warm, not appSettingsRepository.showAlbumArtwork
+    // The app state's warm copy of showAlbumArtwork, not appSettingsRepository.showAlbumArtwork
     // directly — see Setting.warm's doc for why (a raw collectAsState(initial)
     // on the cold DataStore Flow flashed real art every time this composable is
     // freshly composed, which is constantly).
-    val showArtwork by Settings.showAlbumArtwork.warm.value.collectAsState()
+    val showArtwork by LocalAppState.current.settings.showAlbumArtwork.value.collectAsState()
 
     if (!showArtwork) return
 

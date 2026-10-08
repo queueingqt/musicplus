@@ -78,7 +78,7 @@ class ListAvailability(
  * a default and then snap): rebuilt whenever a server goes down or comes back, a song's audio arrives or leaves the phone, or
  * "Downloaded only" changes. Mirrored once in [AppGraph.build].
  */
-object AppAvailability {
+class AvailabilityState {
     val index = WarmedFlow(OnPhoneIndex.EMPTY)
 
     /** Until the servers are known everything counts as usable, so nothing is put below the line on a guess. */
@@ -117,3 +117,6 @@ object AppAvailability {
         ListAvailability(on, ServersNow(servers.isNotEmpty(), enabled, unreachable), downloadedOnly)
     }
 }
+
+/** The app's one [AvailabilityState]: see [ServerState]'s global of the same kind. */
+val AppAvailability = AvailabilityState()

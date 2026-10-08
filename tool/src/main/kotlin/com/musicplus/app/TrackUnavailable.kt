@@ -1,12 +1,12 @@
 package com.musicplus.app
 
+import com.musicplus.app.data.LocalAppState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import com.musicplus.app.data.AppServerPrefs
+import com.musicplus.app.data.ServerStanding
 import com.musicplus.app.data.ServerScope
-import com.musicplus.app.data.TrackAvailability
 
 /** What a tap on an unavailable song says. */
 const val SERVER_NOT_REACHABLE_NOTE = "Server not reachable"
@@ -18,14 +18,15 @@ const val SERVER_NOT_REACHABLE_NOTE = "Server not reachable"
  */
 @Composable
 fun rememberTrackUnavailable(track: Track): Boolean {
-    val unreachable by AppServerPrefs.unreachableServerIds.value.collectAsState()
-    val on by AppServerPrefs.enabledServerIds.value.collectAsState()
-    val servers by AppServerPrefs.servers.value.collectAsState()
-    val serverOut = !TrackAvailability.serverUsable(ServerScope.serverOf(track.id), servers.isNotEmpty(), on, unreachable)
+    val state = LocalAppState.current
+    val unreachable by state.servers.unreachableServerIds.value.collectAsState()
+    val on by state.servers.enabledServerIds.value.collectAsState()
+    val servers by state.servers.servers.value.collectAsState()
+    val serverOut = !ServerStanding.usable(ServerScope.serverOf(track.id), servers.isNotEmpty(), on, unreachable)
     // Only a song whose server is out looks for a copy, and only then does it follow the cache's listing: it may have answered "no
     // copy" from a listing that had not been read yet (#76).
-    val copies = if (serverOut) TrackAvailability.streamCopies.collectAsState().value else 0
+    val copies = if (serverOut) state.audio.streamCopies.collectAsState().value else 0
     return remember(track.id, track.downloadStatus, track.localFilePath, serverOut, copies) {
-        serverOut && !TrackAvailability.hasAudioOnPhone(track)
+        serverOut && !state.audio.hasAudioOnPhone(track)
     }
 }

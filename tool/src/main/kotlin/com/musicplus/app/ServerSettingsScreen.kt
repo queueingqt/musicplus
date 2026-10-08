@@ -12,8 +12,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.DownloadSummary
 import com.musicplus.app.data.RemovedServer
 import com.musicplus.app.data.ServerLifecycle
@@ -48,23 +48,24 @@ import kotlinx.coroutines.launch
  */
 class ServerSettingsScreenViewModel(
     private val serverLifecycle: ServerLifecycle,
+    appState: AppState,
 ) : LightViewModel<Unit>() {
 
     // AppServerPrefs, not serverConfigRepository directly — this screen gets
     // a fresh ViewModel (and a fresh `.stateIn(...)`) every time it's
     // navigated to, seeded emptyList()/null before the real DataStore Flow
     // catches up — briefly flashed "No servers yet" even with servers
-    // already saved. Reported live, 2026-09-18. See AppServerPrefs's own doc.
-    val servers: StateFlow<List<ServerProfile>> = AppServerPrefs.servers.value
+    // already saved. Reported live, 2026-09-18. See ServerState's own doc.
+    val servers: StateFlow<List<ServerProfile>> = appState.servers.servers.value
 
-    val enabledServerIds: StateFlow<Set<String>> = AppServerPrefs.enabledServerIds.value
+    val enabledServerIds: StateFlow<Set<String>> = appState.servers.enabledServerIds.value
 
-    val lastSyncedAt: StateFlow<Map<String, Long>> = AppServerPrefs.lastSyncedAt.value
+    val lastSyncedAt: StateFlow<Map<String, Long>> = appState.servers.lastSyncedAt.value
     /** Servers that are on but could not be reached at their last request. */
-    val unreachable: StateFlow<Set<String>> = AppServerPrefs.unreachableServerIds.value
+    val unreachable: StateFlow<Set<String>> = appState.servers.unreachableServerIds.value
 
     /** Servers removed with their downloads kept: they stay listed below the live ones, until those downloads are deleted. */
-    val removedServers: StateFlow<List<RemovedServer>> = AppServerPrefs.removedServers.value
+    val removedServers: StateFlow<List<RemovedServer>> = appState.servers.removedServers.value
 
     val downloadSummaries: StateFlow<Map<String, DownloadSummary>> =
         serverLifecycle.downloadSummaries.screenState(viewModelScope, emptyMap())
@@ -91,7 +92,7 @@ class ServerSettingsScreen(activity: SealedLightActivity) :
     override val viewModelClass = ServerSettingsScreenViewModel::class.java
 
     override fun createViewModel() =
-        AppGraph.from(lightContext).let { ServerSettingsScreenViewModel(it.serverLifecycle) }
+        AppGraph.from(lightContext).let { ServerSettingsScreenViewModel(it.serverLifecycle, it.appState) }
 
     @Composable
     override fun Content() {

@@ -11,7 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.AppAvailability
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightScreen
@@ -26,12 +26,13 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 
 class ArtistListScreenViewModel(
     listRefresher: ListRefresher,
+    appState: AppState,
 ) : CachedListViewModel(listRefresher, ListRefresher.Target.ARTISTS) {
 
     // See AppLibraryCache's doc — reads the already-live, process-lifetime cache instead of re-subscribing to observeArtists() on every
     // fresh per-visit ViewModel.
     val filter = ListFilter(viewModelScope)
-    val artists = filter.narrowSplit(AppAvailability.artists.value) { artist, query -> artist.name.containsIgnoringCase(query) }
+    val artists = filter.narrowSplit(appState.availability.artists.value) { artist, query -> artist.name.containsIgnoringCase(query) }
 }
 
 class ArtistListScreen(activity: SealedLightActivity) :
@@ -41,7 +42,7 @@ class ArtistListScreen(activity: SealedLightActivity) :
 
     override fun createViewModel(): ArtistListScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return ArtistListScreenViewModel(graph.listRefresher)
+        return ArtistListScreenViewModel(graph.listRefresher, graph.appState)
     }
 
     @Composable

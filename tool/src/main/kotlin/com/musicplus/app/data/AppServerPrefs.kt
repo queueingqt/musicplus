@@ -4,7 +4,7 @@ package com.musicplus.app.data
  * See [WarmedFlow]'s doc. Mirrors [ServerConfigRepository]'s
  * servers/activeServerId/serverConfig.
  */
-object AppServerPrefs {
+class ServerState {
     val servers = WarmedFlow<List<ServerProfile>>(emptyList())
     /** The first server that is on — see [ServerConfigRepository.activeProfile]. */
     val activeServerId = WarmedFlow<String?>(null)
@@ -19,3 +19,6 @@ object AppServerPrefs {
     /** Whether any server is saved (on or off) — the setup splash is for when there is none. */
     val isConfigured = WarmedFlow(false)
 }
+
+/** The app's one [ServerState]: the data layer reads it by this name; screens are handed it through [AppState], so a test can give them another. */
+val AppServerPrefs = ServerState()

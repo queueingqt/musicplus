@@ -10,9 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppLibraryCache
-import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.ListRefresher
 import com.musicplus.app.data.PlaylistHomes
 import com.musicplus.app.data.PlaylistRepository
@@ -46,6 +45,7 @@ class PlaylistPickerScreenViewModel(
     private val syncQueueRepository: SyncQueueRepository,
     listRefresher: ListRefresher,
     private val songId: String,
+    appState: AppState,
 ) : CachedListViewModel(listRefresher, ListRefresher.Target.PLAYLISTS) {
 
     /**
@@ -53,7 +53,7 @@ class PlaylistPickerScreenViewModel(
      * choice needs no warning; the rest follow, in name order within each group.
      */
     val playlists: StateFlow<List<Playlist>> =
-        combine(AppLibraryCache.playlists.value, AppServerPrefs.capabilities.value, AppServerPrefs.enabledServerIds.value) { all, _, _ ->
+        combine(appState.library.playlists.value, appState.servers.capabilities.value, appState.servers.enabledServerIds.value) { all, _, _ ->
             val (takesAsIs, needsCopy) = all.partition { PlaylistHomes.takesAsIs(it.id, songId) }
             takesAsIs + needsCopy
         }.screenState(viewModelScope, emptyList())
@@ -91,7 +91,7 @@ class PlaylistPickerScreen(
 
     override fun createViewModel(): PlaylistPickerScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return PlaylistPickerScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.listRefresher, songId)
+        return PlaylistPickerScreenViewModel(graph.playlistRepository, graph.syncQueueRepository, graph.listRefresher, songId, graph.appState)
     }
 
     /**

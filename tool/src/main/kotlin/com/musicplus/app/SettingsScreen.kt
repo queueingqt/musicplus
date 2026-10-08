@@ -10,10 +10,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.Settings
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppLibraryCache
-import com.musicplus.app.data.AppScrobblePrefs
 import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.LocalDataRepository
 import com.musicplus.app.data.ServerScope
@@ -48,6 +46,8 @@ class SettingsScreenViewModel(
     private val appSettingsRepository: AppSettingsRepository,
     private val localDataRepository: LocalDataRepository,
     syncQueueRepository: SyncQueueRepository,
+    /** The warm state this screen shows: the displayed settings, the last scrobble error, and the library the "Clear all local data" warning counts from. */
+    val appState: AppState,
 ) : LightViewModel<Unit>() {
 
     /** Real count, not a toggle — see SyncQueueRepository (issue #24). Zero means either everything's synced or nothing's ever been queued; either way there's nothing to show. */
@@ -61,26 +61,26 @@ class SettingsScreenViewModel(
     // (see AppServerPrefs's doc) — only visible here for someone who's
     // actually toggled either off, since the seed happens to match the
     // default otherwise, but the same gap.
-    val showAlbumArtwork: StateFlow<Boolean> = Settings.showAlbumArtwork.warm.value
+    val showAlbumArtwork: StateFlow<Boolean> = appState.settings.showAlbumArtwork.value
 
     fun toggleShowAlbumArtwork() {
         viewModelScope.launch { appSettingsRepository.setShowAlbumArtwork(!showAlbumArtwork.value) }
     }
 
-    val downloadedOnly: StateFlow<Boolean> = Settings.downloadedOnly.warm.value
+    val downloadedOnly: StateFlow<Boolean> = appState.settings.downloadedOnly.value
 
     fun toggleDownloadedOnly() {
         viewModelScope.launch { appSettingsRepository.setDownloadedOnly(!downloadedOnly.value) }
     }
 
-    val scrobblingEnabled: StateFlow<Boolean> = Settings.scrobbling.warm.value
+    val scrobblingEnabled: StateFlow<Boolean> = appState.settings.scrobbling.value
 
     fun toggleScrobbling() {
         viewModelScope.launch { appSettingsRepository.setScrobblingEnabled(!scrobblingEnabled.value) }
     }
 
     /** See [AppScrobblePrefs.lastError]'s doc — set by PlaybackRepository's own scrobble watcher, not this screen. */
-    val scrobblingError: StateFlow<String?> = AppScrobblePrefs.lastError.value
+    val scrobblingError: StateFlow<String?> = appState.scrobbleError.value
 
     fun clearAllLocalData() {
         viewModelScope.launch { localDataRepository.clearAll() }
@@ -93,7 +93,7 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
 
     override fun createViewModel(): SettingsScreenViewModel {
         val graph = AppGraph.from(lightContext)
-        return SettingsScreenViewModel(graph.appSettingsRepository, graph.localDataRepository, graph.syncQueueRepository)
+        return SettingsScreenViewModel(graph.appSettingsRepository, graph.localDataRepository, graph.syncQueueRepository, graph.appState)
     }
 
     @Composable
@@ -171,11 +171,11 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                                     message = buildString {
                                         // Phone Only playlists and the hearts kept on the phone for a server without
                                         // favorites exist nowhere else, so this is the one thing here that cannot be brought back.
-                                        val phoneOnlyPlaylists = AppLibraryCache.playlists.value.value.count { ServerScope.isPhone(it.id) }
+                                        val phoneOnlyPlaylists = viewModel.appState.library.playlists.value.value.count { ServerScope.isPhone(it.id) }
                                         val phoneOnlyFavorites =
-                                            AppLibraryCache.favoriteTracks.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL } +
-                                                AppLibraryCache.favoriteAlbums.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL } +
-                                                AppLibraryCache.favoriteArtists.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL }
+                                            viewModel.appState.library.favoriteTracks.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL } +
+                                                viewModel.appState.library.favoriteAlbums.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL } +
+                                                viewModel.appState.library.favoriteArtists.value.value.count { it.serverLabel == ServerScope.PHONE_ONLY_LABEL }
                                         if (phoneOnlyPlaylists > 0 || phoneOnlyFavorites > 0) {
                                             val parts = buildList {
                                                 if (phoneOnlyPlaylists > 0) add(if (phoneOnlyPlaylists == 1) "1 Phone Only playlist" else "$phoneOnlyPlaylists Phone Only playlists")

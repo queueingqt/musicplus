@@ -1,5 +1,6 @@
 package com.musicplus.app
 
+import com.musicplus.app.data.LocalAppState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,9 +33,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.Settings
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
@@ -122,6 +122,7 @@ class PlayerScreenViewModel(
     private val libraryRepository: com.musicplus.app.data.LibraryRepository,
     private val syncQueueRepository: com.musicplus.app.data.SyncQueueRepository,
     private val downloadRepository: DownloadRepository,
+    appState: AppState,
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
@@ -137,7 +138,7 @@ class PlayerScreenViewModel(
     // art was already known a moment ago. Confirmed on-device 2026-09-18:
     // even the *same* track played twice in a row still flashed
     // placeholder-then-art here, purely from this cold start. The album tier
-    // comes from [AppLibraryCache.albums], the process-lifetime copy of the
+    // comes from the app state's cached albums, the process-lifetime copy of the
     // albums list, so a song that was started without a hint (from a list, a
     // playlist, or restored at launch) has its art on the first frame too;
     // the live albums flow below only confirms it (issue #54).
@@ -147,7 +148,7 @@ class PlayerScreenViewModel(
         resolveAlbumArtId(s.currentTrack, albums, hint)
     }.screenState(
         viewModelScope,
-        resolveAlbumArtId(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
+        resolveAlbumArtId(playback.currentSnapshot().currentTrack, appState.library.albums.value.value, playback.albumArtHint.value),
     )
 
     /** True while the current track's favorite state is still waiting to reach the server (issue #24) — the star's own filled/outline state already reflects the optimistic local value, so this drives a separate "still syncing" indicator rather than a third icon state. */
@@ -218,7 +219,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
     override fun createViewModel(): PlayerScreenViewModel {
         val graph = AppGraph.from(lightContext)
         val playback = playbackRepository(sealedActivity, lightContext)
-        return PlayerScreenViewModel(playback, graph.libraryRepository, graph.syncQueueRepository, graph.downloadRepository)
+        return PlayerScreenViewModel(playback, graph.libraryRepository, graph.syncQueueRepository, graph.downloadRepository, graph.appState)
     }
 
     @Composable
@@ -228,7 +229,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val isFavoritePending by viewModel.isFavoritePending.collectAsState()
         val downloadStatus by viewModel.downloadStatus.collectAsState()
         val sleepTimerState by viewModel.sleepTimerState.collectAsState()
-        val showArtwork by Settings.showAlbumArtwork.warm.value.collectAsState()
+        val showArtwork by LocalAppState.current.settings.showAlbumArtwork.value.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
 

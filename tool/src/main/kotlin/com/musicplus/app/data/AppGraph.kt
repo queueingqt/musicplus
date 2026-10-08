@@ -41,6 +41,8 @@ object AppGraph {
         val connectivity: LightConnectivity,
         val streamCache: StreamCache,
         val fetchGate: FetchGate,
+        /** What screens read of the warm state, handed to them rather than reached for: see [AppState]. */
+        val appState: AppState,
     )
 
     @Volatile private var instance: Graph? = null
@@ -310,6 +312,7 @@ object AppGraph {
             connectivity = connectivity,
             streamCache = streamCache,
             fetchGate = fetchGate,
+            appState = AppState.Default,
         )
     }
 }

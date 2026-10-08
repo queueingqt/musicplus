@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.AppAvailability
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.ListRefresher
 import com.thelightphone.sdk.LightScreen
@@ -14,11 +14,11 @@ import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightTopBar
 import com.thelightphone.sdk.ui.LightTopBarCenter
 
-class AlbumListScreenViewModel(listRefresher: ListRefresher) : CachedListViewModel(listRefresher, ListRefresher.Target.ALBUMS) {
+class AlbumListScreenViewModel(listRefresher: ListRefresher, appState: AppState) : CachedListViewModel(listRefresher, ListRefresher.Target.ALBUMS) {
     // Reads the already-live, process-lifetime cache instead of re-subscribing to libraryRepository.observeAlbums() itself — see
     // AppLibraryCache's own doc for why a fresh per-visit stateIn() here was the actual root cause of Albums' reported per-visit load delay.
     val filter = ListFilter(viewModelScope)
-    val albums = filter.narrowSplit(AppAvailability.albums.value) { album, query ->
+    val albums = filter.narrowSplit(appState.availability.albums.value) { album, query ->
         album.name.containsIgnoringCase(query) || album.artistName.containsIgnoringCase(query)
     }
 }
@@ -28,7 +28,7 @@ class AlbumListScreen(private val activity: SealedLightActivity) :
 
     override val viewModelClass = AlbumListScreenViewModel::class.java
 
-    override fun createViewModel() = AlbumListScreenViewModel(AppGraph.from(lightContext).listRefresher)
+    override fun createViewModel() = AppGraph.from(lightContext).let { AlbumListScreenViewModel(it.listRefresher, it.appState) }
 
     @Composable
     override fun Content() {

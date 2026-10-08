@@ -11,7 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppServerPrefs
+import com.musicplus.app.data.AppState
 import com.thelightphone.sdk.InitialScreen
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
-class HomeScreenViewModel : LightViewModel<Unit>() {
+class HomeScreenViewModel(appState: AppState) : LightViewModel<Unit>() {
     // AppServerPrefs, not AppGraph.from(...).serverConfigRepository.serverConfig directly —
     // this screen gets a fresh ViewModel (and a fresh `.stateIn(...)`) every
     // time it's navigated back to, seeded `false` before the real DataStore
@@ -37,7 +37,7 @@ class HomeScreenViewModel : LightViewModel<Unit>() {
     // already configured. Reported live, 2026-09-18 — same root cause as
     // Settings' "Server" row flashing "No servers yet" (see AppServerPrefs's
     // own doc), already fixed once before for the settings (see Settings).
-    val isConfigured: StateFlow<Boolean> = AppServerPrefs.isConfigured.value
+    val isConfigured: StateFlow<Boolean> = appState.servers.isConfigured.value
 
     // Note: the old "Now playing: <title>" row that used to live here (via a
     // PlaybackRepositoryHolder.peek() StateFlow) was dropped — the persistent
@@ -55,21 +55,11 @@ class HomeScreenViewModel : LightViewModel<Unit>() {
 class HomeScreen(activity: SealedLightActivity) : LightScreen<Unit, HomeScreenViewModel>(activity) {
     override val viewModelClass = HomeScreenViewModel::class.java
 
-    override fun createViewModel(): HomeScreenViewModel {
-        // Discarded, but not dead code — HomeScreen is @InitialScreen, so this
-        // is the one guaranteed call that bootstraps AppGraph.build() (and
-        // therefore every mirrorInto — AppServerPrefs.isConfigured included)
-        // as early as app launch. Without it, nothing forces the composition
-        // root to build until some other screen happens to touch AppGraph
-        // first, so isConfigured silently stays at its seeded `false` forever
-        // and this screen never leaves the "Set up your server" splash.
-        // Reported live, 2026-09-18: a genuinely fresh launch hung on that
-        // splash indefinitely (13+ seconds and counting, not just a brief
-        // flash) after HomeScreenViewModel's own AppGraph.Graph parameter —
-        // its only prior caller of AppGraph.from() — was dropped as unused.
-        AppGraph.from(lightContext)
-        return HomeScreenViewModel()
-    }
+    // HomeScreen is @InitialScreen, so this is the first thing to ask for the app state, and asking is what builds the composition root
+    // (AppGraph.from) and starts every mirror that fills it. That is now the state's own dependency, not a call made for its side effect:
+    // the view model cannot be built without going through the graph that makes its state live. (When this was a discarded call, removing
+    // it as "unused" left isConfigured at its seeded `false` for ever and a fresh launch hung on the "Set up your server" splash, 2026-09-18.)
+    override fun createViewModel(): HomeScreenViewModel = HomeScreenViewModel(AppGraph.from(lightContext).appState)
 
     @Composable
     override fun Content() {

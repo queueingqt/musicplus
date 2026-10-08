@@ -39,7 +39,7 @@ import com.musicplus.app.Track
  * it finds flows in through the same Room invalidation that keeps this cache
  * current.
  */
-object AppLibraryCache {
+class LibraryState {
     val artists = WarmedFlow<List<Artist>>(emptyList())
     val albums = WarmedFlow<List<Album>>(emptyList())
     val allTracks = WarmedFlow<List<Track>>(emptyList())
@@ -48,3 +48,6 @@ object AppLibraryCache {
     val favoriteTracks = WarmedFlow<List<Track>>(emptyList())
     val playlists = WarmedFlow<List<Playlist>>(emptyList())
 }
+
+/** The app's one [LibraryState]: see [ServerState]'s global of the same kind. */
+val AppLibraryCache = LibraryState()

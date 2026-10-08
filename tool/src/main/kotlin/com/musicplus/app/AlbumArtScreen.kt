@@ -8,8 +8,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.PlaybackRepository
 import com.musicplus.app.data.playbackRepository
@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.combine
 class AlbumArtScreenViewModel(
     private val playback: PlaybackRepository,
     private val libraryRepository: LibraryRepository,
+    appState: AppState,
 ) : LightViewModel<Unit>() {
 
     val state: StateFlow<PlaybackState> =
@@ -37,7 +38,7 @@ class AlbumArtScreenViewModel(
     // whatever was playing the moment this screen opened — skipping/advancing
     // while the full-screen view is up should update it in place, the same
     // way PlayerScreen's own small thumbnail already does.
-    // The first value comes from AppLibraryCache.albums, the in-memory copy of the albums list, not from
+    // The first value comes from the app state's cached albums, the in-memory copy of the albums list, not from
     // an empty list: this view model is created fresh on every open, and without an album to look up the
     // first frame had no URL at all, so the placeholder showed until the live albums flow below emitted
     // (about 450 ms measured). The album is the same one Now Playing is showing, so its art is already
@@ -48,7 +49,7 @@ class AlbumArtScreenViewModel(
         resolveAlbumArtId(s.currentTrack, albums, hint)
     }.screenState(
         viewModelScope,
-        resolveAlbumArtId(playback.currentSnapshot().currentTrack, AppLibraryCache.albums.value.value, playback.albumArtHint.value),
+        resolveAlbumArtId(playback.currentSnapshot().currentTrack, appState.library.albums.value.value, playback.albumArtHint.value),
     )
 }
 
@@ -68,7 +69,7 @@ class AlbumArtScreen(private val sealedActivity: SealedLightActivity) :
     override fun createViewModel(): AlbumArtScreenViewModel {
         val graph = AppGraph.from(lightContext)
         val playback = playbackRepository(sealedActivity, lightContext)
-        return AlbumArtScreenViewModel(playback, graph.libraryRepository)
+        return AlbumArtScreenViewModel(playback, graph.libraryRepository, graph.appState)
     }
 
     @Composable

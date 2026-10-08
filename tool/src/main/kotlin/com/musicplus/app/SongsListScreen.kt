@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.AppAvailability
+import com.musicplus.app.data.AppState
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.LibraryRepository
 import com.musicplus.app.data.ListRefresher
@@ -23,9 +23,9 @@ import com.thelightphone.sdk.ui.LightTopBarCenter
  * background each time this page opens. The page itself never waits for it: it reads the warmed cache (see AppLibraryCache's doc,
  * the collection that fix was originally measured against: several real seconds on a warm process, several thousand tracks).
  */
-class SongsListScreenViewModel(listRefresher: ListRefresher) : CachedListViewModel(listRefresher, ListRefresher.Target.SONGS) {
+class SongsListScreenViewModel(listRefresher: ListRefresher, appState: AppState) : CachedListViewModel(listRefresher, ListRefresher.Target.SONGS) {
     val filter = ListFilter(viewModelScope)
-    val tracks = filter.narrowSplit(AppAvailability.songs.value) { track, query ->
+    val tracks = filter.narrowSplit(appState.availability.songs.value) { track, query ->
         track.title.containsIgnoringCase(query) || track.artistName.containsIgnoringCase(query)
     }
 }
@@ -35,7 +35,7 @@ class SongsListScreen(private val activity: SealedLightActivity) :
 
     override val viewModelClass = SongsListScreenViewModel::class.java
 
-    override fun createViewModel() = SongsListScreenViewModel(AppGraph.from(lightContext).listRefresher)
+    override fun createViewModel() = AppGraph.from(lightContext).let { SongsListScreenViewModel(it.listRefresher, it.appState) }
 
     @Composable
     override fun Content() {
