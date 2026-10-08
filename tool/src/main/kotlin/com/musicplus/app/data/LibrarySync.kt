@@ -158,3 +158,44 @@ internal suspend fun <E : Any> mirrorStarred(
     unstarred.chunked(ID_BATCH_SIZE).forEach { clearStarred(it) }
     AppLogger.d(TAG, "$label: ${ids.size} starred on the server, ${changed.size} written, ${unstarred.size} un-starred")
 }
+
+/** How a heart is read from a row and put on one, for a collection whose rows have one. */
+internal class Starred<E>(val isStarred: (E) -> Boolean, val withStarred: (E, Boolean) -> E)
+
+/**
+ * One collection the phone mirrors from a server: what the phone holds for a server, how a batch is stored, how ids are deleted, and (if its
+ * rows have hearts) how a heart is read and set. What every collection must also do, and what used to be written out in each refresh and
+ * forgotten silently if left out, is [mirrorCollection]'s: write and remove only while the server is still live, never write over a heart the
+ * phone's own wins for, and merge a heart onto a row that was fetched.
+ */
+internal class MirrorSpec<E : Any>(
+    val label: String,
+    val idOf: (E) -> String,
+    val cachedFor: suspend (serverId: String) -> List<E>,
+    /** Stores a batch. For a collection with hearts it re-applies the ones the phone's own wins for (`keepingLocalStars`). */
+    val store: suspend (rows: List<E>, stars: LocalStars) -> Unit,
+    val delete: suspend (ids: List<String>) -> Unit,
+    val starred: Starred<E>? = null,
+)
+
+/** [mirrorFromServer] for one [spec], with what every collection needs done once, here: see [MirrorSpec]. */
+internal suspend fun <E : Any> mirrorCollection(
+    api: MusicApi,
+    live: (MusicApi) -> Boolean,
+    spec: MirrorSpec<E>,
+    stars: LocalStars,
+    fetchAll: suspend (onPage: suspend (List<E>) -> Unit) -> Unit,
+    keep: suspend (candidates: List<String>) -> Set<String> = { emptySet() },
+) = mirrorFromServer(
+    label = spec.label,
+    idOf = spec.idOf,
+    cached = { spec.cachedFor(api.serverId).associateBy(spec.idOf) },
+    fetchAll = fetchAll,
+    write = { if (live(api)) spec.store(it, stars) },
+    remove = { if (live(api)) spec.delete(it) },
+    merge = { fetched, local ->
+        val starred = spec.starred
+        if (starred != null && local != null && stars.wins(spec.idOf(fetched))) starred.withStarred(fetched, starred.isStarred(local)) else fetched
+    },
+    keep = keep,
+)

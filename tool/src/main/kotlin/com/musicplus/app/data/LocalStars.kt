@@ -41,3 +41,6 @@ internal suspend fun AlbumDao.keepingLocalStars(items: List<AlbumEntity>, stars:
 
 internal suspend fun TrackDao.keepingLocalStars(items: List<TrackEntity>, stars: LocalStars) =
     stars.keeping(items, TrackEntity::id, TrackEntity::starred, { e, s -> e.copy(starred = s) }) { getByIds(it) }
+
+/** The phone's hearts that win over a server's answer right now: those with an edit still waiting to be sent. Read fresh for each refresh, by every repository the same way. */
+suspend fun PendingMutationDao.localStars(): LocalStars = LocalStars(pendingFavoriteIds())

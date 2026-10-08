@@ -104,7 +104,7 @@ class LibraryRepository(
 
     /** Batch lookup by id, e.g. restoring a persisted queue (issue #27) — order isn't preserved, callers reorder against their own id list. Silently drops any id no longer in the local cache. */
     suspend fun getTracksByIds(ids: List<String>): List<Track> {
-        val byId = downloadRepository.observeAll().first().associateBy { it.songId }
+        val byId = downloadRepository.byId()
         return trackDao.getByIds(ids).map { it.toTrack(byId[it.id]) }
     }
 
@@ -120,19 +120,37 @@ class LibraryRepository(
     // removed, conservatively. ListRefresher decides *when* they run.
 
     /** When the phone's own heart wins over the server's answer, read fresh for each refresh: see [LocalStars]. Applied by every refresh, lists and details alike. */
-    private suspend fun localStars() = LocalStars(pendingMutationDao.pendingFavoriteIds())
+    private suspend fun localStars() = pendingMutationDao.localStars()
+
+    private val artistsMirror = MirrorSpec(
+        label = "artists",
+        idOf = ArtistEntity::id,
+        cachedFor = { artistDao.getAllFor(it) },
+        store = { rows, stars -> artistDao.upsertAll(artistDao.keepingLocalStars(rows, stars)) },
+        delete = { artistDao.deleteByIds(it) },
+        starred = Starred(ArtistEntity::starred) { row, on -> row.copy(starred = on) },
+    )
+
+    private val albumsMirror = MirrorSpec(
+        label = "albums",
+        idOf = AlbumEntity::id,
+        cachedFor = { albumDao.getAllFor(it) },
+        store = { rows, stars -> albumDao.upsertAll(albumDao.keepingLocalStars(rows, stars)) },
+        delete = { albumDao.deleteByIds(it) },
+        starred = Starred(AlbumEntity::starred) { row, on -> row.copy(starred = on) },
+    )
+
+    private val songsMirror = MirrorSpec(
+        label = "songs",
+        idOf = TrackEntity::id,
+        cachedFor = { trackDao.getAllFor(it) },
+        store = { rows, stars -> trackDao.upsertAll(trackDao.keepingLocalStars(rows, stars)) },
+        delete = { trackDao.deleteByIds(it) },
+        starred = Starred(TrackEntity::starred) { row, on -> row.copy(starred = on) },
+    )
 
     suspend fun refreshArtists() = refresh("refreshArtists") { api ->
-        val stars = localStars()
-        mirrorFromServer(
-            label = "artists",
-            idOf = ArtistEntity::id,
-            cached = { artistDao.getAllFor(api.serverId).associateBy { it.id } },
-            fetchAll = { onPage -> onPage(api.getArtists().map { it.toEntity() }) },
-            write = { if (live(api)) artistDao.upsertAll(artistDao.keepingLocalStars(it, stars)) },
-            remove = { if (live(api)) artistDao.deleteByIds(it) },
-            merge = { fetched, local -> if (local != null && stars.wins(fetched.id)) fetched.copy(starred = local.starred) else fetched },
-        )
+        mirrorCollection(api, ::live, artistsMirror, localStars(), fetchAll = { onPage -> onPage(api.getArtists().map { it.toEntity() }) })
     }
 
     /**
@@ -143,11 +161,8 @@ class LibraryRepository(
      * would take everything outside the subset for deleted.
      */
     suspend fun refreshAlbumList() = refresh("refreshAlbumList") { api ->
-        val stars = localStars()
-        mirrorFromServer(
-            label = "albums",
-            idOf = AlbumEntity::id,
-            cached = { albumDao.getAllFor(api.serverId).associateBy { it.id } },
+        mirrorCollection(
+            api, ::live, albumsMirror, localStars(),
             fetchAll = { onPage ->
                 pageThrough(
                     idOf = AlbumEntity::id,
@@ -155,9 +170,6 @@ class LibraryRepository(
                     onPage = onPage,
                 )
             },
-            write = { if (live(api)) albumDao.upsertAll(albumDao.keepingLocalStars(it, stars)) },
-            remove = { if (live(api)) albumDao.deleteByIds(it) },
-            merge = { fetched, local -> if (local != null && stars.wins(fetched.id)) fetched.copy(starred = local.starred) else fetched },
         )
     }
 
@@ -184,11 +196,8 @@ class LibraryRepository(
      * removed, even if the server no longer lists them — the file is theirs.
      */
     suspend fun refreshAllSongs() = refresh("refreshAllSongs") { api ->
-        val stars = localStars()
-        mirrorFromServer(
-            label = "songs",
-            idOf = TrackEntity::id,
-            cached = { trackDao.getAllFor(api.serverId).associateBy { it.id } },
+        mirrorCollection(
+            api, ::live, songsMirror, localStars(),
             fetchAll = { onPage ->
                 pageThrough(
                     idOf = TrackEntity::id,
@@ -196,11 +205,8 @@ class LibraryRepository(
                     onPage = onPage,
                 )
             },
-            write = { if (live(api)) trackDao.upsertAll(trackDao.keepingLocalStars(it, stars)) },
-            remove = { if (live(api)) trackDao.deleteByIds(it) },
-            merge = { fetched, local -> if (local != null && stars.wins(fetched.id)) fetched.copy(starred = local.starred) else fetched },
             keep = { candidates ->
-                val downloaded = downloadRepository.observeAll().first().mapTo(HashSet()) { it.songId }
+                val downloaded = downloadRepository.byId().keys
                 candidates.filterTo(HashSet()) { it in downloaded }
             },
         )
@@ -267,7 +273,7 @@ class LibraryRepository(
         send(labelled(local))
         if (!connectivity.currentStatus.isConnected) return@channelFlow
 
-        val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
+        val downloadsById = downloadRepository.byId()
         val stars = localStars()
         val live = HashMap<String, SearchResults>()
         val lock = Mutex()
@@ -321,7 +327,7 @@ class LibraryRepository(
 
     private suspend fun searchLocal(query: String): SearchResults {
         val servers = shownServerIds.first()
-        val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
+        val downloadsById = downloadRepository.byId()
         return SearchResults(
             artistDao.search(query, servers).map { it.toDomain() },
             albumDao.search(query, servers).map { it.toDomain() },
@@ -356,7 +362,7 @@ class LibraryRepository(
         // The artist's own server: with several servers on, "the active one" is meaningless, and another server has never heard of them.
         val api = apiHolder.forId(artistId) ?: return emptyList()
         return try {
-            val downloadsById = downloadRepository.observeAll().first().associateBy { it.songId }
+            val downloadsById = downloadRepository.byId()
             trackDao.keepingLocalStars(api.getTopSongs(artistId, artistName).map { it.toTrackEntity() }, localStars()).map { it.toTrack(downloadsById[it.id]) }
         } catch (e: Exception) {
             AppLogger.e("LibraryRepository", "getTopSongs(\"$artistName\") failed", e)

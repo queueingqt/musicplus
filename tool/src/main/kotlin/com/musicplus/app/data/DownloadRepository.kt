@@ -3,6 +3,7 @@ package com.musicplus.app.data
 import com.musicplus.app.Track
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import java.io.File
 import java.io.IOException
 
@@ -87,6 +88,9 @@ class DownloadRepository(
     }
 
     fun observeAll(): Flow<List<DownloadEntity>> = downloadDao.observeAll()
+
+    /** Every download row now, by song id: what a song's download status is joined against. */
+    suspend fun byId(): Map<String, DownloadEntity> = downloadDao.observeAll().first().associateBy { it.songId }
     fun observeStatus(songId: String): Flow<DownloadEntity?> = downloadDao.observeBySongId(songId)
 
     suspend fun enqueue(track: Track) = requeue(track.id)

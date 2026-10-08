@@ -164,7 +164,7 @@ object AppGraph {
             shownServerIds = serverConfigRepository.shownServerIds,
             serverRefresh = serverRefresh,
             localCopy = localCopy,
-            localStars = { LocalStars(database.pendingMutationDao().pendingFavoriteIds()) },
+            localStars = { database.pendingMutationDao().localStars() },
         )
         // Starts every list refresh — on app start / reconnect just below, and
         // whenever a list page is opened (each list screen's onScreenShow). See

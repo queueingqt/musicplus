@@ -96,14 +96,18 @@ class PlaylistRepository(
      * A playlist created offline (a `pending:` placeholder id) isn't on the
      * server yet, so it is never mistaken for one the server deleted.
      */
+    private val playlistsMirror = MirrorSpec(
+        label = "playlists",
+        idOf = PlaylistEntity::id,
+        cachedFor = { playlistDao.getAllFor(it) },
+        store = { rows, _ -> playlistDao.upsertAll(rows) },
+        delete = { playlistDao.deleteWithTracks(it) },
+    )
+
     suspend fun refreshPlaylists() = refresh("refreshPlaylists") { api ->
-        mirrorFromServer(
-            label = "playlists",
-            idOf = PlaylistEntity::id,
-            cached = { playlistDao.getAllFor(api.serverId).associateBy { it.id } },
+        mirrorCollection(
+            api, ::live, playlistsMirror, localStars(),
             fetchAll = { onPage -> onPage(api.getPlaylists().map { it.toEntity() }) },
-            write = { if (live(api)) playlistDao.upsertAll(it) },
-            remove = { if (live(api)) playlistDao.deleteWithTracks(it) },
             keep = { candidates -> candidates.filterTo(HashSet()) { ServerScope.nativeOf(it).startsWith(PLACEHOLDER_PREFIX) } },
         )
     }
