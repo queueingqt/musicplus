@@ -44,7 +44,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
 | [x] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
 | [x] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
-| [~] | 10 | #89 | Settings declared once, read model | #82 helps | |
+| [x] | 10 | #89 | Settings declared once, read model | #82 helps | |
 | [x] | 11 | #88 | Action-menu state holder | none | D9 |
 | [x] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
 | [x] | 13 | #93 | Debug logging only in test/dev builds (added 2026-10-08) | do before #89, which may delete the setting | |
@@ -304,3 +304,9 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   legal name); `VersionCheckRepository`, `VersionAvailableScreen`, the "New Version Available" row, the Home asterisk, `AppLifecycle`'s update
   policy and `lastVersionCheckAtMs` are deleted (3 tests gone with them). The release dex has no `api.github.com`, `queueingqt` or
   `releases/latest` string. Phone: Home and Settings are pixel-identical to the earlier screenshots minus the removed row.
+- 2026-10-08: **#89 completed** `e97cf1e`. `AppState` (servers, library, availability, settings, scrobble error, on-phone audio) is handed to 11 view models by
+  constructor and to the three row composables through `LocalAppState`; the old globals are classes with the same names and the same
+  instances (so the data layer is untouched and nothing flashes); `HomeScreen` builds its view model from `AppGraph.from(...).appState`,
+  so the graph start-up is a real dependency, not a discarded call. 3 new tests (406 total). Phone: cold start without the splash, all five
+  lists drawn at 0.6 s, Settings/Quality pixel-identical, picker and player fine. Left on purpose: `AppGraph.from` as the way to get
+  repositories, the data layer's own reads of the globals, `announce`'s hand-set mirrors.
