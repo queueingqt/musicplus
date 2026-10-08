@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
@@ -116,6 +118,8 @@ class ServerEditScreenViewModel(
     }
 
     fun save(onSaved: () -> Unit) {
+        // A server deleted from this screen is gone: saving now would add it back.
+        if (removed) return
         viewModelScope.launch {
             when (val outcome = serverLifecycle.save(serverId, draft())) {
                 SaveOutcome.Saved -> {
@@ -139,8 +143,16 @@ class ServerEditScreenViewModel(
     // On the app's own scope (see ServerLifecycle), not this screen's.
     fun remove(keepDownloads: Boolean) {
         val id = serverId ?: return
+        removed = true
         serverLifecycle.remove(id, keepDownloads)
     }
+
+    /**
+     * Set once this server has been deleted from its own menu. The screen leaves itself when it next shows (the menu is on top when
+     * the delete runs, and `Content()` is disposed while it is, so an effect there could not see it): see [ServerEditScreen].
+     */
+    var removed = false
+        private set
 }
 
 class ServerEditScreen(activity: SealedLightActivity, private val serverId: String?) :
@@ -160,6 +172,11 @@ class ServerEditScreen(activity: SealedLightActivity, private val serverId: Stri
         val kind by viewModel.kind.collectAsState()
         val testResult by viewModel.testResult.collectAsState()
         val saveMessage by viewModel.saveMessage.collectAsState()
+
+        // A deleted server has nothing to edit: leave, without drawing its form again. Same shape as PlaylistDetailScreen's `leaving`.
+        val leaving = remember { viewModel.removed }
+        LaunchedEffect(Unit) { if (leaving) goBack() }
+        if (leaving) return
 
         MusicPlusScaffold(
             screen = this,
