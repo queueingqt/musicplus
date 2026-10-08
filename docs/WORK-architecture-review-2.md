@@ -132,7 +132,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   functions with tests (the cheapest real win). (c) Leave, the screens are deliberately simple.
 - **Recommendation.** (b) now, (a) only if a third picker appears.
 - **Question.** Is the 25-file back-button wiring worth a helper, or is explicit better here?
-- **Decision:** _open_
+- **Decision:** _done 2026-10-08, option (b) `a075f51`: the warning is `clearAllDataMessage` with 8 exact-text tests; the pickers stay as they are_
 
 ### S2. Light SDK gap adapters and list-row chrome (Speculative, one concrete part)
 
@@ -153,7 +153,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   each with its removal condition. (c) Do nothing beyond (a).
 - **Recommendation.** (a) only. (b) is tidiness; the existing per-workaround seams are fine.
 - **Question.** Any workaround here you already know Light is about to fix in the SDK (so it should not be touched)?
-- **Decision:** _open_
+- **Decision:** _done 2026-10-08, option (a) `78ca6f3`: `listRowPadding` is shared and replaces 10 hand-written copies; the workarounds stay where they are_
 
 ### S3. Screens that survive navigation, handled ad hoc (Speculative)
 
@@ -170,7 +170,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
 - **Recommendation.** (b). The behaviour belongs to the SDK, which the reviewer did not read; a shared module here would be
   an adapter over behaviour known only from comments. Revisit if a fourth screen needs the same workaround.
 - **Question.** Do you want me to read the SDK's navigation first, so the decision rests on code and not comments?
-- **Decision:** _open_
+- **Decision:** _read the SDK 2026-10-08 (option c); decision: leave the per-screen idiom, see the findings in the progress log_
 
 ### S4. SyncQueueRepository is mostly one-line forwards (Speculative)
 
@@ -183,7 +183,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   `createPlaylist`. (b) Delete it. (c) Leave.
 - **Recommendation.** (a). Note #83 changes what sits underneath, so decide after #83 lands.
 - **Question.** None needed before #83; revisit then.
-- **Decision:** _deferred until #83_
+- **Decision:** _done 2026-10-08, option (a) `f584192`: the two sync tags and why they differ live beside the job; `SyncQueueRepository` takes two narrow functions instead of two repositories; 10 new tests for `move`, `createPlaylist` and the two lambdas_
 
 ### S5. Small singletons with hidden dependencies (resolved 2026-10-08)
 
@@ -316,3 +316,18 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   it then passed 10 of 10 alone and 6 of 6 in full-suite runs. It is a pre-existing test (only its constructor argument was changed
   for #85) over a stream-cache listing that is also refreshed from a background coroutine; the root cause was not found. If it shows up
   again, that is where to look.
+- 2026-10-08: **S1, S2, S4 done** (`a075f51`, `78ca6f3`, `f584192`); **S3 read and decided.** Phone: all lists pixel-identical after the padding change; the real
+  "Clear all local data" dialog reads "This permanently deletes 1 favorite kept only on this phone. It exists nowhere else. ..." and was
+  cancelled (nothing cleared: 12,328 songs, 224 downloads and files, 0 pending); the launch still starts the sync job. **Near-miss:** that
+  dialog's buttons sit lower than the shorter dialogs' (X at y852, not 762), so my first cancel tap missed and opened Quality Settings behind
+  the still-open dialog; I screenshotted, tapped the X, and verified the data. Now noted in the phone-testing memory.
+  **S3 findings from the SDK source (`LightActivity.kt`, `LightScreen.kt`):** only the top back-stack entry's `Content()` is composed
+  (`currentScreen.value.screen.Content()`), so a pushed screen's `Content()` leaves composition (remembered state and
+  `rememberCoroutineScope` go) while its `LightScreen` and ViewModel stay in the back stack until it is popped (`goBack` clears that
+  screen's `viewModelStore`); this is exactly why flags live on the ViewModel. `willShow`/`onScreenShow` fire in `goBack` BEFORE
+  `currentScreen.value = previous`, so a screen that called `goBack()` from `onScreenShow` would re-enter `activity.goBack()` while
+  `currentScreen` still points at the popped menu: it would remove the wrong back-stack entry and then be overwritten by the outer call.
+  So the existing idiom (a ViewModel flag read once in `Content()`, then `LaunchedEffect { goBack() }`) is not a workaround for something
+  fixable at the screen level; it is the safe way. Three screens use it (`PlaylistDetailScreen`, `ServerEditScreen`, `SearchScreen`).
+  **Decision: leave it.** A shared helper would only save about four lines per screen; if a fourth screen needs it, extract a
+  `@Composable` helper then, and keep the rule "never call `goBack()` from `onScreenShow`/`willShow`".
