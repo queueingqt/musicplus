@@ -37,20 +37,32 @@ object VersionCheckRepository {
     private val _newerVersion = MutableStateFlow<NewerVersion?>(null)
     val newerVersion: StateFlow<NewerVersion?> = _newerVersion.asStateFlow()
 
-    suspend fun checkForUpdate(currentVersionName: String) {
-        val release = runCatching {
-            newJsonHttpClient().use { client ->
-                client.get("https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest") {
-                    header("Accept", "application/vnd.github+json")
-                }.body<GithubRelease>()
-            }
-        }.getOrNull() ?: return
+    /** True when GitHub answered (whether or not there is a newer version); false when it could not be asked. */
+    suspend fun checkForUpdate(
+        currentVersionName: String,
+        fetchLatest: suspend () -> GithubRelease = ::fetchLatestRelease,
+    ): Boolean {
+        val release = try {
+            fetchLatest()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return false
+        }
 
         val latestVersionName = release.tag_name.removePrefix("v")
         if (isNewer(latestVersionName, currentVersionName)) {
             _newerVersion.value = NewerVersion(versionName = latestVersionName, releaseUrl = release.html_url)
         }
+        return true
     }
+
+    private suspend fun fetchLatestRelease(): GithubRelease =
+        newJsonHttpClient().use { client ->
+            client.get("https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/releases/latest") {
+                header("Accept", "application/vnd.github+json")
+            }.body<GithubRelease>()
+        }
 
     /** Strict major.minor.patch comparison, matching lighttool.toml's versionName format — not a generic semver parser. */
     private fun isNewer(candidate: String, current: String): Boolean {

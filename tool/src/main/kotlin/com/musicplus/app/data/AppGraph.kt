@@ -205,8 +205,8 @@ object AppGraph {
             val lastCheckedAt = appSettingsRepository.lastVersionCheckAtMs.first()
             val now = System.currentTimeMillis()
             if (lastCheckedAt == null || now - lastCheckedAt > VERSION_CHECK_INTERVAL_MS) {
-                VersionCheckRepository.checkForUpdate(BuildConfig.VERSION_NAME)
-                appSettingsRepository.setLastVersionCheckAtMs(now)
+                // Only a check that got an answer counts: offline at launch must not hold the next one off for a day.
+                if (VersionCheckRepository.checkForUpdate(BuildConfig.VERSION_NAME)) appSettingsRepository.setLastVersionCheckAtMs(now)
             }
         }
         // One-shot per process start, same "give it a fresh shot on reopen" as the
