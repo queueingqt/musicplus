@@ -310,3 +310,9 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   so the graph start-up is a real dependency, not a discarded call. 3 new tests (406 total). Phone: cold start without the splash, all five
   lists drawn at 0.6 s, Settings/Quality pixel-identical, picker and player fine. Left on purpose: `AppGraph.from` as the way to get
   repositories, the data layer's own reads of the globals, `announce`'s hand-set mirrors.
+- 2026-10-08: **Final verification.** From a clean build: 409 tests (the #88 fork added 6 of them to my 403), the server-style unsigned release build
+  passes, `~/github/light-sdk` is clean, nothing pushed. **One flake to know about:** on the first run after deleting the build directory,
+  `StreamCacheTest.aRefreshThatFindsSomethingNewChangesTheRevisionAndOneThatDoesNotLeavesItAlone` failed once ("a copy appeared");
+  it then passed 10 of 10 alone and 6 of 6 in full-suite runs. It is a pre-existing test (only its constructor argument was changed
+  for #85) over a stream-cache listing that is also refreshed from a background coroutine; the root cause was not found. If it shows up
+  again, that is where to look.
