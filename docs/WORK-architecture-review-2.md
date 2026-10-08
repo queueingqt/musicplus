@@ -77,7 +77,7 @@ them early (small, safe, and they shrink the diff of the bigger issues): do the 
 | [x] | D3 | `MediaIntegrity.kt:67` | A capped-quality download is saved as `.mp3`; when the track's suffix is also `mp3` the transcoded file is compared with the original size, mismatches, and is deleted and re-queued. Runs once per install (`VERSION = 1`). | verified | #81 | Test: capped download of an mp3 track passes the check. Also decide: does this need a `VERSION` bump to repair files already wrongly discarded? (They were re-queued, so probably not; check on the phone.) |
 | [x] | D4 | `DownloadRepository.kt:232` | Every `IOException` counts as congestion and halves the FetchGate limit, including `server answered 404` and `cut short` from `streamToFile`. | verified | #81 then #85 | Test: a 404 does not call `onCongestion` |
 | [x] | D5 | `SubsonicClient.kt:205-209`, `CoverArtStore.kt:135-137` | `getBytes` never checks the status or the Subsonic error envelope (Jellyfin's does), and the store caches whatever came back as art, forever. | verified | #91, **or standalone first** (status check in `getBytes`, validate before writing) | Test with a stub that answers 200 + an error body; **also scan the phone's existing cover-art cache for non-image files** and clear any found |
-| [x] | D6 | `VersionCheckRepository.kt:41-47`, `AppGraph.kt:208-214` | A failed check (offline at launch) returns Unit and `setLastVersionCheckAtMs(now)` runs anyway, suppressing the check for 24 h. `runCatching` also swallows `CancellationException`. | from reading | standalone | Test: a failing fetch leaves `lastCheckedAt` untouched; make `checkForUpdate` return success/failure |
+| [x] | D6 (moot) | `VersionCheckRepository.kt:41-47`, `AppGraph.kt:208-214` | A failed check (offline at launch) returns Unit and `setLastVersionCheckAtMs(now)` runs anyway, suppressing the check for 24 h. `runCatching` also swallows `CancellationException`. | from reading | standalone | Test: a failing fetch leaves `lastCheckedAt` untouched; make `checkForUpdate` return success/failure |
 | [x] | D7 | `LocalFirstWrites.kt:139-147,255-290` | A permanently refused write (e.g. delete of an offline-created playlist: `deletePlaylist(<server>:pending:uuid)`) is queued and fails every drain, blocking all later edits for that server. | from reading | #83 | Test: the poison-head scenario with a fake server that throws a refusal; **then check the phone's real queue** (`PendingMutation` table, via adb run-as) for rows already stuck |
 | [x] | D8 | `LazyCollapsibleSection.kt:34-44`, `ArtistDetailScreen.kt:74-77` | `loaded = true` and `_loading = true` are set before `fetch()` with no try/finally, so a throwing fetch leaves "Loading…" forever and the exception escapes `viewModelScope.launch`. Top-songs reads `artist.value?.name` at expand time; if the artist has not emitted it returns empty, and because `loaded` is already true it never retries. | from reading | standalone | Test the section with a throwing fetch; phone: expand Top Songs immediately on opening an artist |
 | [x] | D9 | `ActionsMenuScreen.kt:248-257` | `busy = true` with no try/finally; a throwing `Perform` leaves every row dead until back, and the throw has no handler. A `liveUpdates` emission that replaces the row during the action drops the result (`it === item`). | from reading | #88 | Reproduce with a throwing action on the phone or in the holder's test once it exists |
@@ -185,22 +185,16 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
 - **Question.** None needed before #83; revisit then.
 - **Decision:** _deferred until #83_
 
-### S5. Small singletons with hidden dependencies (Speculative)
+### S5. Small singletons with hidden dependencies (resolved 2026-10-08)
 
-- **What.** `VersionCheckRepository`, `AppLogger`, `TrackAvailability` (and `CrashReporter`, now removed).
-- **Evidence.** `VersionCheckRepository` and `CrashReporter` hold the same `queueingqt/musicplus` constants.
-  `TrackAvailability.init(cache)` is a global that must be called before use. `CrashReporter` reads the log path
-  `logs/app.log` by convention instead of asking `AppLogger` (`CrashReporter.kt:65-68`). `isNewer` is a pure helper with no
-  test. The 24-hour-throttle bug in this area is D6.
-- **Settled 2026-10-08.** `CrashReporter` and its "Report Crashes" toggle were removed (code, the `GITHUB_CRASH_TOKEN`
-  build field, the AppGraph wiring, the Settings row). Local debug logging (`AppLogger`) stays on its stored setting,
-  default on, with no UI to change it. The setting itself (`debugLoggingEnabled`) and its mirror remain, so #89 should
-  decide whether to keep a setting nobody can change. The LICENSE file and the once-per-launch GitHub release check
-  (disclose it in the README) are still open for the Light submission.
-- **Options now.** (a) Move the shared `queueingqt/musicplus` constant out of `VersionCheckRepository`, and give `isNewer`
-  a test. (b) Leave.
-- **Recommendation.** (a), after D6 (the throttle bug in `checkForUpdate`).
-- **Decision:** _CrashReporter removed; the rest open_
+- **What it was.** , , , , and the open Light-submission questions.
+- **Settled.**  and its toggle were removed; debug logging is debug-builds-only (#93); the app **update checker was removed**
+  (it was the last request that was not to the person's own server) together with its Settings row, the Home "Settings *" marker, its
+  screen, its stored setting and its tests, so D6 (its throttle bug) and the shared  constant are moot; the missing
+  **LICENSE** was added (MIT, as Light's SDK, copyright line "lexxrexx", the git author name); the README now says what leaves the device.
+- **Left.**  is still a global that must be called before use (a hidden-dependency smell, tiny, no
+  decision needed).
+- **Decision:** _done_
 
 ## Progress log
 
@@ -306,3 +300,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   artist menu, favorite round trip, download dialog (cancelled), favorites menu and the server menu looked at; no server row tapped. The
   player's download control is already `DownloadRepository.tap` and the artist screen's star is a top-bar button on the shared favorite
   path, so they stay.
+- 2026-10-08: **LICENSE added, update checker removed** `87ee840`. MIT `LICENSE` (copyright holder is the git author name `lexxrexx`: change it if you want your
+  legal name); `VersionCheckRepository`, `VersionAvailableScreen`, the "New Version Available" row, the Home asterisk, `AppLifecycle`'s update
+  policy and `lastVersionCheckAtMs` are deleted (3 tests gone with them). The release dex has no `api.github.com`, `queueingqt` or
+  `releases/latest` string. Phone: Home and Settings are pixel-identical to the earlier screenshots minus the removed row.
