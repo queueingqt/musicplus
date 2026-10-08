@@ -126,3 +126,13 @@ This module is **not** independently buildable — see `SETUP.md` for why (short
 version: the Light SDK isn't published as a Maven artifact yet; a tool is built as
 a module inside a clone of `lightphone/light-sdk`) and the exact steps to build,
 run against the SDK's emulator, and sideload onto a real device.
+
+## License
+
+[MIT](LICENSE). Open source, as Light's tool guidelines require.
+
+## What leaves the device
+
+Music + talks only to the server(s) you add (Subsonic/Navidrome-compatible or Jellyfin), with the login you gave it. It has no analytics, no
+tracking, no advertising, no crash reporting and no update check; the on-device log exists only in debug builds. If you turn on Scrobbling,
+the listens are relayed by your own server to a Last.fm/ListenBrainz account you linked there; this app never talks to those services.

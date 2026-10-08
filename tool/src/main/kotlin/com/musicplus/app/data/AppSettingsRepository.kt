@@ -4,7 +4,6 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -20,7 +19,6 @@ import kotlinx.coroutines.flow.map
 class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     private object Keys {
-        val LAST_VERSION_CHECK_AT_MS = longPreferencesKey("last_version_check_at_ms")
         val MEDIA_INTEGRITY_CHECKED_VERSION = intPreferencesKey("media_integrity_checked_version")
         val JELLYFIN_DEVICE_ID = stringPreferencesKey("jellyfin_device_id")
     }
@@ -45,13 +43,6 @@ class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     val downloadQuality: Flow<Int?> = Settings.downloadQuality.observe(dataStore)
     suspend fun setDownloadQuality(maxBitRateKbps: Int?) = Settings.downloadQuality.set(dataStore, maxBitRateKbps)
-
-    /** Null means never checked — VersionCheckRepository's caller (AppGraph.build) treats that the same as "stale, check now." */
-    val lastVersionCheckAtMs: Flow<Long?> = dataStore.data.map { prefs -> prefs[Keys.LAST_VERSION_CHECK_AT_MS] }
-
-    suspend fun setLastVersionCheckAtMs(value: Long) {
-        dataStore.edit { prefs -> prefs[Keys.LAST_VERSION_CHECK_AT_MS] = value }
-    }
 
     /** Which version of [MediaIntegrity]'s one-time cleanup last ran to completion here; null means never. */
     val mediaIntegrityCheckedVersion: Flow<Int?> = dataStore.data.map { prefs -> prefs[Keys.MEDIA_INTEGRITY_CHECKED_VERSION] }

@@ -22,11 +22,6 @@ class AppLifecycleTest {
     private class Harness(val scope: CoroutineScope) {
         val statuses = MutableSharedFlow<NetworkStatus>(replay = 1)
         var wifi = true
-        var now = 100 * 3_600_000L
-        var lastChecked: Long? = null
-        var checkAnswers = true
-        val checks = mutableListOf<String>()
-        val recorded = mutableListOf<Long>()
         val retries = mutableListOf<String>()
         val reconnects = mutableListOf<String>()
         var integrityChecked: Int? = null
@@ -39,11 +34,6 @@ class AppLifecycleTest {
             networkStatuses = statuses,
             isWifi = { wifi },
             onReconnected = { reconnects += "reconnected" },
-            versionCheck = AppLifecycle.VersionCheckPolicy(
-                lastCheckedAtMs = { lastChecked },
-                recordChecked = { recorded += it },
-                check = { checks += "check"; checkAnswers },
-            ),
             retryFailedDownloads = { retries += "retry" },
             mediaRepair = AppLifecycle.MediaRepairPolicy(
                 checkedVersion = { integrityChecked },
@@ -52,7 +42,6 @@ class AppLifecycleTest {
                 repair = { requeue -> repairs += requeue; repairAnswers },
                 recordChecked = { integrityChecked = it },
             ),
-            clock = { now },
         )
 
         suspend fun until(condition: () -> Boolean) = withTimeout(3_000) { while (!condition()) delay(2) }
@@ -62,39 +51,6 @@ class AppLifecycleTest {
     private fun run(body: suspend Harness.() -> Unit) = runBlocking<Unit> {
         val h = Harness(CoroutineScope(SupervisorJob() + Dispatchers.Default))
         try { h.body() } finally { h.scope.cancel() }
-    }
-
-    @Test
-    fun theUpdateCheckRunsWhenNeverCheckedAndIsRecordedOnlyWhenGitHubAnswered() = run {
-        lastChecked = null
-        lifecycle().start()
-        until { recorded.isNotEmpty() }
-        assertEquals(listOf(now), recorded)
-    }
-
-    @Test
-    fun aCheckThatCouldNotAskGitHubIsNotRecordedSoTheNextLaunchTriesAgain() = run {
-        checkAnswers = false
-        lifecycle().start()
-        until { checks.isNotEmpty() }
-        settle()
-        assertTrue(recorded.isEmpty())
-    }
-
-    @Test
-    fun aCheckMadeLessThanADayAgoIsNotRepeated() = run {
-        lastChecked = now - 3_600_000L
-        lifecycle().start()
-        settle()
-        assertTrue(checks.isEmpty())
-    }
-
-    @Test
-    fun aCheckMoreThanADayOldIsRepeated() = run {
-        lastChecked = now - 25 * 3_600_000L
-        lifecycle().start()
-        until { recorded.isNotEmpty() }
-        assertEquals(1, checks.size)
     }
 
     @Test

@@ -240,11 +240,6 @@ object AppGraph {
                 LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
                 listRefresher.refreshAll()
             },
-            versionCheck = AppLifecycle.VersionCheckPolicy(
-                lastCheckedAtMs = { appSettingsRepository.lastVersionCheckAtMs.first() },
-                recordChecked = appSettingsRepository::setLastVersionCheckAtMs,
-                check = { VersionCheckRepository.checkForUpdate(BuildConfig.VERSION_NAME) },
-            ),
             retryFailedDownloads = downloadRepository::retryFailed,
             mediaRepair = AppLifecycle.MediaRepairPolicy(
                 checkedVersion = { appSettingsRepository.mediaIntegrityCheckedVersion.first() },

@@ -16,10 +16,8 @@ import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.AppScrobblePrefs
 import com.musicplus.app.data.AppSettingsRepository
 import com.musicplus.app.data.LocalDataRepository
-import com.musicplus.app.data.NewerVersion
 import com.musicplus.app.data.ServerScope
 import com.musicplus.app.data.SyncQueueRepository
-import com.musicplus.app.data.VersionCheckRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
@@ -87,8 +85,6 @@ class SettingsScreenViewModel(
     fun clearAllLocalData() {
         viewModelScope.launch { localDataRepository.clearAll() }
     }
-
-    val newerVersion: StateFlow<NewerVersion?> = VersionCheckRepository.newerVersion
 }
 
 class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, SettingsScreenViewModel>(activity) {
@@ -107,7 +103,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
         val scrobblingEnabled by viewModel.scrobblingEnabled.collectAsState()
         val scrobblingError by viewModel.scrobblingError.collectAsState()
         val pendingSyncCount by viewModel.pendingSyncCount.collectAsState()
-        val newerVersion by viewModel.newerVersion.collectAsState()
 
         MusicPlusScaffold(
             screen = this,
@@ -139,22 +134,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                         .lightClickable { navigateTo(::QualitySettingsScreen) }
                         .padding(vertical = 1f.gridUnitsAsDp()),
                 )
-                // Only shown when VersionCheckRepository actually found a
-                // newer GitHub release — mirrors the "*" on Home's Settings
-                // row. Text-only detail screen, not a tappable link: LightOS
-                // tools can't open a browser (see VersionCheckRepository's doc
-                // — confirmed via the SDK's own compile-time blocked-patterns
-                // check and permission allowlist, not assumed).
-                newerVersion?.let { version ->
-                    LightText(
-                        text = "New Version Available",
-                        variant = LightTextVariant.Copy,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .lightClickable { navigateTo({ a -> VersionAvailableScreen(a, version) }) }
-                            .padding(vertical = 1f.gridUnitsAsDp()),
-                    )
-                }
                 // Off by default (see AppSettingsRepository.scrobblingEnabled's
                 // doc) — unlike every other toggle on this screen, this one
                 // sends personal listening history to a linked Last.fm/
@@ -244,7 +223,7 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
 @Composable
 private fun SettingsMenuRow(label: String, onClick: () -> Unit) {
     // Copy, not Heading — same size as every other row on this screen
-    // (Quality Settings, New Version Available, Clear all local data), per
+    // (Quality Settings, Clear all local data), per
     // explicit request; this used to stand out as visually larger/bolder.
     LightText(
         text = label,
