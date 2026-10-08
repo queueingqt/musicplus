@@ -9,13 +9,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
-import java.util.concurrent.TimeUnit
 
 /**
  * Composition root. A single process-lifetime instance, built synchronously the
@@ -50,8 +48,6 @@ object AppGraph {
     /** Bump when the capability probes change, so every server is asked again on the next launch even within one app version. */
     private const val CAPABILITY_PROBE_REVISION = 1
 
-    private val VERSION_CHECK_INTERVAL_MS = TimeUnit.HOURS.toMillis(24)
-
     // Process-lifetime, not tied to any screen's own viewModelScope — needed so
     // the settings mirrors keep being observed no matter which screen is
     // currently on top, including screens that never touch
@@ -64,7 +60,7 @@ object AppGraph {
         }
 
     // Every AppSettingsRepository flow that just needs to keep a process-lifetime
-    // WarmedFlow (AppLogger, AppDisplayPrefs, AppQualityPrefs, ...) in sync follows
+    // WarmedFlow in sync follows
     // this exact shape — collapsed to one helper so build() reads as "mirror these
     // settings" plus the two genuinely special bootstrap steps, not a pile of
     // same-shaped appScope.launch blocks.
@@ -87,11 +83,7 @@ object AppGraph {
         }
         val appSettingsRepository = AppSettingsRepository(lightContext.dataStore)
         val playbackStateRepository = PlaybackStateRepository(lightContext.dataStore)
-        mirrorInto(appSettingsRepository.showAlbumArtwork, AppDisplayPrefs.showAlbumArtwork::set)
-        mirrorInto(appSettingsRepository.downloadedOnly, AppDisplayPrefs.downloadedOnly::set)
-        mirrorInto(appSettingsRepository.streamQualityWifi, AppQualityPrefs.streamQualityWifi::set)
-        mirrorInto(appSettingsRepository.streamQualityCellular, AppQualityPrefs.streamQualityCellular::set)
-        mirrorInto(appSettingsRepository.downloadQuality, AppQualityPrefs.downloadQuality::set)
+        Settings.mirrorAll(lightContext.dataStore, appScope)
         mirrorInto(serverConfigRepository.servers, AppServerPrefs.servers::set)
         mirrorInto(serverConfigRepository.activeServerId, AppServerPrefs.activeServerId::set)
         mirrorInto(serverConfigRepository.enabledServerIds, AppServerPrefs.enabledServerIds::set)
@@ -99,7 +91,6 @@ object AppGraph {
         mirrorInto(serverConfigRepository.servers.map { it.isNotEmpty() }, AppServerPrefs.isConfigured::set)
         val serverSyncStatus = ServerSyncStatus(lightContext.dataStore)
         mirrorInto(serverSyncStatus.lastSynced, AppServerPrefs.lastSyncedAt::set)
-        mirrorInto(appSettingsRepository.scrobblingEnabled, AppScrobblePrefs.scrobblingEnabled::set)
         val apiHolder = ApiHolder(serverConfigRepository)
         // What runs for one server (a refresh, a capability probe) runs under it, so removing the server can stop it: see ServerWork.
         val serverWork = ServerWork()
@@ -196,44 +187,6 @@ object AppGraph {
         mirrorInto(AppAvailability.split(AppLibraryCache.favoriteTracks.value, AppLibraryCache.favoriteTracks.loaded, ListAvailability::songs), AppAvailability.favoriteTracks::set)
         mirrorInto(AppAvailability.split(AppLibraryCache.favoriteAlbums.value, AppLibraryCache.favoriteAlbums.loaded, ListAvailability::albums), AppAvailability.favoriteAlbums::set)
         mirrorInto(AppAvailability.split(AppLibraryCache.favoriteArtists.value, AppLibraryCache.favoriteArtists.loaded, ListAvailability::artists), AppAvailability.favoriteArtists::set)
-        // Checked on every app open, but throttled to once per
-        // VERSION_CHECK_INTERVAL_MS — an unauthenticated GitHub API call is
-        // cheap, but someone opening/closing the app dozens of times a day
-        // shouldn't turn into dozens of requests against the same rate limit
-        // every other GitHub call in this app shares.
-        appScope.launch {
-            val lastCheckedAt = appSettingsRepository.lastVersionCheckAtMs.first()
-            val now = System.currentTimeMillis()
-            if (lastCheckedAt == null || now - lastCheckedAt > VERSION_CHECK_INTERVAL_MS) {
-                // Only a check that got an answer counts: offline at launch must not hold the next one off for a day.
-                if (VersionCheckRepository.checkForUpdate(BuildConfig.VERSION_NAME)) appSettingsRepository.setLastVersionCheckAtMs(now)
-            }
-        }
-        // One-shot per process start, same "give it a fresh shot on reopen" as the
-        // sync queue's reconnect-observer below (which also fires once immediately
-        // on every launch) — a download that gave up after MAX_DOWNLOAD_ATTEMPTS
-        // shouldn't need the user to notice and manually retry it if whatever
-        // broke (server down, network blip) has since cleared on its own.
-        // Only on Wi-Fi: with the request cap gone (see newJsonHttpClient) these
-        // retries now actually finish, and on a phone that is often on cellular a
-        // backlog of failed albums would otherwise be pulled over the data plan
-        // unasked. A tap on "download" still works on any network.
-        appScope.launch {
-            if (fetchGate.isWifi()) downloadRepository.retryFailed()
-        }
-        // Once per install (per MediaIntegrity.VERSION): find songs an earlier
-        // version stored cut short and fetch them again. Waits for a connection
-        // — it has to ask the server for each song's real size — and only counts
-        // as done when every answer came back, so an offline launch tries again
-        // next time.
-        appScope.launch {
-            if ((appSettingsRepository.mediaIntegrityCheckedVersion.first() ?: 0) >= MediaIntegrity.VERSION) return@launch
-            connectivity.observeNetworkStatus().first { it.isConnected }
-            if (apiHolder.get() == null) return@launch
-            val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), streamCache, downloadRepository)
-            val onWifi = fetchGate.isWifi()
-            if (integrity.repair(apiHolder, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
-        }
         val albumArtRepository = AlbumArtRepository(
             apiHolder = apiHolder,
             filesDir = lightContext.filesDir,
@@ -272,51 +225,36 @@ object AppGraph {
         // process start, not just the first ever launch.
         scheduleSyncQueueJob(lightContext)
 
-        // The near-instant path for the common case: the app is already open
-        // when connectivity comes back, so there's no reason to wait out the
-        // periodic floor above. `observeNetworkStatus()` emits once
-        // immediately with the current status too, which is deliberately not
-        // filtered out here — draining on a fresh app launch that's already
-        // online, in case anything was queued from a previous offline
-        // session, is exactly the behavior wanted, not just future
-        // transitions. That "fires immediately if already online" behavior
-        // is also why the 4 library refreshes below live here rather than as
-        // a separate one-shot block: this one collector already covers both
-        // "fresh launch, online" and "was offline at launch, came back
-        // later" without doing it twice. (List pages also refresh themselves
-        // each time they're opened — ListRefresher skips a list that is
-        // already being refreshed, so this and a page opened right after
-        // launch don't double up.)
-        //
-        // Distinct `tag` from the periodic schedule above, even though both
-        // point at the same job — `LightWork.enqueue`'s one-time request uses
-        // `ExistingWorkPolicy.REPLACE` on whatever uniqueness slot it's given,
-        // and the periodic schedule above lives under the plain job-key slot.
-        // Sharing that slot would mean every single reconnect replaces (i.e.
-        // destroys) the periodic backstop with a one-time job, so it'd only
-        // ever come back at the next app launch instead of surviving in the
-        // background the way a periodic schedule is supposed to.
-        appScope.launch {
-            connectivity.observeNetworkStatus()
-                // Not `.map { it.isConnected }` — that collapsed a VPN taking over the route (e.g. Tailscale
-                // connecting) while Wi-Fi was already "connected" into a no-op, since `isConnected` never toggled
-                // false in between. Confirmed live, 2026-09-22: a server unreachable before Tailscale connected
-                // stayed marked unreachable — recovered only via ServerReachability's 30s backstop, minutes later,
-                // never through this near-instant path. `NetworkStatus` as a whole (isConnected/isWifi/isMetered)
-                // changing is itself the "worth rechecking" signal; distinctUntilChanged() still drops true repeats.
-                .distinctUntilChanged()
-                .collect { status ->
-                    if (status.isConnected) {
-                        reachability.recheckNow()
-                        LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
-                        // Each list on its own coroutine, not awaited in
-                        // sequence — refreshAllSongs in particular can be a
-                        // multi-page fetch, and none of these should make the
-                        // others (or the next reconnect event) wait.
-                        listRefresher.refreshAll()
-                    }
-                }
-        }
+        // The near-instant path for the common case (the app is open when connectivity comes back) is AppLifecycle's: on every change to a
+        // connected network it asks this to run. Distinct `tag` from the periodic schedule above, even though both point at the same job:
+        // `LightWork.enqueue`'s one-time request uses `ExistingWorkPolicy.REPLACE` on whatever uniqueness slot it is given, and the periodic
+        // schedule lives under the plain job-key slot. Sharing it would mean every reconnect replaces (destroys) the periodic backstop with a
+        // one-time job. Each list refreshes on its own coroutine, so none makes the others (or the next reconnect) wait; list pages also
+        // refresh when opened and ListRefresher skips a list already being refreshed, so the two do not double up.
+        val lifecycle = AppLifecycle(
+            scope = appScope,
+            networkStatuses = connectivity.observeNetworkStatus(),
+            isWifi = fetchGate::isWifi,
+            onReconnected = {
+                reachability.recheckNow()
+                LightWork.enqueue(lightContext, SyncQueueRepository.JOB_KEY, tag = "${SyncQueueRepository.JOB_KEY}-reconnect")
+                listRefresher.refreshAll()
+            },
+            versionCheck = AppLifecycle.VersionCheckPolicy(
+                lastCheckedAtMs = { appSettingsRepository.lastVersionCheckAtMs.first() },
+                recordChecked = appSettingsRepository::setLastVersionCheckAtMs,
+                check = { VersionCheckRepository.checkForUpdate(BuildConfig.VERSION_NAME) },
+            ),
+            retryFailedDownloads = downloadRepository::retryFailed,
+            mediaRepair = AppLifecycle.MediaRepairPolicy(
+                checkedVersion = { appSettingsRepository.mediaIntegrityCheckedVersion.first() },
+                currentVersion = MediaIntegrity.VERSION,
+                anyServerSetUp = { apiHolder.get() != null },
+                repair = { requeue -> MediaIntegrity(database.downloadDao(), database.trackDao(), streamCache, downloadRepository).repair(apiHolder, requeue) },
+                recordChecked = appSettingsRepository::setMediaIntegrityCheckedVersion,
+            ),
+        )
+        lifecycle.start()
 
         // A server that gains favorites gets the hearts that were kept on the phone in the meantime.
         capabilityRegistry.onStarGained = { serverId ->

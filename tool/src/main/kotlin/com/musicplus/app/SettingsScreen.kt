@@ -10,7 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.AppDisplayPrefs
+import com.musicplus.app.data.Settings
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.AppScrobblePrefs
@@ -58,26 +58,26 @@ class SettingsScreenViewModel(
     val pendingSyncCount: StateFlow<Int> = syncQueueRepository.pendingCount
         .screenState(viewModelScope, 0)
 
-    // AppDisplayPrefs, not appSettingsRepository directly — this
+    // The warm copies in Settings, not appSettingsRepository directly — this
     // screen gets a fresh ViewModel (and a fresh `.stateIn(...)`) every time
     // it's opened, seeded from a hardcoded default before the real DataStore
     // Flow catches up. Same root cause as Server's "No servers yet" flash
     // (see AppServerPrefs's doc) — only visible here for someone who's
     // actually toggled either off, since the seed happens to match the
     // default otherwise, but the same gap.
-    val showAlbumArtwork: StateFlow<Boolean> = AppDisplayPrefs.showAlbumArtwork.value
+    val showAlbumArtwork: StateFlow<Boolean> = Settings.showAlbumArtwork.warm.value
 
     fun toggleShowAlbumArtwork() {
         viewModelScope.launch { appSettingsRepository.setShowAlbumArtwork(!showAlbumArtwork.value) }
     }
 
-    val downloadedOnly: StateFlow<Boolean> = AppDisplayPrefs.downloadedOnly.value
+    val downloadedOnly: StateFlow<Boolean> = Settings.downloadedOnly.warm.value
 
     fun toggleDownloadedOnly() {
         viewModelScope.launch { appSettingsRepository.setDownloadedOnly(!downloadedOnly.value) }
     }
 
-    val scrobblingEnabled: StateFlow<Boolean> = AppScrobblePrefs.scrobblingEnabled.value
+    val scrobblingEnabled: StateFlow<Boolean> = Settings.scrobbling.warm.value
 
     fun toggleScrobbling() {
         viewModelScope.launch { appSettingsRepository.setScrobblingEnabled(!scrobblingEnabled.value) }

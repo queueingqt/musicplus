@@ -37,7 +37,7 @@ class HomeScreenViewModel : LightViewModel<Unit>() {
     // Flow catches up — briefly hid the search icon even with a server
     // already configured. Reported live, 2026-09-18 — same root cause as
     // Settings' "Server" row flashing "No servers yet" (see AppServerPrefs's
-    // own doc), already fixed once before for AppDisplayPrefs/AppQualityPrefs.
+    // own doc), already fixed once before for the settings (see Settings).
     val isConfigured: StateFlow<Boolean> = AppServerPrefs.isConfigured.value
 
     // Drives the "*" marker on the Settings row below — VersionCheckRepository

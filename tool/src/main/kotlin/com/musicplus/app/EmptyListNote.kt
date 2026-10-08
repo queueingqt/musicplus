@@ -10,7 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.musicplus.app.data.AppDisplayPrefs
+import com.musicplus.app.data.Settings
 import com.musicplus.app.data.AppServerPrefs
 import com.musicplus.app.data.ServerProfile
 import com.thelightphone.sdk.ui.LightText
@@ -36,7 +36,7 @@ fun EmptyListNote(what: String, filter: String = "", loaded: Boolean = true) {
     val enabled by AppServerPrefs.enabledServerIds.value.collectAsState()
     val servers by AppServerPrefs.servers.value.collectAsState()
     val synced by AppServerPrefs.lastSyncedAt.value.collectAsState()
-    val downloadedOnly by AppDisplayPrefs.downloadedOnly.value.collectAsState()
+    val downloadedOnly by Settings.downloadedOnly.warm.value.collectAsState()
     LightText(
         text = emptyListText(what, filter, configured, enabled, servers, synced, downloadedOnly),
         variant = LightTextVariant.Fine,

@@ -112,7 +112,7 @@ object AppAvailability {
         AppServerPrefs.servers.value,
         AppServerPrefs.enabledServerIds.value,
         AppServerPrefs.unreachableServerIds.value,
-        AppDisplayPrefs.downloadedOnly.value,
+        Settings.downloadedOnly.warm.value,
     ) { on, servers, enabled, unreachable, downloadedOnly ->
         ListAvailability(on, ServersNow(servers.isNotEmpty(), enabled, unreachable), downloadedOnly)
     }

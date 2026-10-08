@@ -32,7 +32,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.viewModelScope
-import com.musicplus.app.data.AppDisplayPrefs
+import com.musicplus.app.data.Settings
 import com.musicplus.app.data.AppGraph
 import com.musicplus.app.data.AppLibraryCache
 import com.musicplus.app.data.DownloadRepository
@@ -228,7 +228,7 @@ class PlayerScreen(private val sealedActivity: SealedLightActivity) :
         val isFavoritePending by viewModel.isFavoritePending.collectAsState()
         val downloadStatus by viewModel.downloadStatus.collectAsState()
         val sleepTimerState by viewModel.sleepTimerState.collectAsState()
-        val showArtwork by AppDisplayPrefs.showAlbumArtwork.value.collectAsState()
+        val showArtwork by Settings.showAlbumArtwork.warm.value.collectAsState()
         val track = state.currentTrack
         val upcoming = state.upcomingTracks
 

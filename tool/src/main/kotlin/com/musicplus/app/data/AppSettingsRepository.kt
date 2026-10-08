@@ -2,7 +2,6 @@ package com.musicplus.app.data
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -21,104 +20,31 @@ import kotlinx.coroutines.flow.map
 class AppSettingsRepository(private val dataStore: DataStore<Preferences>) {
 
     private object Keys {
-        val SHOW_ALBUM_ARTWORK = booleanPreferencesKey("show_album_artwork")
-        val DOWNLOADED_ONLY = booleanPreferencesKey("downloaded_only")
-        val SCROBBLING_ENABLED = booleanPreferencesKey("scrobbling_enabled")
-        // Int, not a serialized enum — see StreamQuality's doc: this is a
-        // plain kbps value (or absent = original/uncapped), not a closed set
-        // of tiers. A sentinel rather than a second "is this original"
-        // boolean key: DataStore's Preferences has no way to store a real
-        // `null`, and 0 is never a meaningful bitrate to actually request.
-        val STREAM_QUALITY_WIFI = intPreferencesKey("stream_quality_wifi_kbps")
-        val STREAM_QUALITY_CELLULAR = intPreferencesKey("stream_quality_cellular_kbps")
-        val DOWNLOAD_QUALITY = intPreferencesKey("download_quality_kbps")
         val LAST_VERSION_CHECK_AT_MS = longPreferencesKey("last_version_check_at_ms")
         val MEDIA_INTEGRITY_CHECKED_VERSION = intPreferencesKey("media_integrity_checked_version")
         val JELLYFIN_DEVICE_ID = stringPreferencesKey("jellyfin_device_id")
     }
 
-    private companion object {
-        const val ORIGINAL_SENTINEL = 0
-    }
+    // The settings a screen shows are declared once, in [Settings]; these are the same settings as flows and setters.
 
-    private fun Preferences.streamQualityKbps(key: Preferences.Key<Int>, default: Int?): Int? =
-        when (val stored = this[key]) {
-            null -> default
-            ORIGINAL_SENTINEL -> null
-            else -> stored
-        }
+    val showAlbumArtwork: Flow<Boolean> = Settings.showAlbumArtwork.observe(dataStore)
+    suspend fun setShowAlbumArtwork(enabled: Boolean) = Settings.showAlbumArtwork.set(dataStore, enabled)
 
-    /** On by default (issue #9 amendment) — absent key means "not yet set", not "off". */
-    val showAlbumArtwork: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[Keys.SHOW_ALBUM_ARTWORK] ?: true
-    }
+    val downloadedOnly: Flow<Boolean> = Settings.downloadedOnly.observe(dataStore)
+    suspend fun setDownloadedOnly(enabled: Boolean) = Settings.downloadedOnly.set(dataStore, enabled)
 
-    suspend fun setShowAlbumArtwork(enabled: Boolean) {
-        dataStore.edit { prefs -> prefs[Keys.SHOW_ALBUM_ARTWORK] = enabled }
-    }
+    val scrobblingEnabled: Flow<Boolean> = Settings.scrobbling.observe(dataStore)
+    suspend fun setScrobblingEnabled(enabled: Boolean) = Settings.scrobbling.set(dataStore, enabled)
 
-    /**
-     * Off by default: every list shows the whole library. On, every list shows only what the phone holds audio for (see [ListAvailability]),
-     * for being online but not wanting to stream.
-     */
-    val downloadedOnly: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[Keys.DOWNLOADED_ONLY] ?: false
-    }
+    /** `null` means original/uncapped. */
+    val streamQualityWifi: Flow<Int?> = Settings.streamQualityWifi.observe(dataStore)
+    suspend fun setStreamQualityWifi(maxBitRateKbps: Int?) = Settings.streamQualityWifi.set(dataStore, maxBitRateKbps)
 
-    suspend fun setDownloadedOnly(enabled: Boolean) {
-        dataStore.edit { prefs -> prefs[Keys.DOWNLOADED_ONLY] = enabled }
-    }
+    val streamQualityCellular: Flow<Int?> = Settings.streamQualityCellular.observe(dataStore)
+    suspend fun setStreamQualityCellular(maxBitRateKbps: Int?) = Settings.streamQualityCellular.set(dataStore, maxBitRateKbps)
 
-    /**
-     * Off by default — unlike the other toggles here, this one sends personal
-     * listening history to a linked Last.fm/ListenBrainz account (relayed via
-     * Navidrome itself; this app never talks to either service directly), so
-     * it's opt-in rather than opt-out.
-     */
-    val scrobblingEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[Keys.SCROBBLING_ENABLED] ?: false
-    }
-
-    suspend fun setScrobblingEnabled(enabled: Boolean) {
-        dataStore.edit { prefs -> prefs[Keys.SCROBBLING_ENABLED] = enabled }
-    }
-
-    /**
-     * 320kbps by default — matches this app's original (pre-issue-#7-fix)
-     * streaming behavior, before quality became configurable at all: Wi-Fi
-     * is the common case where bandwidth isn't a real constraint. `null`
-     * means original/uncapped.
-     */
-    val streamQualityWifi: Flow<Int?> = dataStore.data.map { it.streamQualityKbps(Keys.STREAM_QUALITY_WIFI, 320) }
-
-    suspend fun setStreamQualityWifi(maxBitRateKbps: Int?) {
-        dataStore.edit { prefs -> prefs[Keys.STREAM_QUALITY_WIFI] = maxBitRateKbps ?: ORIGINAL_SENTINEL }
-    }
-
-    /**
-     * 192kbps by default, deliberately lower than [streamQualityWifi]'s —
-     * cellular data is more often limited/metered than Wi-Fi, so this starts
-     * more conservative rather than assuming the Wi-Fi default is always
-     * right. Change it in Preferences if that tradeoff isn't right for you.
-     */
-    val streamQualityCellular: Flow<Int?> = dataStore.data.map { it.streamQualityKbps(Keys.STREAM_QUALITY_CELLULAR, 192) }
-
-    suspend fun setStreamQualityCellular(maxBitRateKbps: Int?) {
-        dataStore.edit { prefs -> prefs[Keys.STREAM_QUALITY_CELLULAR] = maxBitRateKbps ?: ORIGINAL_SENTINEL }
-    }
-
-    /**
-     * Original (uncapped) by default — tapping "Download" is already an
-     * explicit "I want this available offline" choice, so keeping the source
-     * file's full quality unless told otherwise matches that intent, and
-     * matches DownloadRepository's own behavior from before this setting
-     * existed.
-     */
-    val downloadQuality: Flow<Int?> = dataStore.data.map { it.streamQualityKbps(Keys.DOWNLOAD_QUALITY, null) }
-
-    suspend fun setDownloadQuality(maxBitRateKbps: Int?) {
-        dataStore.edit { prefs -> prefs[Keys.DOWNLOAD_QUALITY] = maxBitRateKbps ?: ORIGINAL_SENTINEL }
-    }
+    val downloadQuality: Flow<Int?> = Settings.downloadQuality.observe(dataStore)
+    suspend fun setDownloadQuality(maxBitRateKbps: Int?) = Settings.downloadQuality.set(dataStore, maxBitRateKbps)
 
     /** Null means never checked — VersionCheckRepository's caller (AppGraph.build) treats that the same as "stale, check now." */
     val lastVersionCheckAtMs: Flow<Long?> = dataStore.data.map { prefs -> prefs[Keys.LAST_VERSION_CHECK_AT_MS] }

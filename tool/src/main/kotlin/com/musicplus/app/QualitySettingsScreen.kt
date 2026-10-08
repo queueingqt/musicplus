@@ -9,7 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewModelScope
 import com.musicplus.app.data.AppGraph
-import com.musicplus.app.data.AppQualityPrefs
+import com.musicplus.app.data.Settings
 import com.musicplus.app.data.AppSettingsRepository
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -46,18 +46,18 @@ class QualitySettingsScreenViewModel(
     private val appSettingsRepository: AppSettingsRepository,
 ) : LightViewModel<Unit>() {
 
-    // AppQualityPrefs, not appSettingsRepository's raw Flow — this screen gets a
+    // The warm copies in Settings, not appSettingsRepository's raw Flow — this screen gets a
     // fresh ViewModel (and would get a fresh .stateIn seed) every time it's
     // navigated to, and the DataStore Flow behind the repository needs a real
     // disk read before it emits the actual value. Reading the raw Flow directly
     // meant every fresh open flashed a wrong default (Original/320/192) before
     // snapping to the real persisted value a frame or two later — reported live
-    // as the settings "glitching" on open. AppQualityPrefs is warmed once at app
+    // as the settings "glitching" on open. Settings warms them once at app
     // start (see AppGraph.build), so by the time this screen mounts it already
-    // reflects the real values — same fix already used for AppDisplayPrefs.
-    val wifiQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityWifi.value
-    val cellularQuality: StateFlow<Int?> = AppQualityPrefs.streamQualityCellular.value
-    val downloadQuality: StateFlow<Int?> = AppQualityPrefs.downloadQuality.value
+    // reflects the real values — same fix already used for the other settings.
+    val wifiQuality: StateFlow<Int?> = Settings.streamQualityWifi.warm.value
+    val cellularQuality: StateFlow<Int?> = Settings.streamQualityCellular.warm.value
+    val downloadQuality: StateFlow<Int?> = Settings.downloadQuality.warm.value
 
     fun setWifiQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityWifi(maxBitRateKbps) }
     fun setCellularQuality(maxBitRateKbps: Int?) = viewModelScope.launch { appSettingsRepository.setStreamQualityCellular(maxBitRateKbps) }
