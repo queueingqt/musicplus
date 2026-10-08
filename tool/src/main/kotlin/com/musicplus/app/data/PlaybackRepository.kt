@@ -158,8 +158,13 @@ class PlaybackRepository(
                 is Recovery.Skip -> skipUnavailable(recovery, s)
                 Recovery.Retry -> {
                     AppLogger.d("PlaybackRepository", "auto-retrying ${track?.id} once after ${err.diagnostic}")
-                    delay(RETRY_DELAY_MS)
-                    if (s.currentIndex in s.queue.indices) playQueue.playAsync(s.queue, s.currentIndex)
+                    // Launched, so the next error is not held up behind the delay; the queue is read again afterwards, so a jump or
+                    // edit made in the meantime is not overwritten by the queue as it was when the error came.
+                    scope.launch {
+                        delay(RETRY_DELAY_MS)
+                        val now = currentSnapshot()
+                        if (ErrorRecovery.retryStillApplies(s, now)) playQueue.playAsync(now.queue, now.currentIndex)
+                    }
                 }
             }
         }

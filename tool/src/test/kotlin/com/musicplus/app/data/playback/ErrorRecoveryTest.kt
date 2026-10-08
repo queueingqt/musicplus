@@ -102,4 +102,15 @@ class ErrorRecoveryTest {
         assertFalse(recovery.indicatesUnreachableServer(PlayerFault(true, "ERROR_CODE_IO_FILE_NOT_FOUND")))
         assertFalse(recovery.indicatesUnreachableServer(PlayerFault(false, "NETWORK_CONNECTION")))
     }
+
+    @Test
+    fun aRetryOnlyAppliesWhileTheListenerIsStillOnTheFailedSong() {
+        val failed = state(listOf("a", "b", "c"), 1)
+        assertTrue(ErrorRecovery.retryStillApplies(failed, state(listOf("a", "b", "c"), 1)), "nothing changed")
+        assertFalse(ErrorRecovery.retryStillApplies(failed, state(listOf("a", "b", "c"), 2)), "jumped to another song")
+        assertFalse(ErrorRecovery.retryStillApplies(failed, state(listOf("a", "x", "c"), 1)), "another song now sits at that index")
+        assertFalse(ErrorRecovery.retryStillApplies(failed, state(listOf("b", "c"), 0)), "queue edited so the song moved")
+        assertFalse(ErrorRecovery.retryStillApplies(failed, PlaybackState()), "queue cleared")
+        assertFalse(ErrorRecovery.retryStillApplies(PlaybackState(), failed), "there was no failed song")
+    }
 }

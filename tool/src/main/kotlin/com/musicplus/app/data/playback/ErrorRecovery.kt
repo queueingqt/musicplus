@@ -83,6 +83,16 @@ class ErrorRecovery {
     }
 
     companion object {
+        /**
+         * Whether a retry decided on [failed] still applies once [RETRY_DELAY_MS] has passed: the same song is still the current
+         * one, in the same place. A jump, a queue edit or a new play in that time means the listener has moved on, and replaying
+         * the queue as it was then would overwrite what they did.
+         */
+        fun retryStillApplies(failed: PlaybackState, now: PlaybackState): Boolean {
+            val id = failed.currentTrack?.id ?: return false
+            return now.currentTrack?.id == id && now.currentIndex == failed.currentIndex
+        }
+
         /** Only an error this early in a track is retried automatically. */
         const val RETRY_MAX_POSITION_MS = 3_000L
 
