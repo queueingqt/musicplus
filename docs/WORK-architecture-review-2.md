@@ -40,7 +40,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 3 | #86 | Advance module (what plays next) | none; relates to #78 | D1 |
 | [x] | 4 | #87 | One "set favorite" behaviour | none | D2 |
 | [x] | 5 | #82 | Server standing module | none | |
-| [ ] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
+| [x] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
 | [ ] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
 | [ ] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
 | [ ] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
@@ -261,3 +261,7 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   new-playlist entry behave; nothing created. **Left for #89:** the screens' own reads of the warmed globals, `announce`'s hand-set
   mirrors. **Unrelated finding:** the Jellyfin test server entry has returned 401 on every refresh since 2026-10-06 (expired login).
   **Phone Only in the write path (the deferred half of #83) is now unblocked.**
+- 2026-10-08: **#84 done** `2da7cb5`. `mirrorCollection` + `MirrorSpec`/`Starred`: the live guard, star keeping and merge are written once;
+  artists/albums/songs/playlists are a spec each; `DownloadRepository.byId()` and `PendingMutationDao.localStars()` replace the repeated
+  join and star rule. 7 new tests (345 total). Phone: a full refresh on the real server unchanged (47/1269/2277/11876, nothing
+  written or removed). Detail refreshes and refreshFavorites left as they are.
