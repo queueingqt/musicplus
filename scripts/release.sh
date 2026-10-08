@@ -70,6 +70,15 @@ export MUSICPLUS_RELEASE_KEYSTORE_PATH="$HOME/.android/keystores/musicplus-relea
 export MUSICPLUS_RELEASE_KEYSTORE_PASSWORD
 MUSICPLUS_RELEASE_KEYSTORE_PASSWORD="$(security find-generic-password -a musicplus-release -s musicplus-release-keystore-password -w)"
 
+# The sync below dirties the light-sdk checkout (our files appear as untracked, its sample
+# files as deleted). Put it back to Light's version when this script ends, however it ends.
+# Not -x: build/ is ignored and holds the APKs still to be uploaded below.
+restore_sdk_checkout() {
+  git -C "$LIGHT_SDK_PATH" checkout -q -- tool
+  git -C "$LIGHT_SDK_PATH" clean -fdq tool
+}
+trap restore_sdk_checkout EXIT
+
 echo "Syncing source and manifest into $LIGHT_SDK_PATH/tool..."
 rsync -a --delete "$REPO_ROOT/tool/src/" "$LIGHT_SDK_PATH/tool/src/"
 # The light-sdk build plugin takes the manifest (id, version, permissions,
@@ -78,6 +87,8 @@ rsync -a --delete "$REPO_ROOT/tool/src/" "$LIGHT_SDK_PATH/tool/src/"
 # release APK up to v0.5.1 carried versionCode 1 / "0.1.0" whatever this
 # repo's toml said.
 cp "$REPO_ROOT/tool/lighttool.toml" "$LIGHT_SDK_PATH/tool/lighttool.toml"
+# The Ktor/lifecycle dependencies live here; the checkout's stock one doesn't have them.
+cp "$REPO_ROOT/tool/build.gradle.kts" "$LIGHT_SDK_PATH/tool/build.gradle.kts"
 
 echo "Building signed release APK..."
 JAVA_HOME="$(/usr/libexec/java_home -v 21)" \
