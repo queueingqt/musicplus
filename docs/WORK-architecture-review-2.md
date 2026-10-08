@@ -43,7 +43,7 @@ changes behaviour) the phone check is done. Record the commit hash.
 | [x] | 6 | #84 | Per-collection mirror | #82 helps (the star rule) | |
 | [x] | 7 | #85 | FetchGate as an instance | #81 first (its first caller) | D4 |
 | [x] | 8 | #91 | One request layer, injectable engine | #83 for the refused/unreachable type | D5 |
-| [ ] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
+| [x] | 9 | #90 | Stores for downloads and lyrics | #81 first (the downloads half follows it) | |
 | [ ] | 10 | #89 | Settings declared once, read model | #82 helps | |
 | [ ] | 11 | #88 | Action-menu state holder | none | D9 |
 | [ ] | 12 | #92 | Split queue-edit rules from PlayQueue | #86 first | |
@@ -274,3 +274,9 @@ the question to settle. Fill in "Decision" when decided, then it becomes a small
   clients and apis are closeable and closed on remove/edit and after one-off login checks. 6 new contract tests running the same
   scenarios on both clients against a local server (359 total). Phone: full refresh unchanged, art renders. **Left:** the two
   exception types are still two (they share `ServerRefusal`), and `isUnreachable()` still has a "Timeout" string fallback.
+- 2026-10-08: **#90 done** `cc150dc`. `KeptFiles` (deleteForServer / clear) implemented by the stream cache, cover art, a new `LyricsStore` and the downloads;
+  `PhoneLeftovers` and `LocalDataRepository` iterate them; directory names are constants; scoped-id SQL is named constants. 3 new tests
+  (362 total). Also fixed two racy assertions in `FetchGateTest` (they had failed 4 of 6 runs; 8 clean after). Phone: lyrics work through
+  the store. **Incident:** while checking, a blind tap on the mini-player landed on a Songs row and replaced the restored queue with
+  "(B)"; I rebuilt it by playing "Human: The Double Album" from its last track, and the saved queue is identical (18 songs, same
+  order, "By Your Grace" current), but its position is 0:11 instead of 0:08.
