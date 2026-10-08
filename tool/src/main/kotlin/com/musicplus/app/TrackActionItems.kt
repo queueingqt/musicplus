@@ -3,9 +3,7 @@ package com.musicplus.app
 import com.musicplus.app.data.DownloadStatus
 import com.musicplus.app.data.PlaybackRepository
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightModalManager
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Builds an "Add ... to queue" row — [label] is e.g. "Add to queue" for a
@@ -58,14 +56,11 @@ fun addToQueueActionItem(
                 playback.addToQueue(toAdd)
                 added
             } else {
-                LightModalManager.show(
-                    ConfirmModal(
-                        title = "Already in queue",
-                        message = alreadyInQueueMessage(toAdd, alreadyQueued),
-                        confirmContentDescription = "Add anyway",
-                        onConfirm = { playback.addToQueueAsync(toAdd) { confirmedAdd.tryEmit(added) } },
-                    ),
-                    duration = 30.seconds,
+                confirm(
+                    title = "Already in queue",
+                    message = alreadyInQueueMessage(toAdd, alreadyQueued),
+                    confirmContentDescription = "Add anyway",
+                    onConfirm = { playback.addToQueueAsync(toAdd) { confirmedAdd.tryEmit(added) } },
                 )
                 ready
             }

@@ -24,7 +24,6 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -35,7 +34,6 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Everything here that outlives a tap runs on [viewModelScope], and reports back through a callback that
@@ -102,19 +100,16 @@ class PlaylistPickerScreen(
      */
     private fun confirmCopy(playlist: Playlist) {
         val server = ServerLabels.nameOf(ServerScope.serverOf(playlist.id)) ?: "its server"
-        LightModalManager.show(
-            ConfirmModal(
-                title = "Add to a Phone Only copy?",
-                message = "${PlaylistHomes.whyCopy(playlist.id, songId)} Adding it makes a Phone Only copy of \"${playlist.name}\". The original stays on $server.",
-                confirmContentDescription = "Add",
-                onConfirm = {
-                    viewModel.addToPhoneCopy(playlist.id) { copyId ->
-                        if (copyId == null) NoteModal.show("Couldn't copy \"${playlist.name}\"")
-                        goBack()
-                    }
-                },
-            ),
-            duration = 30.seconds,
+        confirm(
+            title = "Add to a Phone Only copy?",
+            message = "${PlaylistHomes.whyCopy(playlist.id, songId)} Adding it makes a Phone Only copy of \"${playlist.name}\". The original stays on $server.",
+            confirmContentDescription = "Add",
+            onConfirm = {
+                viewModel.addToPhoneCopy(playlist.id) { copyId ->
+                    if (copyId == null) NoteModal.show("Couldn't copy \"${playlist.name}\"")
+                    goBack()
+                }
+            },
         )
     }
 

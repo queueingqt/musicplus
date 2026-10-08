@@ -5,11 +5,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -21,7 +20,6 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIconConfiguration
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
-import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollBarPosition
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -32,7 +30,6 @@ import com.thelightphone.sdk.ui.lightClickable
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * What happens when an [ActionMenuItem] is tapped.
@@ -127,15 +124,7 @@ fun confirmActionItem(
         icon = icon,
         label = label,
         onSelect = ActionMenuSelection.Perform {
-            LightModalManager.show(
-                ConfirmModal(
-                    title = confirmTitle,
-                    message = confirmMessage,
-                    confirmContentDescription = confirmContentDescription,
-                    onConfirm = onConfirm,
-                ),
-                duration = 30.seconds,
-            )
+            confirm(confirmTitle, confirmMessage, confirmContentDescription, onConfirm)
             item
         },
     )
@@ -211,58 +200,20 @@ class ActionsMenuScreen(
     @Composable
     override fun Content() {
         val scope = rememberCoroutineScope()
-        var visibleItems by remember { mutableStateOf(items) }
+        // All of the menu's state is MenuState's (see its doc and the class doc above): this only draws it and routes taps to it.
+        val state = remember { MenuState(items) }
+        val visibleItems by state.rows.collectAsState()
 
-        // See the class doc comment ("Second implementation note") — guards
-        // goBack() specifically (back button / a Navigate row), not every tap:
-        // a Perform row updates in place and never calls goBack() on its own,
-        // so it's freely re-tappable (any row, once `busy` clears) rather than
-        // single-shot for the screen's whole lifetime.
-        var closing by remember { mutableStateOf(false) }
-        var busy by remember { mutableStateOf(false) }
-
-        // Subscribed once, off the *original* items list — not `visibleItems`,
-        // which mutates — so this survives any number of tap- or live-driven
-        // replacements of the row it's watching. Matched back by `key`, never
-        // `label`: label is exactly what a live update (or a tap) changes.
-        LaunchedEffect(Unit) {
-            items.forEach { original ->
-                val live = original.liveUpdates ?: return@forEach
-                launch {
-                    live.collect { updated ->
-                        visibleItems = visibleItems.map { if (it.key == original.key) updated else it }
-                    }
-                }
-            }
-        }
+        LaunchedEffect(Unit) { state.followLiveUpdates() }
 
         fun close() {
-            if (closing) return
-            closing = true
-            goBack()
+            if (state.beginClose()) goBack()
         }
 
         fun handleSelection(item: ActionMenuItem) {
-            if (closing || busy) return
             when (val selection = item.onSelect) {
-                is ActionMenuSelection.Perform -> scope.launch {
-                    busy = true
-                    val updated = selection.action()
-                    visibleItems = if (updated != null) {
-                        visibleItems.map { if (it === item) updated else it }
-                    } else {
-                        visibleItems.filter { it !== item }
-                    }
-                    busy = false
-                }
-                is ActionMenuSelection.Navigate -> {
-                    // goBack() *before* opening the next screen so it lands directly
-                    // on top of the row's own screen instead of on top of this menu —
-                    // otherwise its own goBack() would only return here, leaving one
-                    // extra screen for the person to dismiss afterward.
-                    close()
-                    selection.open()
-                }
+                is ActionMenuSelection.Perform -> scope.launch { state.perform(item.key, selection) }
+                is ActionMenuSelection.Navigate -> state.navigate(selection, goBack = { goBack() })
             }
         }
 

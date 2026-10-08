@@ -22,7 +22,6 @@ import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
 import com.thelightphone.sdk.ui.LightLazyScrollView
 import com.thelightphone.sdk.ui.LightScrollBarPosition
-import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightTopBar
@@ -31,7 +30,6 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.seconds
 
 class QueueScreenViewModel(private val playback: PlaybackRepository) : LightViewModel<Unit>() {
     val state: StateFlow<PlaybackState> =
@@ -78,14 +76,11 @@ class QueueScreen(private val sealedActivity: SealedLightActivity) :
                     rightButton = LightBarButton.LightIcon(
                         icon = LightIcons.DELETE,
                         onClick = {
-                            LightModalManager.show(
-                                ConfirmModal(
-                                    title = "Clear queue?",
-                                    message = "Removes every other track. The current song keeps playing.",
-                                    confirmContentDescription = "Clear queue",
-                                    onConfirm = { viewModel.clearQueue() },
-                                ),
-                                duration = 30.seconds,
+                            confirm(
+                                title = "Clear queue?",
+                                message = "Removes every other track. The current song keeps playing.",
+                                confirmContentDescription = "Clear queue",
+                                onConfirm = { viewModel.clearQueue() },
                             )
                         },
                         contentDescription = "Clear queue",

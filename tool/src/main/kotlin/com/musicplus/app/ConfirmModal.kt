@@ -18,7 +18,9 @@ import com.thelightphone.sdk.ui.LightTextVariant
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.gridUnitsAsDp
 import com.thelightphone.sdk.ui.lightClickable
+import com.thelightphone.sdk.ui.LightModalManager
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Full-screen "are you sure?" confirmation for a destructive action, shown via
@@ -88,4 +90,12 @@ class ConfirmModal(
             }
         }
     }
+}
+
+/** Asks "are you sure?" the one way this app does: a [ConfirmModal] that stays up for 30 seconds and counts a timeout as no. */
+fun confirm(title: String, message: String, confirmContentDescription: String = "Confirm", onConfirm: () -> Unit) {
+    LightModalManager.show(
+        ConfirmModal(title = title, message = message, confirmContentDescription = confirmContentDescription, onConfirm = onConfirm),
+        duration = 30.seconds,
+    )
 }

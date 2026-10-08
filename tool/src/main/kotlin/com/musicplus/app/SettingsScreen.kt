@@ -26,7 +26,6 @@ import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.ui.LightBarButton
 import com.thelightphone.sdk.ui.LightIcon
 import com.thelightphone.sdk.ui.LightIcons
-import com.thelightphone.sdk.ui.LightModalManager
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -37,7 +36,6 @@ import com.thelightphone.sdk.ui.lightClickable
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Top-level Settings — "Server" is the one thing still split into its own
@@ -189,8 +187,7 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                     modifier = Modifier
                         .fillMaxWidth()
                         .lightClickable {
-                            LightModalManager.show(
-                                ConfirmModal(
+                            confirm(
                                     title = "Clear all local data?",
                                     message = buildString {
                                         // Phone Only playlists and the hearts kept on the phone for a server without
@@ -224,8 +221,6 @@ class SettingsScreen(activity: SealedLightActivity) : LightScreen<Unit, Settings
                                     },
                                     confirmContentDescription = "Clear all local data",
                                     onConfirm = { viewModel.clearAllLocalData() },
-                                ),
-                                duration = 30.seconds,
                             )
                         }
                         .padding(top = 2f.gridUnitsAsDp()),
