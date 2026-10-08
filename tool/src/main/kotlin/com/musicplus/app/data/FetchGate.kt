@@ -1,6 +1,5 @@
 package com.musicplus.app.data
 
-import com.thelightphone.sdk.LightConnectivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -46,14 +45,25 @@ import java.util.concurrent.atomic.AtomicLong
  * new download is started while one is. Fetches that make the server transcode
  * ([Lease.transcoding]) are also capped at [TRANSCODE_CAP] so a NAS isn't asked to
  * run dozens of encoders.
+ *
+ * **Failures.** A transfer that fails the way an overloaded link does (a timeout, a dropped connection: see [looksLikeCongestion]) is
+ * recognised here, for both lanes, so callers just let the exception pass through [run]; a server that answered and said no is not
+ * a sign of congestion.
+ *
+ * An instance, not a global: it asks [isWifiNow] about the connection and [nowMs] for the time, so a test drives it with both.
  */
-object FetchGate {
+class FetchGate(
+    /** Whether the phone is on Wi-Fi right now. */
+    private val isWifiNow: () -> Boolean,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+) {
     /** Lower ordinal = more important. Compared by ordinal. */
     enum class Priority { NOW_PLAYING, UP_NEXT, QUEUE, DOWNLOAD, RETRY }
 
     enum class Lane { PLAYBACK, BULK }
 
-    class Lease internal constructor(
+    inner class Lease internal constructor(
         internal val lane: Lane,
         internal val rank: () -> Priority,
         internal val transcoding: Boolean,
@@ -65,11 +75,11 @@ object FetchGate {
 
         /** Call between chunks: pauses while a more important transfer is running. */
         suspend fun checkpoint() {
-            val now = System.currentTimeMillis()
+            val now = nowMs()
             if (now - lastCheckMs < CHECK_EVERY_MS) return
             lastCheckMs = now
             pauseIfOutranked(this)
-            lastCheckMs = System.currentTimeMillis()
+            lastCheckMs = nowMs()
         }
 
         /** Call with the size of each chunk received — feeds the throughput measurement. */
@@ -89,22 +99,6 @@ object FetchGate {
         val ready = CompletableDeferred<Lease>()
     }
 
-    private const val TAG = "FetchGate"
-    private const val WIFI_START = 6
-    private const val WIFI_MAX = 40
-    private const val WIFI_STEP = 4
-    private const val OTHER_START = 2
-    private const val OTHER_MAX = 6
-    private const val OTHER_STEP = 1
-    private const val TRANSCODE_CAP = 4
-    private const val WINDOW_MS = 3_000L
-    private const val GAIN = 1.10
-    private const val PROBE_WINDOWS = 2
-    private const val HOLD_WINDOWS = 5
-    private const val MAX_PAUSE_MS = 40_000L
-    private const val PAUSE_POLL_MS = 200L
-    private const val CHECK_EVERY_MS = 250L
-
     private val lock = Any()
     private val waiting = ArrayList<Waiter>()
     private val running = ArrayList<Lease>()
@@ -123,13 +117,15 @@ object FetchGate {
     private var probeStartedAtWindow = 0
     private var holdUntilWindow = 0
 
-    @Volatile private var connectivity: LightConnectivity? = null
     private var controller: Job? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    /** Lets the gate see the connection type. Safe to call more than once. */
-    fun attach(connectivity: LightConnectivity) {
-        this.connectivity = connectivity
+    /** How many bulk fetches may run at once right now (it adapts to the connection and backs off on congestion). */
+    val bulkLimit: Int get() = synchronized(lock) { limit }
+
+    /** Whether the phone is on Wi-Fi right now: the one answer for everything that depends on the connection (how many fetches at once, how far ahead to fetch, whether a retry may use the link unasked). */
+    fun isWifi(): Boolean = detectWifi()
+
+    init {
         synchronized(lock) { applyConnectionLocked(detectWifi()) }
     }
 
@@ -188,12 +184,17 @@ object FetchGate {
     }
 
     private suspend fun <T> runWith(lease: Lease, block: suspend (Lease) -> T): T {
-        lease.startedAtMs = System.currentTimeMillis()
+        lease.startedAtMs = nowMs()
         AppLogger.d(TAG, "start ${lease.rank()} ${lease.key} (${snapshotText()})")
         try {
             return block(lease)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (looksLikeCongestion(e)) onCongestion()
+            throw e
         } finally {
-            val seconds = (System.currentTimeMillis() - lease.startedAtMs) / 1000.0
+            val seconds = (nowMs() - lease.startedAtMs) / 1000.0
             synchronized(lock) {
                 running.remove(lease)
                 dispatchLocked()
@@ -266,7 +267,7 @@ object FetchGate {
 
     private fun detectWifi(): Boolean =
         try {
-            connectivity?.currentStatus?.isWifi == true
+            isWifiNow()
         } catch (e: Exception) {
             false
         }
@@ -352,4 +353,27 @@ object FetchGate {
         synchronized(lock) {
             "running ${running.size} (${running.count { it.lane == Lane.PLAYBACK }} playback), waiting ${waiting.size}, limit $limit"
         }
+
+    companion object {
+        private const val TAG = "FetchGate"
+        private const val WIFI_START = 6
+        private const val WIFI_MAX = 40
+        private const val WIFI_STEP = 4
+        private const val OTHER_START = 2
+        private const val OTHER_MAX = 6
+        private const val OTHER_STEP = 1
+        private const val TRANSCODE_CAP = 4
+        private const val WINDOW_MS = 3_000L
+        private const val GAIN = 1.10
+        private const val PROBE_WINDOWS = 2
+        private const val HOLD_WINDOWS = 5
+        private const val MAX_PAUSE_MS = 40_000L
+        private const val PAUSE_POLL_MS = 200L
+        private const val CHECK_EVERY_MS = 250L
+
+
+        /** Whether a failed transfer says the link is overloaded (a timeout, a dropped connection) rather than that the server said no. */
+        fun looksLikeCongestion(e: Exception): Boolean =
+            e !is ServerRefusedException && (e is java.io.IOException || e.toString().contains("Timeout", ignoreCase = true))
+    }
 }

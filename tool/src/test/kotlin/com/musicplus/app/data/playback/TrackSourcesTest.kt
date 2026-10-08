@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
 
 class TrackSourcesTest {
     private val root: File = Files.createTempDirectory("tracksources-test").toFile()
-    private val cache = StreamCache(File(root, "streamcache"), listingTtlMs = 0)
+    private val cache = StreamCache(File(root, "streamcache"), FetchGate({ true }), listingTtlMs = 0)
 
     /** The server, as far as a song's source is concerned: it hands out URLs and writes files, and remembers being asked. */
     private class FakeStreams(private val scheme: String = "https") : SongStreams {

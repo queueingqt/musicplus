@@ -35,14 +35,12 @@ class AppDownloadSources(
  * [DownloadGate] through [FetchGate]: the playing and up-next songs first (their rank comes from the player when one exists), then
  * downloads, then retries.
  */
-object FetchGateDownloadGate : DownloadGate {
+class FetchGateDownloadGate(private val gate: FetchGate) : DownloadGate {
     override suspend fun run(songId: String, retried: Boolean, transcoding: Boolean, block: suspend (FetchGate.Lease?) -> Unit): Boolean {
         val rank: () -> FetchGate.Priority = {
             PlaybackRepositoryHolder.peek()?.priorityForSong(songId)
                 ?: if (retried) FetchGate.Priority.RETRY else FetchGate.Priority.DOWNLOAD
         }
-        return FetchGate.run(FetchGate.Lane.BULK, songId, rank, transcoding) { lease -> block(lease) } != null
+        return gate.run(FetchGate.Lane.BULK, songId, rank, transcoding) { lease -> block(lease) } != null
     }
-
-    override fun onCongestion() = FetchGate.onCongestion()
 }

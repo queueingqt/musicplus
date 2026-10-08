@@ -43,7 +43,6 @@ class DownloadRepositoryTest {
 
     private class FakeGate : DownloadGate {
         var slot = true
-        var congestion = 0
         val retriedFlags = mutableListOf<Boolean>()
         override suspend fun run(songId: String, retried: Boolean, transcoding: Boolean, block: suspend (FetchGate.Lease?) -> Unit): Boolean {
             retriedFlags += retried
@@ -51,7 +50,6 @@ class DownloadRepositoryTest {
             block(null)
             return true
         }
-        override fun onCongestion() { congestion++ }
     }
 
     private class FakeApi : StubMusicApi("srv") {
@@ -144,17 +142,6 @@ class DownloadRepositoryTest {
         assertEquals(DownloadStatus.FAILED, dao.getBySongId(song)!!.status)
         assertEquals(DownloadRepository.MAX_DOWNLOAD_ATTEMPTS, dao.getBySongId(song)!!.attemptCount)
         assertEquals(listOf(false, true, true), gate.retriedFlags, "a song that failed before is ranked as a retry")
-    }
-
-    @Test
-    fun aDroppedConnectionBacksTheGateOffButAServerSayingNoDoesNot() = runBlocking {
-        api.failWith = IOException("cut short: got 5 of 100 bytes")
-        downloads.run(song)
-        assertEquals(1, gate.congestion)
-
-        api.failWith = ServerRefusedException("server answered 404 Not Found")
-        downloads.run(song)
-        assertEquals(1, gate.congestion, "a 404 says nothing about the link")
     }
 
     @Test

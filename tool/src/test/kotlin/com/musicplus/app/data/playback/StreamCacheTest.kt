@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
 
 class StreamCacheTest {
     private val dir: File = Files.createTempDirectory("streamcache-test").toFile().resolve("streamcache")
-    private val cache = StreamCache(dir, listingTtlMs = 0)
+    private val cache = StreamCache(dir, FetchGate({ true }), listingTtlMs = 0)
     private val rank: () -> FetchGate.Priority = { FetchGate.Priority.NOW_PLAYING }
 
     @AfterTest
@@ -150,7 +150,7 @@ class StreamCacheTest {
     fun copiesAlreadyOnDiskAreListedWithoutAnyoneAskingFirst() = runBlocking<Unit> {
         val existing = File(dir.parentFile, "existing").apply { mkdirs() }
         File(existing, "srv_abc-192.mp3").writeBytes(ByteArray(4))
-        val fresh = StreamCache(existing, listingTtlMs = 60_000)
+        val fresh = StreamCache(existing, FetchGate({ true }), listingTtlMs = 60_000)
         withTimeout(3_000) { while (fresh.revision.value == 0) delay(5) }
         assertEquals("srv_abc-192.mp3", fresh.anyCopy("srv:abc")?.name, "the very first question already sees it")
     }

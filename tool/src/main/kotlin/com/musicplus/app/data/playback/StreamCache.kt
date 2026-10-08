@@ -33,6 +33,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class StreamCache(
     private val dir: File,
+    /** Every fetch goes through it, so fetches are ordered and paced (and a failure that looks like congestion backs the whole gate off). */
+    private val gate: FetchGate,
     private val listingTtlMs: Long = LISTING_TTL_MS,
     private val ioScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
@@ -137,7 +139,7 @@ class StreamCache(
             AppLogger.d(TAG, "cachedStreamFile($songId): not cached, downloading")
             val part = File(dir, "${cached.name}.part")
             try {
-                val fetched = FetchGate.run(FetchGate.Lane.PLAYBACK, songId, rank, transcoding = maxBitRateKbps != null) { lease -> download(part, lease) }
+                val fetched = gate.run(FetchGate.Lane.PLAYBACK, songId, rank, transcoding = maxBitRateKbps != null) { lease -> download(part, lease) }
                 if (fetched == null) throw IOException("the connection is busy with other transfers")
                 if (!part.renameTo(cached)) throw IOException("could not move ${cached.name}.part into place")
                 // Told to the listing directly rather than re-read, since this may run on the main thread; a refresh that raced it and

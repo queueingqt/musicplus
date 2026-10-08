@@ -210,6 +210,6 @@ internal object IdScopeMigration {
 
     /** Streams cached under the old names would never be found again; it is only a cache. */
     private fun clearStreamCache(filesDir: File) {
-        StreamCache(File(filesDir, "streamcache")).clear()
+        File(filesDir, "streamcache").deleteRecursively()
     }
 }

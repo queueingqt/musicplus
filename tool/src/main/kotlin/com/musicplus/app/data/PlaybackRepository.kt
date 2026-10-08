@@ -18,7 +18,6 @@ import com.musicplus.app.data.playback.TrackEnd
 import com.musicplus.app.data.playback.TrackEndAction
 import com.musicplus.app.data.playback.TrackSources
 import com.musicplus.app.data.playback.loadFailureReason
-import com.thelightphone.sdk.LightConnectivity
 import com.thelightphone.sdk.SealedLightActivity
 import com.thelightphone.sdk.SealedLightContext
 import com.thelightphone.sdk.audio.LightAudio
@@ -53,7 +52,8 @@ class PlaybackRepository(
     queueDao: QueueDao,
     playbackStateRepository: PlaybackStateRepository,
     private val appSettingsRepository: AppSettingsRepository,
-    private val connectivity: LightConnectivity,
+    /** The connection type, for fetching and for the quality to ask for, and the one that orders and paces every fetch. */
+    private val gate: FetchGate,
 ) {
     // Process-lifetime, same reasoning as AppGraph's own appScope: this repository is itself a process-lifetime singleton (see
     // PlaybackRepositoryHolder), so nothing here needs a narrower scope tied to any particular screen's composition.
@@ -82,7 +82,7 @@ class PlaybackRepository(
         serverUsable = { TrackAvailability.serverUsable(it) },
         priorityOf = { playQueue.priorityForSong(it) },
         streamKbps = { currentStreamMaxBitRateKbps() },
-        onWifi = { connectivity.currentStatus.isWifi },
+        onWifi = { gate.isWifi() },
     )
 
     // The queue and the player under one owner (#62).
@@ -213,13 +213,13 @@ class PlaybackRepository(
     /**
      * Picks Wi-Fi or cellular quality based on the connection actually in use right now: read fresh on every call (not cached or
      * observed), same reasoning as reading [apiHolder] fresh each time, since it only needs the answer at the exact moment a song is
-     * about to be fetched. [LightConnectivity.currentStatus] requires ACCESS_NETWORK_STATE, already granted.
+     * about to be fetched. [FetchGate.isWifi] reads the connection status, which needs ACCESS_NETWORK_STATE, already granted.
      *
      * Songs are asked for at this cap rather than always as the original file (issue #7: a huge lossless source turned "just the
      * starting song" back into a multi-second block).
      */
     private suspend fun currentStreamMaxBitRateKbps(): Int? =
-        if (connectivity.currentStatus.isWifi) {
+        if (gate.isWifi()) {
             appSettingsRepository.streamQualityWifi.first()
         } else {
             appSettingsRepository.streamQualityCellular.first()
@@ -251,7 +251,7 @@ object PlaybackRepositoryHolder {
                 queueDao = graph.database.queueDao(),
                 playbackStateRepository = graph.playbackStateRepository,
                 appSettingsRepository = graph.appSettingsRepository,
-                connectivity = graph.connectivity,
+                gate = graph.fetchGate,
             ).also { instance = it }
         }
 

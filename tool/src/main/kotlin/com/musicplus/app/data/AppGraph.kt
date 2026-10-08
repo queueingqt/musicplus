@@ -42,6 +42,7 @@ object AppGraph {
         val serverLogin: ServerLogin,
         val connectivity: LightConnectivity,
         val streamCache: StreamCache,
+        val fetchGate: FetchGate,
     )
 
     @Volatile private var instance: Graph? = null
@@ -122,10 +123,10 @@ object AppGraph {
         val capabilityRegistry = CapabilityRegistry(lightContext.dataStore, appScope, apiHolder, connectivity, build = "${BuildConfig.VERSION_NAME}#$CAPABILITY_PROBE_REVISION", work = serverWork)
         apiHolder.learner = capabilityRegistry
         mirrorInto(capabilityRegistry.all, AppServerPrefs.capabilities::set)
-        val streamCache = StreamCache(File(lightContext.filesDir, "streamcache"))
+        // Chooses how many transfers run at once (few on cellular, many on Wi-Fi) and in what order, and is where "are we on Wi-Fi" is answered.
+        val fetchGate = FetchGate(isWifiNow = { connectivity.currentStatus.isWifi })
+        val streamCache = StreamCache(File(lightContext.filesDir, "streamcache"), fetchGate)
         TrackAvailability.init(streamCache)
-        // Lets FetchGate choose how many transfers to run at once: few on cellular, many on Wi-Fi.
-        FetchGate.attach(connectivity)
         // Built before libraryRepository/playlistRepository — both now take
         // this as a dependency (see LibraryRepository's own class doc for
         // why) to join live download status into every Track they hand out.
@@ -133,7 +134,7 @@ object AppGraph {
             downloadDao = database.downloadDao(),
             scheduler = LightWorkDownloadScheduler(lightContext),
             sources = AppDownloadSources(database.trackDao(), apiHolder, appSettingsRepository),
-            gate = FetchGateDownloadGate,
+            gate = FetchGateDownloadGate(fetchGate),
             downloadsDir = File(lightContext.filesDir, DownloadRepository.DIRECTORY),
         )
         // One refresh runner for the library and the playlists, so a server that is removed is stopped in both at once.
@@ -222,7 +223,7 @@ object AppGraph {
         // backlog of failed albums would otherwise be pulled over the data plan
         // unasked. A tap on "download" still works on any network.
         appScope.launch {
-            if (connectivity.currentStatus.isWifi) downloadRepository.retryFailed()
+            if (fetchGate.isWifi()) downloadRepository.retryFailed()
         }
         // Once per install (per MediaIntegrity.VERSION): find songs an earlier
         // version stored cut short and fetch them again. Waits for a connection
@@ -234,7 +235,7 @@ object AppGraph {
             connectivity.observeNetworkStatus().first { it.isConnected }
             if (apiHolder.get() == null) return@launch
             val integrity = MediaIntegrity(database.downloadDao(), database.trackDao(), streamCache, downloadRepository)
-            val onWifi = connectivity.currentStatus.isWifi
+            val onWifi = fetchGate.isWifi()
             if (integrity.repair(apiHolder, requeue = onWifi)) appSettingsRepository.setMediaIntegrityCheckedVersion(MediaIntegrity.VERSION)
         }
         val albumArtRepository = AlbumArtRepository(
@@ -382,6 +383,7 @@ object AppGraph {
             serverLogin = serverLogin,
             connectivity = connectivity,
             streamCache = streamCache,
+            fetchGate = fetchGate,
         )
     }
 }

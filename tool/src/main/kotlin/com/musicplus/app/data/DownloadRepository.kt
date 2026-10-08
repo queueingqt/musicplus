@@ -29,9 +29,6 @@ interface DownloadSources {
 interface DownloadGate {
     /** Runs [block] when a slot comes free; false if none did in time (a long backlog). [retried] is true for a song that already failed once. */
     suspend fun run(songId: String, retried: Boolean, transcoding: Boolean, block: suspend (FetchGate.Lease?) -> Unit): Boolean
-
-    /** A transfer failed in a way that suggests the link is overloaded. */
-    fun onCongestion()
 }
 
 /** How one run of the download job ended, in the job's own terms. */
@@ -82,9 +79,6 @@ class DownloadRepository(
         fun comparableWithOriginal(file: File, suffix: String?): Boolean =
             suffix != null && !suffix.equals("mp3", ignoreCase = true) && file.extension.equals(suffix, ignoreCase = true)
 
-        /** Whether a failed transfer says the link is overloaded (a timeout, a dropped connection) rather than that the server said no. */
-        fun looksLikeCongestion(e: Exception): Boolean =
-            e !is ServerRefusedException && (e is IOException || e.toString().contains("Timeout", ignoreCase = true))
     }
 
     fun observeAll(): Flow<List<DownloadEntity>> = downloadDao.observeAll()
@@ -155,7 +149,6 @@ class DownloadRepository(
             destination.delete()
             throw e
         } catch (e: Exception) {
-            if (looksLikeCongestion(e)) gate.onCongestion()
             AppLogger.e(TAG, "download failed for songId=$songId", e)
             destination.delete()
 
