@@ -81,7 +81,8 @@ class DownloadRepositoryTest {
     private val api = FakeApi()
     private val sources = FakeSources(api)
     private val song = "srv:song1"
-    private val downloads = DownloadRepository(dao, scheduler, sources, gate, dir) { now }
+    private var playsMs: Long? = null
+    private val downloads = DownloadRepository(dao, scheduler, sources, gate, dir, audioLength = { playsMs }) { now }
 
     @AfterTest
     fun cleanUp() {
@@ -117,6 +118,34 @@ class DownloadRepositoryTest {
         assertEquals(listOf("stream@128"), api.calls)
         assertEquals("transcoded", expectedFile("mp3").readText())
         assertFalse(expectedFile("flac").exists())
+    }
+
+    @Test
+    fun aTranscodeThatPlaysFarShorterThanTheSongIsDiscardedAndRetried() = runBlocking {
+        sources.cap = 128
+        sources.track = DownloadTrack("flac", durationSec = 240)
+        playsMs = 20_000
+        assertEquals(DownloadOutcome.Retry, downloads.run(song))
+        assertFalse(expectedFile("mp3").exists(), "the cut-off file is removed")
+        assertEquals(DownloadStatus.QUEUED, dao.getBySongId(song)!!.status)
+        assertEquals(1, dao.getBySongId(song)!!.attemptCount)
+    }
+
+    @Test
+    fun aTranscodeOfTheRightLengthOrOneWhoseLengthCannotBeReadIsKept() = runBlocking {
+        sources.cap = 128
+        sources.track = DownloadTrack("flac", durationSec = 240)
+        playsMs = 240_000
+        assertEquals(DownloadOutcome.Done, downloads.run(song))
+        playsMs = null
+        assertEquals(DownloadOutcome.Done, downloads.run(song))
+    }
+
+    @Test
+    fun anOriginalFormatDownloadIsNotMeasuredBecauseItsTransferIsAlreadyCheckedBySize() = runBlocking {
+        sources.track = DownloadTrack("flac", durationSec = 240)
+        playsMs = 1_000
+        assertEquals(DownloadOutcome.Done, downloads.run(song))
     }
 
     @Test

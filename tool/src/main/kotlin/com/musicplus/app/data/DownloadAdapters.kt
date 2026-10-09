@@ -26,7 +26,7 @@ class AppDownloadSources(
     private val apiHolder: ApiLookup,
     private val appSettingsRepository: AppSettingsRepository,
 ) : DownloadSources {
-    override suspend fun track(songId: String): DownloadTrack? = trackDao.getById(songId)?.let { DownloadTrack(it.suffix) }
+    override suspend fun track(songId: String): DownloadTrack? = trackDao.getById(songId)?.let { DownloadTrack(it.suffix, it.durationSec) }
     override suspend fun api(songId: String): MusicApi? = apiHolder.forId(songId)
     override suspend fun maxBitRateKbps(): Int? = appSettingsRepository.downloadQuality.first()
 }

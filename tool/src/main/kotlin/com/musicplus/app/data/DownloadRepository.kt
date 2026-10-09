@@ -2,13 +2,15 @@ package com.musicplus.app.data
 
 import com.musicplus.app.Track
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import java.io.File
 import java.io.IOException
 
 /** What the download work needs to know about a song before fetching it. */
-data class DownloadTrack(val suffix: String?)
+data class DownloadTrack(val suffix: String?, val durationSec: Int? = null)
 
 /** How a download job is armed and stopped (WorkManager through [com.thelightphone.sdk.LightWork] on the phone, a recorder in a test). */
 interface DownloadScheduler {
@@ -57,6 +59,7 @@ class DownloadRepository(
     private val sources: DownloadSources,
     private val gate: DownloadGate,
     private val downloadsDir: File,
+    private val audioLength: AudioLength = AudioLength.device,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : KeptFiles {
     companion object {
@@ -142,6 +145,8 @@ class DownloadRepository(
             }
             // No slot came free in time: try again later, and do not count it as a failed attempt.
             if (!fetched) return DownloadOutcome.Retry
+            // A transcode announces no length, so a body the server ended early passes the transfer's own checks; its playing time does not.
+            if (maxBitRateKbps != null) withContext(Dispatchers.IO) { CutShort.check(destination, track.durationSec, audioLength) }
             downloadDao.upsert(row(songId, DownloadStatus.COMPLETE, path = destination.absolutePath, completed = true))
             DownloadOutcome.Done
         } catch (e: CancellationException) {

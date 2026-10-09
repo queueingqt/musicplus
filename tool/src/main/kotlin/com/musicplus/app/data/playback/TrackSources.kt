@@ -132,7 +132,7 @@ class TrackSources(
                     AppLogger.d(TAG, "resolve($id): not cached, streaming it")
                     SongSource.Streamed(url, transcoded = kbps != null)
                 } else {
-                    SongSource.OnPhone(cache.fetch(id, kbps, rank) { part, lease -> api.streamToFile(id, part, kbps, lease) })
+                    SongSource.OnPhone(cache.fetch(id, kbps, rank, track.durationSec) { part, lease -> api.streamToFile(id, part, kbps, lease) })
                 }
             }
         }

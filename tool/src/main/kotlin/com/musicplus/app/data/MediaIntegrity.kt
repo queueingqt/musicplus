@@ -23,21 +23,22 @@ import java.io.File
  *   queue; on cellular it is simply no longer marked downloaded, and the person
  *   downloads it again when they choose — re-fetching a few hundred MB of FLAC
  *   unasked over a data plan is not this cleanup's call. Downloads made at a
- *   capped quality are transcodes of a different length, so there is nothing to
- *   compare and they are left alone.
- * - **Play-from-server cache:** the same cut hit those copies, but they cannot be told from a finished transcode by length (a
- *   transcode has no length of its own), and the cause is gone, so nothing is guessed about them; only the leftover `.part`
- *   files of fetches that were killed are swept.
+ *   capped quality are transcodes of a different size, so those are checked by
+ *   playing time instead (see [CutShort]); a clearly short one goes the same way.
+ * - **Play-from-server cache:** the same cut hit those copies, but they cannot be told from a finished transcode by size (a
+ *   transcode has none), and they are not tied back to a song here, so nothing is guessed about copies already made; new ones are
+ *   checked by playing time as they are written. Only the leftover `.part` files of fetches that were killed are swept.
  */
 class MediaIntegrity(
     private val downloadDao: DownloadDao,
     private val trackDao: TrackDao,
     private val streamCache: StreamCache,
     private val downloads: DownloadRepository,
+    private val audioLength: AudioLength = AudioLength.device,
 ) {
     companion object {
         /** Bump to run the cleanup again on every install that already ran an older one. */
-        const val VERSION = 1
+        const val VERSION = 2
 
 
         /** A `.part` younger than this may belong to a download running right now. */
@@ -64,7 +65,17 @@ class MediaIntegrity(
             }
             // Only an original-format file can be compared with the server's size (a capped-quality download is a transcode, whatever
             // its extension says).
-            if (!DownloadRepository.comparableWithOriginal(file, track.suffix)) continue
+            if (!DownloadRepository.comparableWithOriginal(file, track.suffix)) {
+                // A transcode has no size to compare, but its playing time can still show it stopped early.
+                val actualMs = audioLength.millis(file)
+                if (CutShort.isCutShort(actualMs, track.durationSec)) {
+                    AppLogger.d("MediaIntegrity", "${track.title}: transcode plays ${actualMs}ms of ${track.durationSec}s, discarding it")
+                    file.delete()
+                    fixUp(download, requeue)
+                    requeued++
+                }
+                continue
+            }
             val serverBytes = try {
                 apiHolder.forId(download.songId)?.getSong(download.songId)?.sizeBytes
             } catch (e: CancellationException) {

@@ -21,7 +21,8 @@ import kotlin.test.assertTrue
 
 class StreamCacheTest {
     private val dir: File = Files.createTempDirectory("streamcache-test").toFile().resolve("streamcache")
-    private val cache = StreamCache(dir, FetchGate({ true }), listingTtlMs = 0)
+    private var playsMs: Long? = null
+    private val cache = StreamCache(dir, FetchGate({ true }), listingTtlMs = 0, audioLength = { playsMs })
     private val rank: () -> FetchGate.Priority = { FetchGate.Priority.NOW_PLAYING }
 
     @AfterTest
@@ -46,6 +47,22 @@ class StreamCacheTest {
         assertTrue(file.exists())
         assertEquals(10, file.length())
         assertEquals(listOf("srv_abc-192.mp3"), dir.list()!!.toList())
+    }
+
+    @Test
+    fun aCopyThatPlaysFarShorterThanTheSongIsNeverKeptAndLeavesNoPart() = runBlocking<Unit> {
+        playsMs = 15_000
+        assertFailsWith<java.io.IOException> { cache.fetch("srv:abc", 192, rank, expectedSec = 200, download = writing()) }
+        assertFalse(cache.has("srv:abc", 192))
+        assertTrue(dir.list()!!.isEmpty(), "no final file and no .part")
+    }
+
+    @Test
+    fun aCopyOfTheRightLengthOrOfUnknownLengthIsKept() = runBlocking<Unit> {
+        playsMs = 200_000
+        assertTrue(cache.fetch("srv:abc", 192, rank, expectedSec = 200, download = writing()).exists())
+        playsMs = 1_000
+        assertTrue(cache.fetch("srv:def", 192, rank, expectedSec = null, download = writing()).exists(), "no expected length, nothing to compare")
     }
 
     @Test

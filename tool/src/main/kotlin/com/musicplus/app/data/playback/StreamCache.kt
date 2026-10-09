@@ -1,6 +1,8 @@
 package com.musicplus.app.data.playback
 
 import com.musicplus.app.data.AppLogger
+import com.musicplus.app.data.AudioLength
+import com.musicplus.app.data.CutShort
 import com.musicplus.app.data.FetchGate
 import com.musicplus.app.data.KeptFiles
 import com.musicplus.app.data.serverFilePrefix
@@ -12,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -39,6 +42,7 @@ class StreamCache(
     private val gate: FetchGate,
     private val listingTtlMs: Long = LISTING_TTL_MS,
     private val ioScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    private val audioLength: AudioLength = AudioLength.device,
 ) : KeptFiles {
     private val locks = ConcurrentHashMap<String, Mutex>()
 
@@ -126,6 +130,18 @@ class StreamCache(
         maxBitRateKbps: Int?,
         rank: () -> FetchGate.Priority,
         download: suspend (part: File, lease: FetchGate.Lease) -> Unit,
+    ): File = fetch(songId, maxBitRateKbps, rank, expectedSec = null, download)
+
+    /**
+     * As above, for a song whose length is known: a finished copy that plays clearly shorter than [expectedSec] is thrown away as cut
+     * short (see [CutShort]) instead of being kept as the song.
+     */
+    suspend fun fetch(
+        songId: String,
+        maxBitRateKbps: Int?,
+        rank: () -> FetchGate.Priority,
+        expectedSec: Int?,
+        download: suspend (part: File, lease: FetchGate.Lease) -> Unit,
     ): File {
         val cached = file(songId, maxBitRateKbps)
         if (cached.exists()) {
@@ -143,6 +159,7 @@ class StreamCache(
             try {
                 val fetched = gate.run(FetchGate.Lane.PLAYBACK, songId, rank, transcoding = maxBitRateKbps != null) { lease -> download(part, lease) }
                 if (fetched == null) throw IOException("the connection is busy with other transfers")
+                withContext(Dispatchers.IO) { CutShort.check(part, expectedSec, audioLength) }
                 if (!part.renameTo(cached)) throw IOException("could not move ${cached.name}.part into place")
                 // Told to the listing directly rather than re-read, since this may run on the main thread; a refresh that raced it and
                 // missed the file finds it on the next one.

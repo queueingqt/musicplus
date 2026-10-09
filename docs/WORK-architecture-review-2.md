@@ -346,3 +346,12 @@ Review fixes: 502-504 are a down server, not congestion (FetchGate classifier); 
 standing snapshot per call; `ServerCapabilities.forget` clears the doubt-probe time; duplicate DB error logging removed;
 a refused write is queued and retried up to 3 refusals in a row (a refused create then leaves the phone), so a proxy's
 "not found" cannot lose a write; stray `one93.json` removed. Accepted trade-off: mp3 download integrity check.
+
+## Cut-short transcodes: playing time check (2026-10-08)
+
+A transcode announces no length, so a body the server ended early passed every size check. `CutShort` (AudioLength.kt) now
+compares the file's playing time (MediaMetadataRetriever) with the song's: under 90 % and more than 5 s short is discarded
+and retried; an unreadable length is never called short. Wired into transcoded downloads (`DownloadRepository.run`), every
+stream-cache fill that knows the song's length (`StreamCache.fetch`), and `MediaIntegrity` (VERSION 2, so existing transcoded
+downloads are checked once per install). Copies already in the stream cache are not re-checked (not tied back to a song).
+Phone: a 320 kbps mp3 transcode read 105.9 s for a 105 s song. 437 tests, cold + 5 warm green, lint and release build pass.
