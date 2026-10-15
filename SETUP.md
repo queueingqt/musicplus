@@ -1,5 +1,19 @@
 # Building and running Music +
 
+## Repo layout
+
+This repo is a full `lightphone/light-sdk` tree (SDK 0.2.0 at the repo root) with Music +
+in `tool/`, the layout Light's Tool Library builder requires (it needs `gradle.properties`
+etc. at the root). Build directly from the root, with JDK 21:
+
+```
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew -DlightSdk.toolOnly=true :tool:assembleDebug
+```
+
+SDK modules (`sdk/`, `plugin/`, `lint-rules/`, `signer/`, `builder/`, `trust-format/`) are
+unmodified upstream; license in `LICENSE-light-sdk`. The "attach to an SDK checkout" steps
+below are the historical setup and no longer needed.
+
 ## Why this repo isn't buildable on its own
 
 The Light Phone III SDK (`github.com/lightphone/light-sdk`) isn't published as a

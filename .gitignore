@@ -14,3 +14,13 @@ local.properties
 .kotlin/
 .claude/
 
+
+# Tool Library layout (light-sdk root)
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+local/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+/signer/keys/
